@@ -9,8 +9,8 @@ This project uses the **Trellis** framework (.NET 10). Trellis combines Railway-
 1. **Errors are values, not exceptions.** Use `Result<T>` for expected failures. Never throw for business logic. Never use try/catch in Domain or Application layers.
 2. **Make illegal states unrepresentable.** Every domain concept is a value object with `TryCreate`. If it exists, it's valid.
 3. **No primitive obsession.** No raw `Guid`, `string`, `int`, or `decimal` in domain properties or method signatures. Every property on an Aggregate or Entity must be a typed value object. If the same concept appears in two contexts (e.g., line item quantity vs. stock quantity), create separate types for each.
-4. **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these.
-5. **Optional values use `Maybe<T>`, never null.** `Maybe<PhoneNumber>`, not `PhoneNumber?`.
+4. **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>` subclasses to add length validation without writing custom `TryCreate`.
+5. **Optional values use `Maybe<T>`, never null.** `Maybe<PhoneNumber>`, not `PhoneNumber?`. Declare `Maybe<T>` properties as `partial` — the source generator handles the backing field.
 
 ## Architecture
 
@@ -104,7 +104,19 @@ The `.http` file then references them as `{{adminActor}}`, `{{host}}`, etc. Only
 
 **Use `Bind`/`BindAsync` chains in handlers — not imperative `if`/`return`.** Handlers should compose Result operations using the ROP pipeline, not unwrap results manually.
 
-**Task vs ValueTask overload ambiguity:** Trellis provides `TapAsync`, `BindAsync`, `MapAsync` overloads for both `Task` and `ValueTask`. If the compiler reports "ambiguous invocation," specify the lambda return type explicitly (e.g., `async (Order order) => await ...` or cast to `Func<Order, Task>`).
+**Task vs ValueTask overload ambiguity (CS0121):** Trellis provides `TapAsync`, `BindAsync`, `MapAsync` overloads for both `Task` and `ValueTask`. When using async lambdas in ROP chains, the compiler cannot resolve between them. Fix by casting the lambda to an explicit `Func<>` with `Task`:
+
+```csharp
+// CS0121 — compiler can't choose between Task and ValueTask overloads
+.BindAsync(async order => await _repo.SaveAsync(order, ct))  // ❌ ambiguous
+
+// Fix — cast to explicit Func with Task return type
+.BindAsync((Func<Order, Task<Result<Order>>>)(async order =>
+{
+    var saveResult = await _repo.SaveAsync(order, ct);
+    return saveResult.Map(_ => order);
+}))
+```
 
 ```csharp
 // ✅ Correct — ROP chain with Bind/BindAsync
@@ -136,18 +148,20 @@ public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, Canc
 
 ### Parallel Async Operations
 
-When a handler needs multiple independent async results (e.g., fetching a customer AND products), use `Result.ParallelAsync` + `WhenAllAsync` instead of sequential `await`:
+When a handler needs multiple independent async results (e.g., fetching a customer AND products), use `Result.ParallelAsync` + `.WhenAllAsync()` instead of sequential `await`:
 
 ```csharp
 // ✅ Correct — parallel fetches with ParallelAsync
 public async ValueTask<Result<Order>> Handle(CreateDraftOrderCommand command, CancellationToken ct)
 {
-    var (customerTask, productsTask) = Result.ParallelAsync(
-        () => _customerRepository.GetByIdAsync(command.CustomerId, ct),
-        () => _productRepository.GetByIdsAsync(command.ProductIds, ct));
+    var productIds = command.LineItems.Select(li => li.ProductId).ToList();
 
-    return await Result.WhenAllAsync(customerTask, productsTask)
-        .BindAsync((customer, products) => Order.TryCreate(customer, products, command.LineItems));
+    return await Result.ParallelAsync(
+        () => _customerRepository.GetByIdAsync(command.CustomerId, ct),
+        () => _productRepository.GetByIdsAsync(productIds, ct))
+        .WhenAllAsync()
+        .BindAsync((Customer customer, List<Product> products) =>
+            Order.TryCreate(customer, products, command.LineItems));
 }
 
 // ❌ Wrong — sequential fetches
@@ -190,12 +204,33 @@ public class Order : Aggregate<OrderId>
 
 ### EF Core
 
-- **NEVER write `HasConversion()`.** Call `ApplyTrellisConventions` in `ConfigureConventions` — it handles all scalar Trellis value objects and `Money` properties automatically.
-- **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped by `ApplyTrellisConventions`. Map them with `OwnsOne` in `OnModelCreating` and configure each property explicitly. `Money` is the exception — it IS auto-mapped.
-- Use `SaveChangesResultAsync` (not `SaveChangesAsync` directly).
+- **NEVER write `HasConversion()`.** Call `ApplyTrellisConventions` in `ConfigureConventions` — it handles all scalar Trellis value objects automatically.
+- **`Money` properties** are automatically mapped as owned types by `ApplyTrellisConventions` — no `OwnsOne` configuration needed. Column naming: `UnitPrice` → `UnitPrice` (decimal) + `UnitPriceCurrency` (string). Explicit `OwnsOne` takes precedence if you need custom column names.
+- **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them with `OwnsOne` in the entity configuration and configure each property explicitly.
+- Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Prefer this over `SaveChangesResultAsync` (which returns `Result<int>` row count) since repositories don't need the count. Never use bare `SaveChangesAsync`.
 - Use `FirstOrDefaultMaybeAsync` for optional lookups, `FirstOrDefaultResultAsync` for required lookups.
-- Use `.Where(specification)` for specification queries.
-- **`Maybe<T>` properties** require the backing-field pattern with `MaybeProperty` in `OnModelCreating`. Use `WhereNone`, `WhereHasValue`, `WhereEquals` for LINQ queries on those properties. See §12 in `trellis-api-reference.md`.
+- Use `.Where(specification)` for specification queries. Specifications support `.And()`, `.Or()`, `.Not()` composition.
+- **`Maybe<T>` properties** — use C# 13 `partial` properties. The `Trellis.EntityFrameworkCore.Generator` source generator emits the backing field and getter/setter automatically. The `MaybeConvention` (registered by `ApplyTrellisConventions`) auto-maps them as nullable columns — no `MaybeProperty()` call needed:
+
+```csharp
+// ✅ Correct — partial property (source generator handles the rest)
+public partial class Order : Aggregate<OrderId>
+{
+    public partial Maybe<DateTime> SubmittedAt { get; set; }
+    public partial Maybe<DateTime> ShippedAt { get; set; }
+}
+// No EF Core configuration needed for Maybe<T> properties
+
+// ❌ Wrong — manual backing field (old pattern, no longer needed)
+private DateTime? _submittedAt;
+public Maybe<DateTime> SubmittedAt
+{
+    get => _submittedAt is not null ? Maybe.From(_submittedAt.Value) : Maybe.None<DateTime>();
+    set => _submittedAt = value.HasValue ? value.Value : null;
+}
+```
+
+- **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. See §12 in `trellis-api-reference.md`.
 - **Entity configurations:** Use `IEntityTypeConfiguration<T>` per entity in the Acl layer — one file per aggregate/entity (e.g., `OrderConfiguration.cs`, `CustomerConfiguration.cs`). Register them with `ApplyConfigurationsFromAssembly` in `OnModelCreating`. Do NOT inline configuration in `DbContext.OnModelCreating`.
 - **Migrations:** After implementing all entities and configurations, run `dotnet ef migrations add InitialCreate -p Acl/src -s Api/src` to generate the initial migration. Do not rely on `EnsureCreated()` for anything beyond a quick prototype.
 
@@ -205,11 +240,11 @@ Controllers inherit `ControllerBase` with `[ApiController]`. Actions are thin �
 
 **Every controller must have:**
 - `[ApiController]` attribute and inherit `ControllerBase`
-- `[ApiVersion("2026-11-12")]` at class level (use date-based versions)
-- `[ServiceLevelIndicator]` at class level
 - `[Route("api/[controller]")]` at class level
 - `[Consumes("application/json")]` and `[Produces("application/json")]` at class level
 - Error responses as RFC 9457 Problem Details (handled by `ToActionResult`)
+
+**Do NOT add `[ApiVersion]` attributes.** Version is derived automatically from the controller namespace via `VersionByNamespaceConvention` (see API Versioning below).
 
 **Use `ToCreatedAtActionResult`** for POST endpoints that create resources — returns `201 Created` with `Location` header.
 
@@ -226,9 +261,54 @@ And activate the middleware in `Program.cs`:
 app.UseScalarValueValidation();
 ```
 
-**Request/Response DTOs** live in `Api/src/Contracts/`. Never expose domain types directly. Request DTOs can use scalar value object types as properties — they will be validated automatically via the JSON converter.
+**Request/Response DTOs** live in `Api/src/{version}/Models/` (e.g., `Api/src/2026-11-12/Models/`). Never expose domain types directly. Request DTOs can use scalar value object types as properties — they will be validated automatically via the JSON converter.
 
-**API Versioning** — Controllers are organized in versioned folders under `Api/src/` (e.g., `Api/src/2026-11-12/Controllers/`).
+### API Versioning
+
+Versioning is **namespace-driven** — no `[ApiVersion]` attribute needed. Register the convention in `Api/src/DependencyInjection.cs`:
+```csharp
+services.AddApiVersioning()
+        .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()))
+        .AddApiExplorer()
+        .AddOpenApi(options => options.Document.AddScalarTransformers());
+```
+
+**Folder & namespace convention:** Place controllers in `Api/src/{date}/Controllers/` with a matching namespace. The date in the namespace (with underscores) maps to the API version (with hyphens):
+- Folder: `Api/src/2026-11-12/Controllers/`
+- Namespace: `{ServiceName}.Api.v2026_11_12.Controllers`
+- Resolved version: `2026-11-12`
+
+### OpenAPI & Scalar
+
+The template uses **Scalar** (not Swagger/Swashbuckle) for interactive API documentation, backed by the built-in ASP.NET Core OpenAPI support.
+
+**Packages** — `Api.csproj` must reference:
+```xml
+<PackageReference Include="Scalar.AspNetCore" />
+<PackageReference Include="Scalar.AspNetCore.Microsoft" />
+```
+
+**Program.cs** — map OpenAPI and Scalar endpoints (development only):
+```csharp
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi().WithDocumentPerVersion();
+    app.MapScalarApiReference(
+        options =>
+        {
+            var descriptions = app.DescribeApiVersions();
+
+            for (var i = 0; i < descriptions.Count; i++)
+            {
+                var description = descriptions[i];
+                var isDefault = i == descriptions.Count - 1;
+                options.AddDocument(description.GroupName, description.GroupName, isDefault: isDefault);
+            }
+        });
+}
+```
+
+The Scalar UI is available at `/scalar/{version}` (e.g., `/scalar/2026-11-12`).
 
 ## Testing Strategy
 

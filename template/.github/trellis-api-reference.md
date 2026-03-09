@@ -1,4 +1,4 @@
-# Trellis — AI API Reference
+﻿# Trellis — AI API Reference
 
 > **Purpose**: Machine-readable reference for AI coding assistants. Covers every public type, method signature, and usage pattern in the Trellis library ecosystem.
 
@@ -39,6 +39,34 @@
 
 Represents success (with value) or failure (with error). Implements `IResult<TValue>`, `IEquatable<Result<TValue>>`, `IFailureFactory<Result<TValue>>`.
 
+## Core Interfaces
+
+### IResult (interface)
+
+Non-generic base — exposes success/failure state and error.
+
+```csharp
+bool IsSuccess { get; }
+bool IsFailure { get; }
+Error Error { get; }       // throws if success
+```
+
+### IResult\<TValue\> (interface, extends IResult)
+
+```csharp
+TValue Value { get; }      // throws if failure
+```
+
+### IFailureFactory\<TSelf\> (interface)
+
+Enables construction of failure results without knowing the inner type parameter. Used by generic pipeline behaviors (e.g., `AuthorizationBehavior`).
+
+```csharp
+static abstract TSelf CreateFailure(Error error);
+```
+
+`Result<TValue>` implements this via `Result<TValue>.CreateFailure(Error error)`.
+
 ### Properties & Methods
 
 ```csharp
@@ -78,6 +106,23 @@ Task<Result<T>> TryAsync<T>(Func<Task<T>> func, Func<Exception, Error>? map = nu
 Result<Unit> FromException(Exception ex, Func<Exception, Error>? map = null)
 Result<T> FromException<T>(Exception ex, Func<Exception, Error>? map = null)
 Result<(T1, T2)> Combine<T1, T2>(Result<T1> r1, Result<T2> r2)
+// ... through 9-tuple arity:
+Result<(T1,...,T9)> Combine<T1,...,T9>(Result<T1> r1, ..., Result<T9> r9)
+```
+
+## RailwayTrackAttribute & TrackBehavior
+
+Metadata attribute for IDE extensions, analyzers, and documentation generators. Indicates which railway track an ROP method executes on.
+
+```csharp
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class RailwayTrackAttribute : Attribute
+{
+    public TrackBehavior Track { get; }
+    public RailwayTrackAttribute(TrackBehavior track)
+}
+
+public enum TrackBehavior { Success, Failure }
 ```
 
 ## Unit (record struct)
@@ -105,7 +150,8 @@ implicit operator Maybe<T>(T value)
 ```csharp
 Maybe<T> None<T>() where T : notnull
 Maybe<T> From<T>(T? value) where T : notnull
-Result<Maybe<TOut>> Optional<TIn, TOut>(TIn? value, Func<TIn, Result<TOut>> function) where TOut : notnull
+Result<Maybe<TOut>> Optional<TIn, TOut>(TIn? value, Func<TIn, Result<TOut>> function) where TIn : class, TOut : notnull
+Result<Maybe<TOut>> Optional<TIn, TOut>(TIn? value, Func<TIn, Result<TOut>> function) where TIn : struct, TOut : notnull
 ```
 
 ### Maybe Extension Methods
@@ -192,6 +238,14 @@ IDictionary<string, string[]> ToDictionary()
 IReadOnlyList<Error> Errors { get; }
 AggregateError(IReadOnlyList<Error> errors)
 AggregateError(IReadOnlyList<Error> errors, string code)
+```
+
+### CombineErrorExtensions — Merge Errors
+
+```csharp
+Error Combine(this Error? thisError, Error otherError)
+// If both are ValidationError → merges field errors
+// Otherwise → wraps in AggregateError
 ```
 
 ---
@@ -303,6 +357,21 @@ TOut MatchError<TIn, TOut>(
     Func<ServiceUnavailableError, TOut>? onServiceUnavailable = null,
     Func<UnexpectedError, TOut>? onUnexpected = null,
     Func<Error, TOut>? onError = null)
+// + async variants (Task Left-only, Task Both with CancellationToken)
+```
+
+### SwitchError — Typed Error Side Effects
+
+Same as `MatchError` but void — executes actions instead of returning values.
+
+```csharp
+void SwitchError<TIn>(
+    this Result<TIn>,
+    Action<TIn> onSuccess,
+    Action<ValidationError>? onValidation = null,
+    // ... same error type parameters as MatchError ...
+    Action<Error>? onError = null)
+// + SwitchErrorAsync (Task with CancellationToken)
 ```
 
 ### Combine — Merge Multiple Results
@@ -429,6 +498,48 @@ Result<T> DebugOnFailure<T>(this Result<T>, Action<Error>)
 // + async variants
 ```
 
+## OpenTelemetry Tracing
+
+ROP operations automatically create `Activity` spans when instrumentation is enabled. Each `Bind`, `Map`, `Tap`, `Ensure`, `RecoverOnFailure`, and `Combine` call starts a child activity with success/error status.
+
+### Registration
+
+```csharp
+services.AddOpenTelemetry()
+    .WithTracing(builder => builder
+        .AddResultsInstrumentation()                    // ROP operations (Bind, Map, Tap, Ensure, etc.)
+        .AddPrimitiveValueObjectInstrumentation());     // Value object creation (EmailAddress.TryCreate, etc.)
+```
+
+### Extension Methods
+
+```csharp
+// Trellis.Results — namespace Trellis
+TracerProviderBuilder AddResultsInstrumentation(this TracerProviderBuilder builder)
+
+// Trellis.Primitives — namespace Trellis
+TracerProviderBuilder AddPrimitiveValueObjectInstrumentation(this TracerProviderBuilder builder)
+```
+
+### Public Trace Sources
+
+```csharp
+// Trellis.Primitives — namespace Trellis
+public static class PrimitiveValueObjectTrace
+{
+    public static ActivitySource ActivitySource { get; }   // "Functional DDD PVO"
+}
+```
+
+`RopTrace` is internal — consumers register it via `AddResultsInstrumentation()` only.
+
+### Activity Behavior
+
+| Context | Activity Status Set By |
+|---------|------------------------|
+| Value object `TryCreate` | `Result<T>` constructor (activity IS `Activity.Current`) |
+| ROP extensions (Bind, Map, Tap, etc.) | `result.LogActivityStatus()` (child activity ≠ `Activity.Current`) |
+
 ---
 
 # 2. Trellis.DomainDrivenDesign — DDD Primitives
@@ -509,6 +620,26 @@ implicit operator Expression<Func<T, bool>>(Specification<T> spec)
 
 # 3. Trellis.Primitives — Base Types & Concrete Value Objects
 
+## JSON Converters (namespace: `Trellis`)
+
+### ParsableJsonConverter\<T\>
+
+Generic `System.Text.Json` converter for all types implementing `IParsable<T>`. Auto-applied via `[JsonConverter]` on source-generated value objects.
+
+```csharp
+public class ParsableJsonConverter<T> : JsonConverter<T> where T : IParsable<T>
+```
+
+Reads via `T.Parse(reader.GetString()!)`; writes via `writer.WriteStringValue(value.ToString())`.
+
+### MoneyJsonConverter (namespace: `Trellis.Primitives`)
+
+Serializes/deserializes `Money` as `{"amount": 99.99, "currency": "USD"}`.
+
+```csharp
+public class MoneyJsonConverter : JsonConverter<Money>
+```
+
 ## Base Types (namespace: `Trellis`)
 
 ### RequiredString\<TSelf\>
@@ -523,6 +654,20 @@ static explicit operator Foo(string value)
 // IParsable<Foo>: Parse, TryParse
 // [JsonConverter(typeof(ParsableJsonConverter<Foo>))]
 ```
+
+#### `[StringLength]` — Optional Length Constraints
+
+Apply `[StringLength(max)]` or `[StringLength(max, MinimumLength = min)]` to the class to add length validation into the generated `TryCreate`:
+
+```csharp
+[StringLength(50)]                        // max only
+public partial class FirstName : RequiredString<FirstName> { }
+
+[StringLength(500, MinimumLength = 10)]   // min + max
+public partial class Description : RequiredString<Description> { }
+```
+
+Generated validation errors: `"{Name} must be at least {min} characters."`, `"{Name} must be {max} characters or fewer."`
 
 ### RequiredGuid\<TSelf\>
 
@@ -592,7 +737,7 @@ All have `TryCreate` → `Result<T>` and `Create` → `T` (throws). All implemen
 | `CurrencyCode` | `string` | 3 letters, ISO 4217, uppercase | — |
 | `LanguageCode` | `string` | 2 letters, ISO 639-1, lowercase | — |
 | `Age` | `int` | 0–150 inclusive | — |
-| `Percentage` | `decimal` | 0–100 inclusive | `Zero`, `Full`, `AsFraction()`, `Of(decimal)`, `FromFraction(decimal)` |
+| `Percentage` | `decimal` | 0–100 inclusive | `Zero`, `Full`, `AsFraction()`, `Of(decimal)`, `FromFraction(decimal, fieldName?)`, `TryCreate(decimal?)` |
 | `Money` | multi-value | Amount ≥ 0, valid currency code | See below |
 
 ### Money (extends ValueObject, NOT ScalarValueObject)
@@ -664,9 +809,10 @@ abstract class ResourceLoaderById<TMessage, TResource, TId> : IResourceLoader<TM
 const string TenantId = "tid";
 const string PreferredUsername = "preferred_username";
 const string AuthorizedParty = "azp";
+const string AuthorizedPartyAcr = "azpacr";
+const string AuthContextClassReference = "acrs";
 const string IpAddress = "ip_address";
 const string MfaAuthenticated = "mfa";
-// ... etc.
 ```
 
 ---
@@ -698,8 +844,17 @@ Customizable via `TrellisAspOptions.MapError<TError>(int statusCode)`.
 ActionResult<T> ToActionResult<T>(this Result<T> result, ControllerBase controller)
 ActionResult<T> ToCreatedAtActionResult<T>(this Result<T> result, ControllerBase controller,
     string actionName, Func<T, object?> routeValues, string? controllerName = null)
+
+// Transform overloads — map domain type to DTO inline
+ActionResult<TOut> ToActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controller,
+    Func<TIn, ContentRangeHeaderValue> funcRange, Func<TIn, TOut> funcValue)
+ActionResult<TOut> ToCreatedAtActionResult<TValue, TOut>(this Result<TValue> result, ControllerBase controller,
+    string actionName, Func<TValue, object?> routeValues, Func<TValue, TOut> map, string? controllerName = null)
 // + async variants for Task<Result<T>> and ValueTask<Result<T>>
 // + partial content (206) variant with ContentRangeHeaderValue
+
+// Error direct conversion
+ActionResult<TValue> ToActionResult<TValue>(this Error error, ControllerBase controller)
 ```
 
 ## Minimal API Extensions
@@ -708,8 +863,34 @@ ActionResult<T> ToCreatedAtActionResult<T>(this Result<T> result, ControllerBase
 IResult ToHttpResult<T>(this Result<T> result, TrellisAspOptions? options = null)
 IResult ToCreatedAtRouteHttpResult<T>(this Result<T> result,
     string routeName, Func<T, RouteValueDictionary> routeValues, TrellisAspOptions? options = null)
+
+// Transform overload — map domain type to DTO inline
+IResult ToCreatedAtRouteHttpResult<TValue, TOut>(this Result<TValue> result,
+    string routeName, Func<TValue, RouteValueDictionary> routeValues, Func<TValue, TOut> map,
+    TrellisAspOptions? options = null)
 // + async variants
+
+// Error direct conversion
+IResult ToHttpResult(this Error error, TrellisAspOptions? options = null)
 ```
+
+## PartialObjectResult — HTTP 206 Partial Content
+
+```csharp
+PartialObjectResult(long rangeStart, long rangeEnd, long totalLength, object? value)
+PartialObjectResult(ContentRangeHeaderValue contentRange, object? value)
+ContentRangeHeaderValue ContentRange { get; }
+```
+
+## Maybe\<T\> Support Types
+
+Registered automatically by `AddScalarValueValidation()`.
+
+| Type | Purpose |
+|------|---------|
+| `MaybeModelBinder<TValue, TPrimitive>` | Model-binds `Maybe<T>` from query/route |
+| `MaybeScalarValueJsonConverter<TValue, TPrimitive>` | JSON serialization for `Maybe<T>` of scalar VOs |
+| `MaybeSuppressChildValidationMetadataProvider` | Suppresses child validation on `Maybe<T>` properties |
 
 ## Registration
 
@@ -725,6 +906,25 @@ app.UseScalarValueValidation();  // middleware
 builder.Services.AddTrellisAsp();
 builder.Services.AddTrellisAsp(options => options.MapError<MyCustomError>(418));
 ```
+
+## Source Generator — AOT JSON Converters
+
+The `Trellis.AspSourceGenerator` package provides a source generator that auto-discovers all `IScalarValue<TSelf, TPrimitive>` types and emits AOT-compatible `System.Text.Json` converters. Apply `[GenerateScalarValueConverters]` to a partial `JsonSerializerContext`:
+
+```csharp
+using Trellis.Asp;
+
+[GenerateScalarValueConverters]
+[JsonSerializable(typeof(MyDto))]
+public partial class AppJsonSerializerContext : JsonSerializerContext { }
+
+// Generator auto-adds:
+// [JsonSerializable(typeof(CustomerId))]
+// [JsonSerializable(typeof(EmailAddress))]
+// etc.
+```
+
+Benefits: Native AOT compatible, no reflection, trimming-safe, faster startup.
 
 ---
 
@@ -761,6 +961,12 @@ HandleConflict(this HttpResponseMessage, ConflictError)
 HandleClientError(this HttpResponseMessage, Func<HttpStatusCode, Error>)
 HandleServerError(this HttpResponseMessage, Func<HttpStatusCode, Error>)
 EnsureSuccess(this HttpResponseMessage, Func<HttpStatusCode, Error>? errorFactory = null)
+
+// Custom async error handling with context
+Task<Result<HttpResponseMessage>> HandleFailureAsync<TContext>(this HttpResponseMessage,
+    Func<HttpResponseMessage, TContext, CancellationToken, Task<Error>> callback, TContext context, CancellationToken ct)
+Task<Result<HttpResponseMessage>> HandleFailureAsync<TContext>(this Task<HttpResponseMessage>,
+    Func<HttpResponseMessage, TContext, CancellationToken, Task<Error>> callback, TContext context, CancellationToken ct)
 
 // Also chainable on Result<HttpResponseMessage> for fluent error handling
 HandleNotFound(this Result<HttpResponseMessage>, NotFoundError)
@@ -946,7 +1152,9 @@ Result<TState> FireResult<TState, TTrigger>(this StateMachine<TState, TTrigger> 
 
 ```csharp
 Task<Result<int>> SaveChangesResultAsync(this DbContext context, CancellationToken ct = default)
+Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken ct = default)
 Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken ct = default)
+Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken ct = default)
 // DbUpdateConcurrencyException → Error.Conflict
 // Duplicate key → Error.Conflict
 // FK violation → Error.Domain
@@ -986,45 +1194,35 @@ Explicit `OwnsOne` configuration takes precedence over the convention.
 
 ### Maybe\<T\> Property Mapping
 
-`Maybe<T>` is a `readonly struct`. EF Core cannot mark non-nullable struct properties as optional — calling `IsRequired(false)` or setting `IsNullable = true` throws `InvalidOperationException`. Use the backing-field pattern with `MaybeProperty`:
+`Maybe<T>` is a `readonly struct`. EF Core cannot mark non-nullable struct properties as optional — calling `IsRequired(false)` or setting `IsNullable = true` throws `InvalidOperationException`. Use C# 13 `partial` properties with the `Trellis.EntityFrameworkCore.Generator` source generator:
 
 ```csharp
-// Extension method
-PropertyBuilder MaybeProperty<TEntity, TInner>(
-    this EntityTypeBuilder<TEntity> builder,
-    Expression<Func<TEntity, Maybe<TInner>>> propertyExpression)
-    where TEntity : class
-    where TInner : notnull
-// 1. Ignores the Maybe<T> CLR property
-// 2. Maps private _camelCase backing field as optional
-// 3. Returns PropertyBuilder for chaining (HasMaxLength, etc.)
-
-// Entity — backing field + computed Maybe<T> property
-public class Customer
+// Entity — just declare partial Maybe<T> properties
+public partial class Customer
 {
     public CustomerId Id { get; set; } = null!;
 
-    private PhoneNumber? _phone;
-    public Maybe<PhoneNumber> Phone
-    {
-        get => _phone is not null ? Maybe.From(_phone) : Maybe.None<PhoneNumber>();
-        set => _phone = value.HasValue ? value.Value : null;
-    }
+    public partial Maybe<PhoneNumber> Phone { get; set; }
+
+    public partial Maybe<DateTime> SubmittedAt { get; set; }
 }
 
-// OnModelCreating
+// OnModelCreating — no configuration needed for Maybe<T>, convention handles everything
 modelBuilder.Entity<Customer>(b =>
 {
     b.HasKey(c => c.Id);
-    b.MaybeProperty(c => c.Phone).HasMaxLength(20);
 });
 ```
 
+The source generator emits a private `_camelCase` backing field and getter/setter for each `partial Maybe<T>` property. The `MaybeConvention` (registered by `ApplyTrellisConventions`) auto-discovers `Maybe<T>` properties, ignores the struct property, maps the backing field as nullable, and sets the column name to the property name.
+
 Backing field naming: `Phone` → `_phone`, `SubmittedAt` → `_submittedAt`, `AlternateEmail` → `_alternateEmail`.
+
+If a `Maybe<T>` property is not declared `partial`, the generator emits diagnostic `TRLSGEN100`.
 
 ### Maybe\<T\> Queryable Extensions
 
-Because `MaybeProperty` ignores the `Maybe<T>` CLR property, EF Core cannot translate direct LINQ references to it. Use these extension methods instead of raw `EF.Property` calls:
+Because `MaybeConvention` ignores the `Maybe<T>` CLR property, EF Core cannot translate direct LINQ references to it. Use these extension methods instead of raw `EF.Property` calls:
 
 ```csharp
 // WhereNone — WHERE backing_field IS NULL
@@ -1056,6 +1254,39 @@ bool DbExceptionClassifier.IsDuplicateKey(DbUpdateException ex)       // SQL Ser
 bool DbExceptionClassifier.IsForeignKeyViolation(DbUpdateException ex)
 string? DbExceptionClassifier.ExtractConstraintDetail(DbUpdateException ex)
 ```
+
+---
+
+# 13. Trellis.Analyzers — Code Quality Diagnostics
+
+**NuGet: `Trellis.Analyzers`**
+
+Roslyn analyzers and code fixes for correct `Result<T>`, `Maybe<T>`, and ROP pipeline usage.
+
+| ID | Severity | Title |
+|----|----------|-------|
+| `TRLS001` | Warning | Result return value is not handled |
+| `TRLS002` | Info | Use Bind instead of Map when lambda returns Result |
+| `TRLS003` | Warning | Unsafe access to `Result.Value` without checking `IsSuccess` |
+| `TRLS004` | Warning | Unsafe access to `Result.Error` without checking `IsFailure` |
+| `TRLS005` | Info | Consider using MatchError for error type discrimination |
+| `TRLS006` | Warning | Unsafe access to `Maybe.Value` without checking `HasValue` |
+| `TRLS007` | Warning | Use `Create()` instead of `TryCreate().Value` |
+| `TRLS008` | Warning | Result is double-wrapped as `Result<Result<T>>` |
+| `TRLS009` | Warning | Blocking on `Task<Result<T>>` — use `await` |
+| `TRLS010` | Info | Use specific error type instead of base `Error` class |
+| `TRLS011` | Warning | Maybe is double-wrapped as `Maybe<Maybe<T>>` |
+| `TRLS012` | Info | Consider using `Result.Combine` for multiple Result checks |
+| `TRLS013` | Info | Consider `GetValueOrDefault` or `Match` instead of ternary |
+| `TRLS014` | Warning | Use async method variant (`MapAsync`, `BindAsync`, etc.) for async lambda |
+| `TRLS015` | Warning | Don't throw exceptions in Result chains — return failure |
+| `TRLS016` | Warning | Error message should not be empty |
+| `TRLS017` | Warning | Don't compare `Result` or `Maybe` to null (they are structs) |
+| `TRLS018` | Warning | Unsafe access to `.Value` in LINQ without filtering by success state |
+| `TRLS019` | Error | Combine chain exceeds maximum supported tuple size (9) |
+| `TRLS020` | Warning | Use `SaveChangesResultAsync` instead of `SaveChangesAsync` |
+
+Source generator diagnostics use a separate `TRLSGEN` prefix (see §3 and §12).
 
 ---
 
@@ -1099,6 +1330,16 @@ public partial class FirstName : RequiredString<FirstName> { }
 // Usage
 var name = FirstName.Create("Alice");
 var result = FirstName.TryCreate(userInput);
+```
+
+With length constraints:
+
+```csharp
+[StringLength(50)]
+public partial class ProductName : RequiredString<ProductName> { }
+
+[StringLength(500, MinimumLength = 10)]
+public partial class Description : RequiredString<Description> { }
 ```
 
 ## Create a Custom Value Object (RequiredEnum — Smart Enum)
@@ -1231,17 +1472,12 @@ var result = EmailAddress.TryCreate(dto.Email)
     .Combine(Maybe.Optional(dto.MiddleName.AsNullable(), MiddleName.TryCreate))
     .Bind((email, middleName) => CreateProfile(email, middleName));
 
-// EF Core persistence — use backing-field pattern (see §12 MaybeProperty)
-public class Profile
+// EF Core persistence — use partial Maybe<T> property (see §12 Maybe<T> Property Mapping)
+public partial class Profile
 {
-    private Url? _website;
-    public Maybe<Url> Website
-    {
-        get => _website is not null ? Maybe.From(_website) : Maybe.None<Url>();
-        set => _website = value.HasValue ? value.Value : null;
-    }
+    public partial Maybe<Url> Website { get; set; }
 }
-// OnModelCreating: b.MaybeProperty(p => p.Website);
+// MaybeConvention auto-configures the backing field — no OnModelCreating needed
 ```
 
 ## Convert Result to HTTP Response

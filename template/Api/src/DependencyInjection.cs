@@ -8,8 +8,9 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using ServiceLevelIndicators;
-using Swashbuckle.AspNetCore.SwaggerGen;
+using Scalar.AspNetCore;
 using Trellis.Asp;
+using Asp.Versioning.Conventions;
 
 internal static class DependencyInjection
 {
@@ -19,22 +20,10 @@ internal static class DependencyInjection
         services.ConfigureServiceLevelIndicators();
         services.AddProblemDetails();
         services.AddControllers().AddScalarValueValidation();
-        services.AddTransient<IConfigureOptions<SwaggerGenOptions>, ConfigureSwaggerOptions>();
-        services.AddSwaggerGen(
-            options =>
-            {
-                options.OperationFilter<AddApiVersionMetadata>();
-                options.OperationFilter<AddTraceParentParameter>();
-
-                var fileName = typeof(Program).Assembly.GetName().Name + ".xml";
-                var filePath = Path.Combine(AppContext.BaseDirectory, fileName);
-
-                // integrate xml comments
-                options.IncludeXmlComments(filePath);
-            });
         services.AddApiVersioning()
-                .AddMvc()
-                .AddApiExplorer();
+                .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()))
+                .AddApiExplorer()
+                .AddOpenApi(options => options.Document.AddScalarTransformers());
         services.AddScoped<ErrorHandlingMiddleware>();
         return services;
     }

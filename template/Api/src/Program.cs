@@ -2,6 +2,7 @@
 using BestWeatherForecast.Api;
 using BestWeatherForecast.Api.Middleware;
 using BestWeatherForecast.Application;
+using Scalar.AspNetCore;
 using ServiceLevelIndicators;
 using Trellis.Asp;
 
@@ -18,19 +19,17 @@ var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(
+    app.MapOpenApi().WithDocumentPerVersion();
+    app.MapScalarApiReference(
         options =>
         {
-            options.RoutePrefix = string.Empty; // make home page the swagger UI
             var descriptions = app.DescribeApiVersions();
 
-            // build a swagger endpoint for each discovered API version
-            foreach (var description in descriptions)
+            for (var i = 0; i < descriptions.Count; i++)
             {
-                var url = $"/swagger/{description.GroupName}/swagger.json";
-                var name = description.GroupName.ToUpperInvariant();
-                options.SwaggerEndpoint(url, name);
+                var description = descriptions[i];
+                var isDefault = i == descriptions.Count - 1;
+                options.AddDocument(description.GroupName, description.GroupName, isDefault: isDefault);
             }
         });
 }

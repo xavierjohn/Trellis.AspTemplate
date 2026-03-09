@@ -1,12 +1,12 @@
 <Project>
   <PropertyGroup>
-    <TrellisVersion>3.0.0-alpha.100</TrellisVersion>
+    <TrellisVersion>3.0.0-alpha.104</TrellisVersion>
   </PropertyGroup>
   <!-- Runtime -->
   <ItemGroup>
-    <PackageVersion Include="Asp.Versioning.Mvc.ApiExplorer" Version="8.1.1" />
+    <PackageVersion Include="Asp.Versioning.OpenApi" Version="10.0.0-preview.1" />
     <PackageVersion Include="DotNet.ReproducibleBuilds" Version="1.1.1" />
-    <PackageVersion Include="MartinCostello.Logging.XUnit.v3" Version="0.7.0" />
+    <PackageVersion Include="MartinCostello.Logging.XUnit.v3" Version="0.7.1" />
     <PackageVersion Include="Mediator.Abstractions" Version="3.0.1" />
     <PackageVersion Include="Mediator.SourceGenerator" Version="3.0.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Core" Version="2.2.5" />
@@ -19,8 +19,9 @@
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.0" />
-    <PackageVersion Include="ServiceLevelIndicators.Asp.ApiVersioning" Version="8.0.1" />
-    <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.1.4" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.13.1" />
+    <PackageVersion Include="Scalar.AspNetCore.Microsoft" Version="2.13.1" />
+    <PackageVersion Include="ServiceLevelIndicators.Asp.ApiVersioning" Version="10.0.0-preview.2" />
     <PackageVersion Include="System.Text.Json" Version="10.0.3" />
     <PackageVersion Include="Trellis.Analyzers" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Asp" Version="$(TrellisVersion)" />
