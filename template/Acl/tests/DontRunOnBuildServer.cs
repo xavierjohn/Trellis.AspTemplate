@@ -1,7 +1,7 @@
 ﻿namespace AntiCorruptionLayer.Tests;
 
 
-[Trait("Category", Constants.AntiCorruptionLayerTests)]
+[Trait("Category", Constants.Integration)]
 public class DontRunOnBuildServer
 {
     [Fact]
