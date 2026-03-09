@@ -1,7 +1,6 @@
-﻿namespace BestWeatherForecast.Api._2023_06_06.Controllers;
+﻿namespace BestWeatherForecast.Api.v2023_06_06.Controllers;
 
-using Asp.Versioning;
-using BestWeatherForecast.Api._2023_06_06.Models;
+using BestWeatherForecast.Api.v2023_06_06.Models;
 using BestWeatherForecast.Domain;
 using Microsoft.AspNetCore.Mvc;
 using Trellis.Asp;
@@ -11,7 +10,6 @@ using Trellis.Asp;
 /// User management controller.
 /// </summary>
 [ApiController]
-[ApiVersion("2023-06-06")]
 [Consumes("application/json")]
 [Produces("application/json")]
 [Route("api/[controller]")]

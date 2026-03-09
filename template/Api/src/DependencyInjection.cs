@@ -10,6 +10,7 @@ using OpenTelemetry.Trace;
 using ServiceLevelIndicators;
 using Scalar.AspNetCore;
 using Trellis.Asp;
+using Asp.Versioning.Conventions;
 
 internal static class DependencyInjection
 {
@@ -20,7 +21,7 @@ internal static class DependencyInjection
         services.AddProblemDetails();
         services.AddControllers().AddScalarValueValidation();
         services.AddApiVersioning()
-                .AddMvc()
+                .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()))
                 .AddApiExplorer()
                 .AddOpenApi(options => options.Document.AddScalarTransformers());
         services.AddScoped<ErrorHandlingMiddleware>();

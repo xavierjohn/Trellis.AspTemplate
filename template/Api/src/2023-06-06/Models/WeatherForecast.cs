@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Api._2023_06_06.Models;
+﻿namespace BestWeatherForecast.Api.v2023_06_06.Models;
 
 /// <summary>
 /// Weather Forecast of a city.
