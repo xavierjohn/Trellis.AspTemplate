@@ -2,8 +2,6 @@
 
 using BestWeatherForecast.Api.Middleware;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -39,8 +37,8 @@ internal static class DependencyInjection
             .WithMetrics(builder =>
             {
                 builder.AddAspNetCoreInstrumentation();
+                builder.AddServiceLevelIndicatorInstrumentation();
                 builder.AddMeter(
-                    ApiMeters.MeterName,
                     "Microsoft.AspNetCore.Hosting",
                     "Microsoft.AspNetCore.Server.Kestrel",
                     "System.Net.Http");
@@ -54,13 +52,11 @@ internal static class DependencyInjection
                 builder.AddOtlpExporter();
             });
 
-        services.AddSingleton<ApiMeters>();
         return services;
     }
 
     private static IServiceCollection ConfigureServiceLevelIndicators(this IServiceCollection services)
     {
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<ServiceLevelIndicatorOptions>, ConfigureServiceLevelIndicatorOptions>());
         services.AddServiceLevelIndicator(options =>
         {
             options.LocationId = ServiceLevelIndicator.CreateLocationId("public", "westus3");

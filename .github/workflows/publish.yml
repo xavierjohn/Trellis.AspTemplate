@@ -1,29 +1,47 @@
-name: Publish to NuGet
+name: Publish NuGet Package
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (do not publish)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   publish:
-
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
 
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '10.0.x'
 
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0 # depth is needed for nbgv
-
-    - uses: dotnet/nbgv@master
+    - name: Setup versioning
+      uses: dotnet/nbgv@master
       with:
         setAllVars: true
+
+    - name: Cache NuGet packages
+      uses: actions/cache@v5
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
 
     - name: Restore dependencies
       run: dotnet restore template/TrellisAspTemplate.slnx
@@ -31,11 +49,30 @@ jobs:
     - name: Build
       run: dotnet build template/TrellisAspTemplate.slnx --no-restore -c Release
 
-    - name: Test
-      run: dotnet test template/TrellisAspTemplate.slnx --no-build -c Release --filter "Category!=AntiCorruptionLayerTests"
+    - name: Run tests
+      working-directory: template
+      run: dotnet test TrellisAspTemplate.slnx --no-build -c Release --filter-not-trait "Category=Integration"
 
     - name: Pack template
       run: dotnet pack templatepack.csproj -c Release -o nupkg
 
-    - name: Push to NuGet.org
-      run: dotnet nuget push nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+    - name: List packages
+      run: |
+        echo "Packages to be published:"
+        ls -lh nupkg/*.nupkg
+
+    - name: Publish to NuGet
+      if: ${{ inputs.dry_run == 'false' }}
+      run: |
+        dotnet nuget push nupkg/*.nupkg \
+          --api-key ${{ secrets.NUGET_API_KEY }} \
+          --source https://api.nuget.org/v3/index.json \
+          --skip-duplicate
+
+    - name: Dry run summary
+      if: ${{ inputs.dry_run == 'true' }}
+      run: |
+        echo "DRY RUN - Packages NOT published:"
+        ls -lh nupkg/*.nupkg
+        echo ""
+        echo "To publish for real, re-run with dry_run = false"
