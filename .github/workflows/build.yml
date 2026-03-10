@@ -51,7 +51,7 @@ jobs:
       # --report-trx: Native MTP TRX generation (requires Microsoft.Testing.Extensions.TrxReport)
       working-directory: template
       run: |
-        dotnet test --solution TrellisAspTemplate.slnx --no-build -c Release \
+        dotnet test TrellisAspTemplate.slnx --no-build -c Release \
           --filter-not-trait "Category=Integration" \
           --coverage --coverage-output-format cobertura --coverage-output coverage.cobertura.xml \
           --report-trx
