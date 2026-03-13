@@ -108,28 +108,28 @@ The `.http` file then references them as `{{adminActor}}`, `{{host}}`, etc. Only
 
 ```csharp
 // CS0121 — compiler can't choose between Task and ValueTask overloads
-.BindAsync(async order => await _repo.SaveAsync(order, ct))  // ❌ ambiguous
+.BindAsync(async order => await _repo.SaveAsync(order, cancellationToken))  // ❌ ambiguous
 
 // Fix — cast to explicit Func with Task return type
 .BindAsync((Func<Order, Task<Result<Order>>>)(async order =>
 {
-    var saveResult = await _repo.SaveAsync(order, ct);
+    var saveResult = await _repo.SaveAsync(order, cancellationToken);
     return saveResult.Map(_ => order);
 }))
 ```
 
 ```csharp
 // ✅ Correct — ROP chain with Bind/BindAsync
-public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken ct) =>
-    await _orderRepository.GetByIdAsync(command.OrderId, ct)
+public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
+    await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken)
         .BindAsync(order => order.Submit())
-        .TapAsync(order => _orderRepository.SaveAsync(order, ct))
+        .TapAsync(order => _orderRepository.SaveAsync(order, cancellationToken))
         .MapAsync(OrderDto.From);
 
 // ❌ Wrong — imperative unwrapping
-public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken ct)
+public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken)
 {
-    var orderResult = await _orderRepository.GetByIdAsync(command.OrderId, ct);
+    var orderResult = await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken);
     if (!orderResult.TryGetValue(out var order))
     {
         _ = orderResult.TryGetError(out var error);
@@ -141,7 +141,7 @@ public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, Canc
         _ = submitResult.TryGetError(out var error);
         return error;
     }
-    await _orderRepository.SaveAsync(submitted, ct);
+    await _orderRepository.SaveAsync(submitted, cancellationToken);
     return OrderDto.From(submitted);
 }
 ```
@@ -152,21 +152,21 @@ When a handler needs multiple independent async results (e.g., fetching a custom
 
 ```csharp
 // ✅ Correct — parallel fetches with ParallelAsync
-public async ValueTask<Result<Order>> Handle(CreateDraftOrderCommand command, CancellationToken ct)
+public async ValueTask<Result<Order>> Handle(CreateDraftOrderCommand command, CancellationToken cancellationToken)
 {
     var productIds = command.LineItems.Select(li => li.ProductId).ToList();
 
     return await Result.ParallelAsync(
-        () => _customerRepository.GetByIdAsync(command.CustomerId, ct),
-        () => _productRepository.GetByIdsAsync(productIds, ct))
+        () => _customerRepository.GetByIdAsync(command.CustomerId, cancellationToken),
+        () => _productRepository.GetByIdsAsync(productIds, cancellationToken))
         .WhenAllAsync()
         .BindAsync((Customer customer, List<Product> products) =>
             Order.TryCreate(customer, products, command.LineItems));
 }
 
 // ❌ Wrong — sequential fetches
-var customer = await _customerRepository.GetByIdAsync(command.CustomerId, ct);
-var products = await _productRepository.GetByIdsAsync(command.ProductIds, ct);
+var customer = await _customerRepository.GetByIdAsync(command.CustomerId, cancellationToken);
+var products = await _productRepository.GetByIdsAsync(command.ProductIds, cancellationToken);
 ```
 
 ### State Machines (Trellis.Stateless)
@@ -205,31 +205,13 @@ public class Order : Aggregate<OrderId>
 ### EF Core
 
 - **NEVER write `HasConversion()`.** Call `ApplyTrellisConventions` in `ConfigureConventions` — it handles all scalar Trellis value objects automatically.
-- **`Money` properties** are automatically mapped as owned types by `ApplyTrellisConventions` — no `OwnsOne` configuration needed. Column naming: `UnitPrice` → `UnitPrice` (decimal) + `UnitPriceCurrency` (string). Explicit `OwnsOne` takes precedence if you need custom column names.
+- **`Money` properties** are auto-mapped by `ApplyTrellisConventions` — no `OwnsOne` needed. See §12 in `trellis-api-reference.md` for column naming.
 - **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them with `OwnsOne` in the entity configuration and configure each property explicitly.
-- Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Prefer this over `SaveChangesResultAsync` (which returns `Result<int>` row count) since repositories don't need the count. Never use bare `SaveChangesAsync`.
+- Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Never use bare `SaveChangesAsync`.
 - Use `FirstOrDefaultMaybeAsync` for optional lookups, `FirstOrDefaultResultAsync` for required lookups.
 - Use `.Where(specification)` for specification queries. Specifications support `.And()`, `.Or()`, `.Not()` composition.
-- **`Maybe<T>` properties** — use C# 13 `partial` properties. The `Trellis.EntityFrameworkCore.Generator` source generator emits the backing field and getter/setter automatically. The `MaybeConvention` (registered by `ApplyTrellisConventions`) auto-maps them as nullable columns — no `MaybeProperty()` call needed:
-
-```csharp
-// ✅ Correct — partial property (source generator handles the rest)
-public partial class Order : Aggregate<OrderId>
-{
-    public partial Maybe<DateTime> SubmittedAt { get; set; }
-    public partial Maybe<DateTime> ShippedAt { get; set; }
-}
-// No EF Core configuration needed for Maybe<T> properties
-
-// ❌ Wrong — manual backing field (old pattern, no longer needed)
-private DateTime? _submittedAt;
-public Maybe<DateTime> SubmittedAt
-{
-    get => _submittedAt is not null ? Maybe.From(_submittedAt.Value) : Maybe.None<DateTime>();
-    set => _submittedAt = value.HasValue ? value.Value : null;
-}
-```
-
+- **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. **After adding `partial Maybe<T>` properties, run `dotnet build` before writing code that references the backing field (e.g., entity configurations, LINQ queries).** The source generator must run first to emit the `_camelCase` backing field; until it does, the field does not exist and the compiler will report errors.
+- **`Maybe<T>` in indexes** — `HasIndex` with `Maybe<T>` properties requires string-based backing field references because `MaybeConvention` ignores the CLR property. Use the backing field name (underscore + camelCase): `builder.HasIndex("Status", "_submittedAt")`. Do NOT use lambda expressions like `o => new { o.Status, o.SubmittedAt }` — they will silently fail.
 - **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. See §12 in `trellis-api-reference.md`.
 - **Entity configurations:** Use `IEntityTypeConfiguration<T>` per entity in the Acl layer — one file per aggregate/entity (e.g., `OrderConfiguration.cs`, `CustomerConfiguration.cs`). Register them with `ApplyConfigurationsFromAssembly` in `OnModelCreating`. Do NOT inline configuration in `DbContext.OnModelCreating`.
 - **Migrations:** After implementing all entities and configurations, run `dotnet ef migrations add InitialCreate -p Acl/src -s Api/src` to generate the initial migration. Do not rely on `EnsureCreated()` for anything beyond a quick prototype.

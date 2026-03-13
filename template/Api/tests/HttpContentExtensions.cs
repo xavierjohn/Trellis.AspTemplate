@@ -7,6 +7,7 @@ public static class HttpContentExtensions
 {
     static readonly JsonSerializerOptions s_options = new()
     {
+        PropertyNameCaseInsensitive = true,
         Converters =
         {
             new JsonStringEnumConverter()
