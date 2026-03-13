@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Api.v2023_06_06.Controllers;
+﻿namespace BestWeatherForecast.Api._2023_06_06.Controllers;
 
 using BestWeatherForecast.Application.WeatherForcast;
 using BestWeatherForecast.Domain;

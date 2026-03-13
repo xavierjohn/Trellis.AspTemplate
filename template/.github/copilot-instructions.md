@@ -275,7 +275,7 @@ services.AddApiVersioning()
 
 **Folder & namespace convention:** Place controllers in `Api/src/{date}/Controllers/` with a matching namespace. The date in the namespace (with underscores) maps to the API version (with hyphens):
 - Folder: `Api/src/2026-11-12/Controllers/`
-- Namespace: `{ServiceName}.Api.v2026_11_12.Controllers`
+- Namespace: `{ServiceName}.Api._2026_11_12.Controllers`
 - Resolved version: `2026-11-12`
 
 ### OpenAPI & Scalar
