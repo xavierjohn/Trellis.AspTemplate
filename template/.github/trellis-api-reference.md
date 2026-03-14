@@ -1183,7 +1183,7 @@ configurationBuilder.ApplyTrellisConventions(typeof(Order).Assembly);
 
 ### Money Property Convention
 
-`Money` properties on entities are automatically mapped as owned types — no `OwnsOne` configuration needed. Column naming convention:
+`Money` properties on entities are automatically mapped as owned types — no `OwnsOne` configuration needed. This applies to top-level aggregate properties **and** properties inside `OwnsMany` owned collections (e.g., `OrderLineItem.UnitPrice` inside `Order.LineItems`). Column naming convention:
 
 | Property Name | Amount Column | Currency Column | Amount Type | Currency Type |
 |---------------|---------------|-----------------|-------------|---------------|
