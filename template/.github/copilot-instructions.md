@@ -89,6 +89,19 @@ The template provides the complete project structure. Do NOT modify or recreate 
 ```
 The `.http` file then references them as `{{adminActor}}`, `{{host}}`, etc. Only simple scalar `@variables` (strings, numbers, response-chained IDs) belong in the `.http` file itself.
 
+## Implementation Order and Build Checkpoints
+
+🔴 **Implement layer by layer and build between layers.** Trellis uses source generators (for `partial Maybe<T>` properties and Mediator) that emit code during compilation. Later layers (Acl, Api) reference generated code from earlier layers. If you create all files at once without building, the generated code won't exist and the compiler will report errors.
+
+**Required sequence:**
+1. **Domain/src** — Implement all value objects, aggregates, entities, events, specifications, permissions. Then run `dotnet build`.
+2. **Application/src** — Implement repository interfaces, commands, queries, handlers. Then run `dotnet build`.
+3. **Acl/src** — Implement DbContext, entity configurations, repositories, resource loaders. Then run `dotnet build`.
+4. **Api/src** — Implement controllers, DTOs, Program.cs, IActorProvider. Then run `dotnet build`.
+5. **Tests** — Implement Domain.Tests, Application.Tests, Api.Tests. Then run `dotnet test`.
+
+The build after Domain is especially critical — it triggers the `MaybePartialPropertyGenerator` which emits the `_camelCase` backing fields that Acl entity configurations reference (e.g., `HasIndex("Status", "_submittedAt")`).
+
 ## Key Conventions
 
 ### Commands and Queries
@@ -196,7 +209,7 @@ private StateMachine<string, string> Machine => _machine ??= ConfigureStateMachi
 - 🔴 Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Never use bare `SaveChangesAsync`.
 - 🟡 Use `FirstOrDefaultMaybeAsync` for optional lookups, `FirstOrDefaultResultAsync` for required lookups.
 - 🟡 Use `.Where(specification)` for specification queries. Specifications support `.And()`, `.Or()`, `.Not()` composition.
-- 🔴 **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. **After adding `partial Maybe<T>` properties, run `dotnet build` before writing code that references the backing field (e.g., entity configurations, LINQ queries).** The source generator must run first to emit the `_camelCase` backing field; until it does, the field does not exist and the compiler will report errors.
+- 🔴 **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. The `_camelCase` backing field is emitted by the source generator during `dotnet build` (see **Implementation Order and Build Checkpoints** above).
 - 🔴 **`Maybe<T>` in indexes** — `HasIndex` with `Maybe<T>` properties requires string-based backing field references because `MaybeConvention` ignores the CLR property. Use the backing field name (underscore + camelCase): `builder.HasIndex("Status", "_submittedAt")`. Do NOT use lambda expressions like `o => new { o.Status, o.SubmittedAt }` — they will silently fail.
 - 🟡 **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. For comparisons on `Maybe<T>` properties (e.g., date thresholds), use `WhereLessThan`, `WhereLessThanOrEqual`, `WhereGreaterThan`, `WhereGreaterThanOrEqual`. These rewrite the expression tree to target the backing storage field. See §12 in `trellis-api-reference.md`.
 ```csharp
