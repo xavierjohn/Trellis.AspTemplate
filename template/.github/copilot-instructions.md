@@ -110,7 +110,13 @@ The build after Domain is especially critical — it triggers the `MaybePartialP
 - 🟡 Use `IValidate` **only** for cross-field or collection validation (e.g., "at least one line item"). Single-field validation is handled by value objects.
 - 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can cancel").
 - **`IAuthorizeResource<TResource>`:** The pipeline loads the resource via an `IResourceLoader<TMessage, TResource>` before calling `Authorize(Actor, TResource)`. The handler receives the entity already authorized — no auth logic in handlers. Register the resource loader as scoped in the Acl layer. Use `ResourceLoaderById<TMessage, TResource, TId>` as a convenience base class for ID-based lookups.
-- **Registration:** Use `services.AddResourceAuthorization(assembly)` in the Acl layer's `DependencyInjection.cs` to scan-register all `IAuthorizeResource<T>` commands and their `IResourceLoader` implementations. Alternatively, register explicitly with `services.AddResourceAuthorization<TMessage, TResource, TResponse>()`.
+- **Registration:** `AddResourceAuthorization(assembly)` scans a **single assembly** for both `IAuthorizeResource<T>` commands and `IResourceLoader<,>` implementations. Since commands live in **Application** and loaders live in **Acl**, call it twice in the Acl layer's `DependencyInjection.cs`:
+```csharp
+// In Acl/src/DependencyInjection.cs
+services.AddResourceAuthorization(typeof(CancelOrderCommand).Assembly);  // Application — finds IAuthorizeResource commands
+services.AddResourceAuthorization(typeof(CancelOrderResourceLoader).Assembly);  // Acl — finds IResourceLoader implementations
+```
+Alternatively, register explicitly per command: `services.AddResourceAuthorization<CancelOrderCommand, Order, Result<Order>>();` plus `services.AddScoped<IResourceLoader<CancelOrderCommand, Order>, CancelOrderResourceLoader>();`.
 - 🔴 **`Unit` type disambiguation:** Both `Trellis` and `Mediator` define a `Unit` type. In handler return types and ROP chains, always use `Trellis.Unit` (or `default(Trellis.Unit)`). The global `using Trellis;` directive makes the unqualified `Unit` resolve to `Trellis.Unit`, but when both namespaces are imported, qualify explicitly.
 
 ### Handler ROP Pattern
