@@ -542,11 +542,21 @@ Maybe<string> fullName =
 
 ### WhenAll — Parallel Execution
 
-Runs multiple `Task<Result<T>>` in parallel and combines into a tuple result.
+Awaits multiple `Task<Result<T>>` in parallel and combines into a tuple result.
+**This is an extension method on a tuple of tasks**, enabling fluent chaining with `ParallelAsync`.
 
 ```csharp
-Task<Result<(T1, T2)>> WhenAllAsync<T1, T2>(Task<Result<T1>>, Task<Result<T2>>)
+// Extension method on value tuple — enables .WhenAllAsync() fluent chain
+Task<Result<(T1, T2)>> WhenAllAsync<T1, T2>(this (Task<Result<T1>>, Task<Result<T2>>) tasks)
 // ... through 9-tuple arity
+
+// Usage — fluent chain with ParallelAsync
+var result = await Result.ParallelAsync(
+    () => _customerRepo.GetByIdAsync(customerId, ct),
+    () => _productRepo.GetByIdsAsync(productIds, ct))
+    .WhenAllAsync()
+    .BindAsync((Customer customer, List<Product> products) =>
+        Order.TryCreate(customer, products, lineItems));
 ```
 
 ### ParallelAsync — Launch Parallel Operations
@@ -971,6 +981,8 @@ ActionResult<T> ToCreatedAtActionResult<T>(this Result<T> result, ControllerBase
     string actionName, Func<T, object?> routeValues, string? controllerName = null)
 
 // Transform overloads — map domain type to DTO inline
+ActionResult<TOut> ToActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controller,
+    Func<TIn, TOut> map)
 ActionResult<TOut> ToActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controller,
     Func<TIn, ContentRangeHeaderValue> funcRange, Func<TIn, TOut> funcValue)
 ActionResult<TOut> ToCreatedAtActionResult<TValue, TOut>(this Result<TValue> result, ControllerBase controller,
@@ -1459,6 +1471,21 @@ IQueryable<TEntity> WhereEquals<TEntity, TInner>(
     Expression<Func<TEntity, Maybe<TInner>>> propertySelector,
     TInner value)
 
+// WhereLessThan — WHERE backing_field < @value (TInner : IComparable<TInner>)
+IQueryable<TEntity> WhereLessThan<TEntity, TInner>(
+    this IQueryable<TEntity> source,
+    Expression<Func<TEntity, Maybe<TInner>>> propertySelector,
+    TInner value)
+
+// WhereLessThanOrEqual — WHERE backing_field <= @value
+IQueryable<TEntity> WhereLessThanOrEqual<TEntity, TInner>(...)
+
+// WhereGreaterThan — WHERE backing_field > @value
+IQueryable<TEntity> WhereGreaterThan<TEntity, TInner>(...)
+
+// WhereGreaterThanOrEqual — WHERE backing_field >= @value
+IQueryable<TEntity> WhereGreaterThanOrEqual<TEntity, TInner>(...)
+
 // OrderByMaybe — ORDER BY backing_field ASC
 IOrderedQueryable<TEntity> OrderByMaybe<TEntity, TInner>(
     this IQueryable<TEntity> source,
@@ -1479,11 +1506,18 @@ IOrderedQueryable<TEntity> ThenByMaybeDescending<TEntity, TInner>(
     this IOrderedQueryable<TEntity> source,
     Expression<Func<TEntity, Maybe<TInner>>> propertySelector)
 
-// Usage
+// Usage — equality and null checks
 var withoutPhone = await context.Customers.WhereNone(c => c.Phone).ToListAsync(ct);
 var withPhone    = await context.Customers.WhereHasValue(c => c.Phone).ToListAsync(ct);
 var matches      = await context.Customers.WhereEquals(c => c.Phone, phone).ToListAsync(ct);
 var ordered      = await context.Customers.WhereHasValue(c => c.Phone).OrderByMaybe(c => c.Phone).ToListAsync(ct);
+
+// Usage — comparison operators (for Maybe<DateTime>, Maybe<int>, etc.)
+var cutoff = DateTime.UtcNow.AddDays(-7);
+var overdue = await context.Orders
+    .Where(o => o.Status == OrderStatus.Submitted)
+    .WhereLessThan(o => o.SubmittedAt, cutoff)
+    .ToListAsync(ct);
 ```
 
 ### Maybe\<T\> Index, Update, and Diagnostics Helpers

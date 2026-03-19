@@ -198,13 +198,31 @@ private StateMachine<string, string> Machine => _machine ??= ConfigureStateMachi
 - 🟡 Use `.Where(specification)` for specification queries. Specifications support `.And()`, `.Or()`, `.Not()` composition.
 - 🔴 **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. **After adding `partial Maybe<T>` properties, run `dotnet build` before writing code that references the backing field (e.g., entity configurations, LINQ queries).** The source generator must run first to emit the `_camelCase` backing field; until it does, the field does not exist and the compiler will report errors.
 - 🔴 **`Maybe<T>` in indexes** — `HasIndex` with `Maybe<T>` properties requires string-based backing field references because `MaybeConvention` ignores the CLR property. Use the backing field name (underscore + camelCase): `builder.HasIndex("Status", "_submittedAt")`. Do NOT use lambda expressions like `o => new { o.Status, o.SubmittedAt }` — they will silently fail.
-- 🟡 **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. See §12 in `trellis-api-reference.md`.
+- 🟡 **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. For comparisons on `Maybe<T>` properties (e.g., date thresholds), use `WhereLessThan`, `WhereLessThanOrEqual`, `WhereGreaterThan`, `WhereGreaterThanOrEqual`. These rewrite the expression tree to target the backing storage field. See §12 in `trellis-api-reference.md`.
+```csharp
+// ✅ Overdue orders: SubmittedAt < 7 days ago
+var cutoff = DateTime.UtcNow.AddDays(-7);
+context.Orders
+    .Where(o => o.Status == OrderStatus.Submitted)
+    .WhereLessThan(o => o.SubmittedAt, cutoff);
+```
 - 🟡 **Entity configurations:** Use `IEntityTypeConfiguration<T>` per entity in the Acl layer — one file per aggregate/entity (e.g., `OrderConfiguration.cs`, `CustomerConfiguration.cs`). Register them with `ApplyConfigurationsFromAssembly` in `OnModelCreating`. Do NOT inline configuration in `DbContext.OnModelCreating`.
 - 🟡 **Migrations:** After implementing all entities and configurations, run `dotnet ef migrations add InitialCreate -p Acl/src -s Api/src` to generate the initial migration. Do not rely on `EnsureCreated()` for anything beyond a quick prototype.
 
 ### MVC Controllers
 
 Controllers inherit `ControllerBase` with `[ApiController]`. Actions are thin — send command via Mediator, chain `.ToActionResult(this)` or `.ToActionResultAsync(this)`.
+
+**Mapping domain types to DTOs in controllers:** Use the mapping overload to transform results inline:
+```csharp
+// GET endpoint — map domain to DTO
+var result = await _sender.Send(new GetOrderByIdQuery(id), ct);
+return result.ToActionResult(this, OrderDto.From);
+
+// Or fully async chained:
+return await _sender.Send(new GetOrderByIdQuery(id), ct)
+    .ToActionResultAsync(this, OrderDto.From);
+```
 
 **Every controller must have:**
 - `[ApiController]` attribute and inherit `ControllerBase`
@@ -288,7 +306,18 @@ The Scalar UI is available at `/scalar/{version}` (e.g., `/scalar/2026-11-12`).
 
 **Do NOT** create `GlobalUsings.cs` files in test projects. Global usings come from `build/test.props`.
 
-🟡 **`Maybe<T>` assertions** — use `.Should().HaveValue()` and `.Should().BeNone()` (from `Trellis.Testing`) to assert on `Maybe<T>` values. Do NOT use `.Match()` or manual unwrapping in test assertions.
+🔴 **`Maybe<T>` assertions** — use `.Should().HaveValue()` and `.Should().BeNone()` (from `Trellis.Testing`) to assert on `Maybe<T>` values. Do NOT use `.HasValue.Should().BeTrue()` or `.HasNoValue.Should().BeTrue()` — these bypass Trellis.Testing's assertion messages. Also available: `.Should().HaveValueEqualTo(expected)` and `.Should().HaveValueMatching(predicate)`.
+```csharp
+// ✅ Correct — Trellis.Testing assertions
+customer.PhoneNumber.Should().HaveValue();
+customer.PhoneNumber.Should().BeNone();
+order.SubmittedAt.Should().HaveValue();
+order.SubmittedAt.Should().HaveValueMatching(d => d > DateTime.UtcNow.AddMinutes(-1));
+
+// ❌ Wrong — bypasses Trellis.Testing, poor error messages
+customer.PhoneNumber.HasValue.Should().BeTrue();
+customer.PhoneNumber.HasNoValue.Should().BeTrue();
+```
 
 ## Trellis Feedback
 
