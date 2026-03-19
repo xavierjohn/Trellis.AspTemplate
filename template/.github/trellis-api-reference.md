@@ -24,7 +24,7 @@
 | Trellis.Asp.Authorization | `Trellis.Asp.Authorization` | Trellis.Authorization, ASP.NET Core |
 | Trellis.Http | `Trellis.Http` | Trellis.Results |
 | Trellis.Mediator | `Trellis.Mediator` | Mediator, Trellis.Authorization |
-| Trellis.Testing | `Trellis.Testing` | FluentAssertions |
+| Trellis.Testing | `Trellis.Testing`, `Trellis.Testing.Fakes` | FluentAssertions, Trellis.Authorization |
 | Trellis.FluentValidation | `Trellis.FluentValidation` | FluentValidation |
 | Trellis.Stateless | `Trellis.Stateless` | Stateless |
 | Trellis.EntityFrameworkCore | `Trellis.EntityFrameworkCore` | EF Core |
@@ -164,11 +164,32 @@ Maybe<T> AsMaybe<T>(this T value) where T : class
 // AsNullable
 T? AsNullable<T>(this Maybe<T> maybe) where T : struct
 
+// ToMaybe (from Result) — discards error, keeps value if success
+Maybe<T> ToMaybe<T>(this Result<T>) where T : notnull
+Task<Maybe<T>> ToMaybeAsync<T>(this Task<Result<T>>) where T : notnull
+ValueTask<Maybe<T>> ToMaybeAsync<T>(this ValueTask<Result<T>>) where T : notnull
+
 // ToResult (from Maybe)
 Result<T> ToResult<T>(this Maybe<T>, Error) where T : notnull
 Result<T> ToResult<T>(this Maybe<T>, Func<Error>) where T : notnull
 Task<Result<T>> ToResultAsync<T>(this Task<Maybe<T>>, Error)
+Task<Result<T>> ToResultAsync<T>(this Task<Maybe<T>>, Func<Error>)
 ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<Maybe<T>>, Error)
+ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<Maybe<T>>, Func<Error>)
+
+// ToResult (from nullable)
+Result<T> ToResult<T>(this T? value, Error) where T : struct
+Result<T> ToResult<T>(this T? value, Func<Error>) where T : struct
+Result<T> ToResult<T>(this T? value, Error) where T : class
+Result<T> ToResult<T>(this T? value, Func<Error>) where T : class
+Task<Result<T>> ToResultAsync<T>(this Task<T?> valueTask, Error) where T : struct
+Task<Result<T>> ToResultAsync<T>(this Task<T?> valueTask, Func<Error>) where T : struct
+Task<Result<T>> ToResultAsync<T>(this Task<T?> valueTask, Error) where T : class
+Task<Result<T>> ToResultAsync<T>(this Task<T?> valueTask, Func<Error>) where T : class
+ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> valueTask, Error) where T : struct
+ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> valueTask, Func<Error>) where T : struct
+ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> valueTask, Error) where T : class
+ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> valueTask, Func<Error>) where T : class
 ```
 
 ---
@@ -182,6 +203,8 @@ string Code { get; }
 string Detail { get; }
 string? Instance { get; }
 ```
+
+**Equality:** `Equals` and `GetHashCode` are `virtual`. Base `Error` compares `GetType()`, `Code`, `Detail`, and `Instance` (DDD Value Object semantics). `ValidationError` additionally compares `FieldErrors`. `AggregateError` additionally compares `Errors`. Override in custom error types to include additional properties.
 
 ### Factory Methods
 
@@ -238,6 +261,18 @@ IDictionary<string, string[]> ToDictionary()
 IReadOnlyList<Error> Errors { get; }
 AggregateError(IReadOnlyList<Error> errors)
 AggregateError(IReadOnlyList<Error> errors, string code)
+
+// Extracts and merges all nested ValidationError field errors.
+// Non-validation errors are ignored. Returns null if no validation errors exist.
+ValidationError? FlattenValidationErrors()
+```
+
+### FlattenValidationErrors — Result Extension
+
+Convenience extension on `Result<T>` that delegates to `AggregateError.FlattenValidationErrors()` when the error is an `AggregateError`, or returns the error directly when it is a `ValidationError`.
+
+```csharp
+ValidationError? FlattenValidationErrors<T>(this Result<T> result)
 ```
 
 ### CombineErrorExtensions — Merge Errors
@@ -308,6 +343,25 @@ static Result<string> EnsureNotNullOrWhiteSpace(this string?, Error error)
 // Async: 5 overloads × 6 async patterns (Task Left/Right/Both + ValueTask Left/Right/Both) = 30 variants
 ```
 
+### EnsureAll — Validation Accumulation
+
+Runs ALL validation checks and accumulates failures into a single error, instead of short-circuiting on the first failure. Uses `Error.Combine()` to merge errors — `ValidationError` instances are merged, mixed types create `AggregateError`.
+
+```csharp
+Result<T> EnsureAll<T>(this Result<T>, params (Func<T, bool> predicate, Error error)[] checks)
+// + Task and ValueTask async variants
+```
+
+Example:
+```csharp
+var result = Result.Success(request)
+    .EnsureAll(
+        (r => r.Name.Length > 0, Error.Validation("Name required", "name")),
+        (r => r.Age >= 18, Error.Validation("Must be 18+", "age")),
+        (r => r.Email.Contains('@'), Error.Validation("Invalid email", "email")));
+// Returns ONE ValidationError with all 3 field errors if all fail
+```
+
 ### Tap — Side Effects on Success
 
 Executes action on success, returns original Result unchanged.
@@ -356,6 +410,7 @@ TOut MatchError<TIn, TOut>(
     Func<RateLimitError, TOut>? onRateLimit = null,
     Func<ServiceUnavailableError, TOut>? onServiceUnavailable = null,
     Func<UnexpectedError, TOut>? onUnexpected = null,
+    Func<AggregateError, TOut>? onAggregate = null,  // handles AggregateError specifically; falls through to onError when null
     Func<Error, TOut>? onError = null)
 // + async variants (Task Left-only, Task Both with CancellationToken)
 ```
@@ -370,6 +425,7 @@ void SwitchError<TIn>(
     Action<TIn> onSuccess,
     Action<ValidationError>? onValidation = null,
     // ... same error type parameters as MatchError ...
+    Action<AggregateError>? onAggregate = null,      // handles AggregateError specifically; falls through to onError when null
     Action<Error>? onError = null)
 // + SwitchErrorAsync (Task with CancellationToken)
 ```
@@ -394,9 +450,26 @@ Result<T> MapOnFailure<T>(this Result<T>, Func<Error, Error>)
 // + 6 async variants
 ```
 
+### Recover — Simple Fallback on Failure
+
+Converts any failure to success with a simple fallback value. Sugar for the most common `RecoverOnFailure` pattern.
+
+```csharp
+Result<T> Recover<T>(this Result<T>, T fallback)
+Result<T> Recover<T>(this Result<T>, Func<T> fallbackFunc)
+Result<T> Recover<T>(this Result<T>, Func<Error, T> fallbackFunc)
+// + 6 async variants (Task and ValueTask)
+```
+
+Example:
+```csharp
+var maxRetries = configService.GetInt("max_retries").Recover(3);
+var items = recommendationEngine.GetFor(userId).Recover(Array.Empty<Product>());
+```
+
 ### RecoverOnFailure — Recover from Failure
 
-Attempts to recover from a failed Result by providing an alternative.
+Attempts to recover from a failed Result by providing an alternative Result.
 
 ```csharp
 Result<T> RecoverOnFailure<T>(this Result<T>, Func<Result<T>>)
@@ -413,15 +486,16 @@ Result<T> When<T>(this Result<T>, Func<T, bool> predicate, Func<T, Result<T>> ac
 Result<T> When<T>(this Result<T>, bool condition, Func<T, Result<T>> action)
 Result<T> Unless<T>(this Result<T>, Func<T, bool> predicate, Func<T, Result<T>> action)
 Result<T> Unless<T>(this Result<T>, bool condition, Func<T, Result<T>> action)
-// + async variants
+// + async variants, including Task<Result<T>> and ValueTask<Result<T>> boolean-condition overloads
 ```
 
 ### Traverse — Apply to Collection
 
 ```csharp
-Result<IEnumerable<TOut>> Traverse<TIn, TOut>(this IEnumerable<TIn>, Func<TIn, Result<TOut>>)
-Task<Result<IEnumerable<TOut>>> TraverseAsync<TIn, TOut>(this IEnumerable<TIn>, Func<TIn, Task<Result<TOut>>>)
+Result<IReadOnlyList<TOut>> Traverse<TIn, TOut>(this IEnumerable<TIn>, Func<TIn, Result<TOut>>)
+Task<Result<IReadOnlyList<TOut>>> TraverseAsync<TIn, TOut>(this IEnumerable<TIn>, Func<TIn, Task<Result<TOut>>>)
 // + CancellationToken overloads, ValueTask variants
+// Returns IReadOnlyList<TOut> (not IEnumerable<TOut>) — materializes eagerly
 ```
 
 ### Nullable → Result
@@ -438,12 +512,32 @@ Result<T> ToResult<T>(this T? value, Error error) where T : class
 Result<T> ToResult<T>(this T value)  // wraps value as Success
 ```
 
-### LINQ Support
+### LINQ Support (Result)
 
 ```csharp
 Result<TOut> Select<TIn, TOut>(this Result<TIn>, Func<TIn, TOut>)            // = Map
 Result<TResult> SelectMany<TSource, TCollection, TResult>(...)                // = Bind+Map
 Result<TSource> Where<TSource>(this Result<TSource>, Func<TSource, bool>)     // = Ensure
+```
+
+### LINQ Support (Maybe)
+
+Enables `from`/`select` query syntax for composing optional values.
+
+```csharp
+Maybe<TOut> Select<TIn, TOut>(this Maybe<TIn>, Func<TIn, TOut>)              // = Map
+Maybe<TResult> SelectMany<TSource, TCollection, TResult>(
+    this Maybe<TSource>,
+    Func<TSource, Maybe<TCollection>>,
+    Func<TSource, TCollection, TResult>)                                      // = FlatMap
+```
+
+Example:
+```csharp
+Maybe<string> fullName =
+    from first in firstName
+    from last in lastName
+    select $"{first} {last}";
 ```
 
 ### WhenAll — Parallel Execution
@@ -502,13 +596,17 @@ Result<T> DebugOnFailure<T>(this Result<T>, Action<Error>)
 
 ROP operations automatically create `Activity` spans when instrumentation is enabled. Each `Bind`, `Map`, `Tap`, `Ensure`, `RecoverOnFailure`, and `Combine` call starts a child activity with success/error status.
 
+Use `AddResultsInstrumentation()` when you need deep pipeline forensics. It traces every `Result<T>` step and can be noisy in normal production monitoring.
+For lower-noise day-to-day diagnostics, `AddPrimitiveValueObjectInstrumentation()` is often the better default because it emits spans at value creation and validation boundaries.
+
 ### Registration
 
 ```csharp
 services.AddOpenTelemetry()
     .WithTracing(builder => builder
-        .AddResultsInstrumentation()                    // ROP operations (Bind, Map, Tap, Ensure, etc.)
-        .AddPrimitiveValueObjectInstrumentation());     // Value object creation (EmailAddress.TryCreate, etc.)
+    .AddPrimitiveValueObjectInstrumentation());     // Recommended default diagnostic signal
+
+// AddResultsInstrumentation() is available when you need to trace the full ROP pipeline.
 ```
 
 ### Extension Methods
@@ -578,7 +676,12 @@ DateTime OccurredAt { get; }
 Structural equality based on `GetEqualityComponents()`. Hash code is cached (immutability assumed).
 
 ```csharp
-protected abstract IEnumerable<IComparable> GetEqualityComponents()
+protected abstract IEnumerable<IComparable?> GetEqualityComponents()
+
+// Helper for including Maybe<T> in equality components.
+// Returns the inner value if present, or null if empty.
+protected static IComparable? MaybeComponent<T>(Maybe<T> maybe) where T : notnull, IComparable
+
 // Operators: ==, !=, <, <=, >, >=
 // Implements: IComparable<ValueObject>, IEquatable<ValueObject>
 ```
@@ -610,6 +713,8 @@ Composable business rules that produce `Expression<Func<T, bool>>`.
 ```csharp
 abstract Expression<Func<T, bool>> ToExpression()
 bool IsSatisfiedBy(T entity)
+protected virtual bool CacheCompilation => true    // when true (default), IsSatisfiedBy caches the compiled expression
+                                                   // override to false for specifications that capture mutable state
 Specification<T> And(Specification<T> other)
 Specification<T> Or(Specification<T> other)
 Specification<T> Not()
@@ -708,18 +813,24 @@ Inherits `ScalarValueObject<TSelf, decimal>`. Same pattern as RequiredInt with `
 **NOT a ScalarValueObject** — standalone hierarchy. Smart enum pattern.
 
 ```csharp
-string Name { get; }      // auto-derived from field name
-int Value { get; }         // auto-assigned (0, 1, 2...)
+string Value { get; }      // semantic symbolic value; defaults to field name or [EnumValue(...)]
+int Ordinal { get; }       // declaration-order metadata, not stable identity
 
 static IReadOnlyCollection<TSelf> GetAll()
-static Result<TSelf> TryFromName(string? name, string? fieldName = null)  // case-insensitive
+static Result<TSelf> TryFromName(string? name, string? fieldName = null)  // case-insensitive symbolic value lookup
+bool Is(TSelf value)                               // allocation-free single-value check
+bool Is(TSelf value1, TSelf value2)                // allocation-free two-value check
 bool Is(params TSelf[] values)
+bool IsNot(TSelf value)                            // allocation-free single-value check
+bool IsNot(TSelf value1, TSelf value2)             // allocation-free two-value check
 bool IsNot(params TSelf[] values)
 
 // Source-generated:
 static Result<Foo> TryCreate(string? value, string? fieldName = null)
 // IParsable<Foo>, [JsonConverter(typeof(RequiredEnumJsonConverter<Foo>))]
 ```
+
+Use `[EnumValue("code")]` only when the external name must differ from the default field name.
 
 ## Concrete Value Objects (namespace: `Trellis.Primitives`)
 
@@ -742,7 +853,7 @@ All have `TryCreate` → `Result<T>` and `Create` → `T` (throws). All implemen
 
 ### Money (extends ValueObject, NOT ScalarValueObject)
 
-Multi-value: `Amount` (decimal) + `Currency` (CurrencyCode). JSON: `{"amount": 99.99, "currency": "USD"}`.
+Structured value object with two semantic components: `Amount` (decimal) + `Currency` (CurrencyCode). JSON: `{"amount": 99.99, "currency": "USD"}`.
 
 ```csharp
 decimal Amount { get; }
@@ -793,6 +904,7 @@ string? GetAttribute(string key)
 
 ```csharp
 interface IActorProvider { Actor GetCurrentActor(); }
+interface IAsyncActorProvider { Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default); }
 interface IAuthorize { IReadOnlyList<string> RequiredPermissions { get; } }
 interface IAuthorizeResource<TResource> { IResult Authorize(Actor actor, TResource resource); }
 interface IResourceLoader<TMessage, TResource> { Task<Result<TResource>> LoadAsync(TMessage message, CancellationToken ct); }
@@ -802,6 +914,19 @@ abstract class ResourceLoaderById<TMessage, TResource, TId> : IResourceLoader<TM
     protected abstract Task<Result<TResource>> GetByIdAsync(TId id, CancellationToken ct);
 }
 ```
+
+### IAsyncActorProvider
+
+Asynchronous variant of `IActorProvider`. Use when permission resolution requires async operations such as database lookups or external service calls.
+
+```csharp
+public interface IAsyncActorProvider
+{
+    Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default);
+}
+```
+
+Use `IActorProvider` when the actor can be resolved synchronously (e.g., from in-memory claims). Use `IAsyncActorProvider` when resolution requires I/O (e.g., loading permissions from a database).
 
 ## ActorAttributes Constants
 
@@ -1005,7 +1130,7 @@ Resource-based authorization with a loaded resource (`IAuthorizeResource<TResour
 | Behavior | Constraint on TMessage | Purpose |
 |----------|----------------------|---------|
 | `ExceptionBehavior` | `IMessage` | Catches unhandled exceptions → `Error.Unexpected` |
-| `TracingBehavior` | `IMessage` | OpenTelemetry Activity span |
+| `TracingBehavior` | `IMessage` | OpenTelemetry Activity span (`ActivitySourceName = "Trellis.Mediator"`) |
 | `LoggingBehavior` | `IMessage` | Structured logging with duration |
 | `AuthorizationBehavior` | `IAuthorize, IMessage` | Checks `HasAllPermissions` → `Error.Forbidden` |
 | `ResourceAuthorizationBehavior<,,>` | `IAuthorizeResource<TResource>, IMessage` | Loads resource via `IResourceLoader`, delegates to `message.Authorize(actor, resource)`. Auto-discovered via `AddResourceAuthorization(Assembly)`. |
@@ -1016,6 +1141,14 @@ Resource-based authorization with a loaded resource (`IAuthorizeResource<TResour
 ```csharp
 interface IValidate { IResult Validate(); }
 ```
+
+### TracingBehavior Constants
+
+```csharp
+public const string ActivitySourceName = "Trellis.Mediator";
+```
+
+Use `ActivitySourceName` to register the activity source with OpenTelemetry: `builder.AddSource(TracingBehavior<IMessage, IResult>.ActivitySourceName)`.
 
 ### Registration
 
@@ -1116,6 +1249,71 @@ await repo.DeleteAsync(orderId);
 repo.PublishedEvents                                   // IReadOnlyList<IDomainEvent>
 ```
 
+## TestActorProvider and TestActorScope
+
+**Namespace: `Trellis.Testing.Fakes`**
+
+Mutable `IActorProvider` and `IAsyncActorProvider` for authorization testing. Uses `AsyncLocal<Actor?>` internally so parallel tests sharing a singleton provider never interfere. `WithActor` returns a scope that restores the previous actor on dispose, eliminating `try/finally` boilerplate.
+
+Implements both `IActorProvider` (sync) and `IAsyncActorProvider` (async). Register as both interfaces in DI when the system under test uses `IAsyncActorProvider`.
+
+### Construction
+
+```csharp
+var actorProvider = new TestActorProvider("admin", "Orders.Read", "Orders.Write");
+var actorFromInstance = new TestActorProvider(actor);               // from Actor instance
+```
+
+### Scoped Actor Switching
+
+```csharp
+// Temporarily switch actor — restored on dispose
+await using var scope1 = actorProvider.WithActor("user-1", "Orders.Read");
+await using var scope2 = actorProvider.WithActor(actor);           // from Actor instance
+
+// Synchronous dispose also supported
+using var scope3 = actorProvider.WithActor("user-1", "Orders.Read");
+```
+
+### Nested Scopes
+
+```csharp
+await using (actorProvider.WithActor("user-1", "Read"))
+{
+    await using (actorProvider.WithActor("user-2", "Write"))
+    {
+        // actor is user-2
+    }
+    // actor is user-1
+}
+// actor is admin
+```
+
+## ServiceCollection Extensions
+
+Replaces existing `IResourceLoader<TMessage, TResource>` DI registrations with a test implementation. Registered as scoped, matching the production lifetime.
+
+```csharp
+// Stateless fake — capture a pre-created instance
+var fakeLoader = new FakeOrderResourceLoader(fakeRepo);
+services.ReplaceResourceLoader<CancelOrderCommand, Order>(_ => fakeLoader);
+
+// Scoped dependency — resolve from the container
+services.ReplaceResourceLoader<CancelOrderCommand, Order>(
+    sp => new FakeOrderResourceLoader(sp.GetRequiredService<AppDbContext>()));
+// Internally: RemoveAll + AddScoped
+```
+
+## WebApplicationFactory Extensions
+
+Creates an `HttpClient` with the `X-Test-Actor` header pre-set, encoding actor identity and permissions as JSON.
+
+```csharp
+// Extension on WebApplicationFactory<TEntryPoint>
+var client = factory.CreateClientWithActor("user-1", "Orders.Create", "Orders.Read");
+// Sets header: X-Test-Actor: {"Id":"user-1","Permissions":["Orders.Create","Orders.Read"]}
+```
+
 ---
 
 # 10. Trellis.FluentValidation
@@ -1140,6 +1338,24 @@ Task<Result<T>> ValidateToResultAsync<T>(this IValidator<T> validator, T value, 
 ```csharp
 Result<TState> FireResult<TState, TTrigger>(this StateMachine<TState, TTrigger> stateMachine, TTrigger trigger)
 // Success → new state | Invalid transition → Error.Domain with code "state.machine.invalid.transition"
+```
+
+### LazyStateMachine\<TState, TTrigger\>
+
+Defers state machine construction until first use, solving the ORM materialization problem where `stateAccessor` reads a default or uninitialized value before entity properties are populated.
+
+```csharp
+// Constructor — stateAccessor/stateMutator not invoked, configure not called
+new LazyStateMachine<TState, TTrigger>(
+    Func<TState> stateAccessor,
+    Action<TState> stateMutator,
+    Action<StateMachine<TState, TTrigger>> configure)
+
+// Properties
+StateMachine<TState, TTrigger> Machine { get; }  // Lazily creates and configures on first access
+
+// Methods
+Result<TState> FireResult(TTrigger trigger)  // Delegates to Machine.FireResult(trigger)
 ```
 
 ---
@@ -1183,7 +1399,7 @@ configurationBuilder.ApplyTrellisConventions(typeof(Order).Assembly);
 
 ### Money Property Convention
 
-`Money` properties on entities are automatically mapped as owned types — no `OwnsOne` configuration needed. Column naming convention:
+`Money` properties on entities are automatically mapped as owned types — no `OwnsOne` configuration needed. This includes `Money` properties declared on owned entity types (e.g., items inside `OwnsMany` collections). Column naming convention:
 
 | Property Name | Amount Column | Currency Column | Amount Type | Currency Type |
 |---------------|---------------|-----------------|-------------|---------------|
@@ -1220,6 +1436,8 @@ Backing field naming: `Phone` → `_phone`, `SubmittedAt` → `_submittedAt`, `A
 
 If a `Maybe<T>` property is not declared `partial`, the generator emits diagnostic `TRLSGEN100`.
 
+**Troubleshooting:** If the generator produces no output despite correct `partial` declarations, run a clean build (`dotnet clean` followed by `dotnet build`). Stale incremental build artifacts can prevent the generator from executing.
+
 ### Maybe\<T\> Queryable Extensions
 
 Because `MaybeConvention` ignores the `Maybe<T>` CLR property, EF Core cannot translate direct LINQ references to it. Use these extension methods instead of raw `EF.Property` calls:
@@ -1241,11 +1459,65 @@ IQueryable<TEntity> WhereEquals<TEntity, TInner>(
     Expression<Func<TEntity, Maybe<TInner>>> propertySelector,
     TInner value)
 
+// OrderByMaybe — ORDER BY backing_field ASC
+IOrderedQueryable<TEntity> OrderByMaybe<TEntity, TInner>(
+    this IQueryable<TEntity> source,
+    Expression<Func<TEntity, Maybe<TInner>>> propertySelector)
+
+// OrderByMaybeDescending — ORDER BY backing_field DESC
+IOrderedQueryable<TEntity> OrderByMaybeDescending<TEntity, TInner>(
+    this IQueryable<TEntity> source,
+    Expression<Func<TEntity, Maybe<TInner>>> propertySelector)
+
+// ThenByMaybe — THEN BY backing_field ASC
+IOrderedQueryable<TEntity> ThenByMaybe<TEntity, TInner>(
+    this IOrderedQueryable<TEntity> source,
+    Expression<Func<TEntity, Maybe<TInner>>> propertySelector)
+
+// ThenByMaybeDescending — THEN BY backing_field DESC
+IOrderedQueryable<TEntity> ThenByMaybeDescending<TEntity, TInner>(
+    this IOrderedQueryable<TEntity> source,
+    Expression<Func<TEntity, Maybe<TInner>>> propertySelector)
+
 // Usage
 var withoutPhone = await context.Customers.WhereNone(c => c.Phone).ToListAsync(ct);
 var withPhone    = await context.Customers.WhereHasValue(c => c.Phone).ToListAsync(ct);
 var matches      = await context.Customers.WhereEquals(c => c.Phone, phone).ToListAsync(ct);
+var ordered      = await context.Customers.WhereHasValue(c => c.Phone).OrderByMaybe(c => c.Phone).ToListAsync(ct);
 ```
+
+### Maybe\<T\> Index, Update, and Diagnostics Helpers
+
+```csharp
+// HasTrellisIndex — resolves Maybe<T> properties to mapped backing fields
+IndexBuilder<TEntity> HasTrellisIndex<TEntity>(
+    this EntityTypeBuilder<TEntity> entityTypeBuilder,
+    Expression<Func<TEntity, object?>> propertySelector)
+
+// Notes
+// - Accepts direct property access on the lambda parameter only
+// - Rejects nested selectors such as e => e.Customer.Phone
+// - Validates Maybe<T> backing fields exist on the CLR hierarchy or are already mapped
+// - Supports inherited Maybe<T> backing fields declared on base entity types
+
+// ExecuteUpdate helpers
+UpdateSettersBuilder<TEntity> SetMaybeValue<TEntity, TInner>(
+    this UpdateSettersBuilder<TEntity> updateSettersBuilder,
+    Expression<Func<TEntity, Maybe<TInner>>> propertySelector,
+    TInner value)
+
+UpdateSettersBuilder<TEntity> SetMaybeNone<TEntity, TInner>(
+    this UpdateSettersBuilder<TEntity> updateSettersBuilder,
+    Expression<Func<TEntity, Maybe<TInner>>> propertySelector)
+
+// Diagnostics
+IReadOnlyList<MaybePropertyMapping> GetMaybePropertyMappings(this IModel model)
+IReadOnlyList<MaybePropertyMapping> GetMaybePropertyMappings(this DbContext dbContext)
+string ToMaybeMappingDebugString(this IModel model)
+string ToMaybeMappingDebugString(this DbContext dbContext)
+```
+
+`MaybePropertyMapping` describes the entity type, CLR property name, generated backing field, nullable store type, column name, and resolved provider type for each discovered `Maybe<T>` mapping.
 
 ### Exception Classification
 
@@ -1285,6 +1557,7 @@ Roslyn analyzers and code fixes for correct `Result<T>`, `Maybe<T>`, and ROP pip
 | `TRLS018` | Warning | Unsafe access to `.Value` in LINQ without filtering by success state |
 | `TRLS019` | Error | Combine chain exceeds maximum supported tuple size (9) |
 | `TRLS020` | Warning | Use `SaveChangesResultAsync` instead of `SaveChangesAsync` |
+| `TRLS021` | Warning | `HasIndex` references a `Maybe<T>` property — prefer `HasTrellisIndex` or use the backing field name |
 
 Source generator diagnostics use a separate `TRLSGEN` prefix (see §3 and §12).
 
@@ -1596,7 +1869,10 @@ public void CreateOrder_ValidInput_ReturnsSuccess()
 [Fact]
 public void CreateOrder_EmptySubmit_ReturnsFailure()
 {
-    var order = Order.TryCreate(CustomerId.NewUniqueV4()).Value;
+    var orderResult = Order.TryCreate(CustomerId.NewUniqueV4());
+    orderResult.Should().BeSuccess();
+
+    var order = orderResult.Value;
     var result = order.Submit();
 
     result.Should().BeFailure()

@@ -6,11 +6,11 @@ This project uses the **Trellis** framework (.NET 10). Trellis combines Railway-
 
 ## Core Principles
 
-1. **Errors are values, not exceptions.** Use `Result<T>` for expected failures. Never throw for business logic. Never use try/catch in Domain or Application layers.
-2. **Make illegal states unrepresentable.** Every domain concept is a value object with `TryCreate`. If it exists, it's valid.
-3. **No primitive obsession.** No raw `Guid`, `string`, `int`, or `decimal` in domain properties or method signatures. Every property on an Aggregate or Entity must be a typed value object. If the same concept appears in two contexts (e.g., line item quantity vs. stock quantity), create separate types for each.
-4. **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>` subclasses to add length validation without writing custom `TryCreate`.
-5. **Optional values use `Maybe<T>`, never null.** `Maybe<PhoneNumber>`, not `PhoneNumber?`. Declare `Maybe<T>` properties as `partial` — the source generator handles the backing field.
+1. 🔴 **Errors are values, not exceptions.** Use `Result<T>` for expected failures. Never throw for business logic. Never use try/catch in Domain or Application layers.
+2. 🔴 **Make illegal states unrepresentable.** Every domain concept is a value object with `TryCreate`. If it exists, it's valid.
+3. 🔴 **No primitive obsession on domain surfaces.** No raw `Guid`, `string`, `int`, or `decimal` in aggregate/entity properties or public domain method signatures. Every property on an Aggregate or Entity must be a typed value object. If the same concept appears in two contexts (e.g., line item quantity vs. stock quantity), create separate types for each. 🟢 Private helpers and internal implementation details may use primitives when the value object adds no safety benefit.
+4. 🟡 **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>` subclasses to add length validation without writing custom `TryCreate`.
+5. 🔴 **Optional values use `Maybe<T>`, never null.** `Maybe<PhoneNumber>`, not `PhoneNumber?`. Declare `Maybe<T>` properties as `partial` — the source generator handles the backing field.
 
 ## Architecture
 
@@ -93,16 +93,20 @@ The `.http` file then references them as `{{adminActor}}`, `{{host}}`, etc. Only
 
 ### Commands and Queries
 
-- Commands receive **value object types** (e.g., `CustomerId`, not `Guid`). Scalar value binding validates at the API layer — handlers never call `TryCreate` on command properties.
-- Use `IValidate` **only** for cross-field or collection validation (e.g., "at least one line item"). Single-field validation is handled by value objects.
-- Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can cancel").
+- 🔴 Commands receive **value object types** (e.g., `CustomerId`, not `Guid`). Scalar value binding validates at the API layer — handlers never call `TryCreate` on command properties.
+- 🟡 Use `IValidate` **only** for cross-field or collection validation (e.g., "at least one line item"). Single-field validation is handled by value objects.
+- 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can cancel").
 - **`IAuthorizeResource<TResource>`:** The pipeline loads the resource via an `IResourceLoader<TMessage, TResource>` before calling `Authorize(Actor, TResource)`. The handler receives the entity already authorized — no auth logic in handlers. Register the resource loader as scoped in the Acl layer. Use `ResourceLoaderById<TMessage, TResource, TId>` as a convenience base class for ID-based lookups.
 - **Registration:** Use `services.AddResourceAuthorization(assembly)` in the Acl layer's `DependencyInjection.cs` to scan-register all `IAuthorizeResource<T>` commands and their `IResourceLoader` implementations. Alternatively, register explicitly with `services.AddResourceAuthorization<TMessage, TResource, TResponse>()`.
-- **`Unit` type disambiguation:** Both `Trellis` and `Mediator` define a `Unit` type. In handler return types and ROP chains, always use `Trellis.Unit` (or `default(Trellis.Unit)`). The global `using Trellis;` directive makes the unqualified `Unit` resolve to `Trellis.Unit`, but when both namespaces are imported, qualify explicitly.
+- 🔴 **`Unit` type disambiguation:** Both `Trellis` and `Mediator` define a `Unit` type. In handler return types and ROP chains, always use `Trellis.Unit` (or `default(Trellis.Unit)`). The global `using Trellis;` directive makes the unqualified `Unit` resolve to `Trellis.Unit`, but when both namespaces are imported, qualify explicitly.
 
 ### Handler ROP Pattern
 
 **Use `Bind`/`BindAsync` chains in handlers — not imperative `if`/`return`.** Handlers should compose Result operations using the ROP pipeline, not unwrap results manually.
+
+🟡 **Prefer `Bind`/`BindAsync`/`Tap`/`Map` chains** for straightforward flows. ROP chains make the success path obvious and ensure errors propagate automatically.
+
+🟢 **Explicit branching is acceptable** when a handler has complex conditional logic (e.g., multiple independent branches, intermediate calculations) and a chain would reduce readability. Keep branching handlers short and ensure every path still returns `Result<T>`.
 
 **Task vs ValueTask overload ambiguity (CS0121):** Trellis provides `TapAsync`, `BindAsync`, `MapAsync` overloads for both `Task` and `ValueTask`. When using async lambdas in ROP chains, the compiler cannot resolve between them. Fix by casting the lambda to an explicit `Func<>` with `Task`:
 
@@ -119,14 +123,14 @@ The `.http` file then references them as `{{adminActor}}`, `{{host}}`, etc. Only
 ```
 
 ```csharp
-// ✅ Correct — ROP chain with Bind/BindAsync
+// ✅ Preferred — ROP chain with Bind/BindAsync
 public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
     await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken)
         .BindAsync(order => order.Submit())
         .TapAsync(order => _orderRepository.SaveAsync(order, cancellationToken))
         .MapAsync(OrderDto.From);
 
-// ❌ Wrong — imperative unwrapping
+// 🟢 Acceptable — imperative style when it improves readability for complex branching
 public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken)
 {
     var orderResult = await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken);
@@ -151,7 +155,7 @@ public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, Canc
 When a handler needs multiple independent async results (e.g., fetching a customer AND products), use `Result.ParallelAsync` + `.WhenAllAsync()` instead of sequential `await`:
 
 ```csharp
-// ✅ Correct — parallel fetches with ParallelAsync
+// ✅ Preferred — parallel fetches with ParallelAsync
 public async ValueTask<Result<Order>> Handle(CreateDraftOrderCommand command, CancellationToken cancellationToken)
 {
     var productIds = command.LineItems.Select(li => li.ProductId).ToList();
@@ -164,7 +168,7 @@ public async ValueTask<Result<Order>> Handle(CreateDraftOrderCommand command, Ca
             Order.TryCreate(customer, products, command.LineItems));
 }
 
-// ❌ Wrong — sequential fetches
+// 🟡 Avoid — sequential fetches lose parallelism
 var customer = await _customerRepository.GetByIdAsync(command.CustomerId, cancellationToken);
 var products = await _productRepository.GetByIdsAsync(command.ProductIds, cancellationToken);
 ```
@@ -173,48 +177,30 @@ var products = await _productRepository.GetByIdsAsync(command.ProductIds, cancel
 
 Use `Trellis.Stateless` for aggregate state transitions. The `FireResult()` extension returns `Result<TState>` instead of throwing on invalid transitions.
 
-**Lazy initialization required for EF Core.** The third-party `StateMachine<TState, TTrigger>` constructor eagerly invokes its `stateAccessor` function. When EF Core materializes an aggregate via its parameterless constructor, state properties are not yet populated — causing a `NullReferenceException`. Use lazy initialization:
+🔴 **Lazy initialization required for EF Core.** The third-party `StateMachine<TState, TTrigger>` constructor eagerly invokes its `stateAccessor` function. When EF Core materializes an aggregate via its parameterless constructor, state properties are not yet populated — causing a `NullReferenceException`. Use lazy initialization:
 
 ```csharp
-public class Order : Aggregate<OrderId>
-{
-    public OrderStatus Status { get; private set; }
+// ✅ Lazy — defers construction until first use (after EF Core populates properties)
+private StateMachine<string, string>? _machine;
+private StateMachine<string, string> Machine => _machine ??= ConfigureStateMachine();
 
-    // ✅ Lazy — defers construction until first use (after EF Core populates properties)
-    private StateMachine<string, string>? _machine;
-    private StateMachine<string, string> Machine => _machine ??= ConfigureStateMachine();
-
-    private StateMachine<string, string> ConfigureStateMachine()
-    {
-        var machine = new StateMachine<string, string>(() => Status.Name, s => Status = OrderStatus.FromName(s));
-        machine.Configure("Draft").Permit("Submit", "Submitted");
-        // ... more transitions
-        return machine;
-    }
-
-    public Result<Order> Submit() =>
-        Machine.FireResult("Submit")
-            .Tap(_ => DomainEvents.Add(new OrderSubmittedEvent(Id)))
-            .Map(_ => this);
-
-    // ❌ Wrong — eager construction crashes when EF Core calls parameterless constructor
-    // private readonly StateMachine<string, string> _machine = new(...);
-}
+// ❌ Wrong — eager construction crashes when EF Core calls parameterless constructor
+// private readonly StateMachine<string, string> _machine = new(...);
 ```
 
 ### EF Core
 
-- **NEVER write `HasConversion()`.** Call `ApplyTrellisConventions` in `ConfigureConventions` — it handles all scalar Trellis value objects automatically.
-- **`Money` properties** are auto-mapped by `ApplyTrellisConventions` — no `OwnsOne` needed. See §12 in `trellis-api-reference.md` for column naming.
-- **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them with `OwnsOne` in the entity configuration and configure each property explicitly.
-- Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Never use bare `SaveChangesAsync`.
-- Use `FirstOrDefaultMaybeAsync` for optional lookups, `FirstOrDefaultResultAsync` for required lookups.
-- Use `.Where(specification)` for specification queries. Specifications support `.And()`, `.Or()`, `.Not()` composition.
-- **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. **After adding `partial Maybe<T>` properties, run `dotnet build` before writing code that references the backing field (e.g., entity configurations, LINQ queries).** The source generator must run first to emit the `_camelCase` backing field; until it does, the field does not exist and the compiler will report errors.
-- **`Maybe<T>` in indexes** — `HasIndex` with `Maybe<T>` properties requires string-based backing field references because `MaybeConvention` ignores the CLR property. Use the backing field name (underscore + camelCase): `builder.HasIndex("Status", "_submittedAt")`. Do NOT use lambda expressions like `o => new { o.Status, o.SubmittedAt }` — they will silently fail.
-- **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. See §12 in `trellis-api-reference.md`.
-- **Entity configurations:** Use `IEntityTypeConfiguration<T>` per entity in the Acl layer — one file per aggregate/entity (e.g., `OrderConfiguration.cs`, `CustomerConfiguration.cs`). Register them with `ApplyConfigurationsFromAssembly` in `OnModelCreating`. Do NOT inline configuration in `DbContext.OnModelCreating`.
-- **Migrations:** After implementing all entities and configurations, run `dotnet ef migrations add InitialCreate -p Acl/src -s Api/src` to generate the initial migration. Do not rely on `EnsureCreated()` for anything beyond a quick prototype.
+- 🔴 **Always call `ApplyTrellisConventions`** in `ConfigureConventions` — it handles all scalar Trellis value objects automatically. 🟡 Do not write `HasConversion()` for types handled by Trellis conventions. 🟢 If a custom type is not handled by `ApplyTrellisConventions`, use explicit EF mapping (`HasConversion`, `OwnsOne`, etc.) for that type only.
+- 🟡 **`Money` properties** are auto-mapped by `ApplyTrellisConventions` — no `OwnsOne` needed. See §12 in `trellis-api-reference.md` for column naming.
+- 🟢 **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them with `OwnsOne` in the entity configuration and configure each property explicitly.
+- 🔴 Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Never use bare `SaveChangesAsync`.
+- 🟡 Use `FirstOrDefaultMaybeAsync` for optional lookups, `FirstOrDefaultResultAsync` for required lookups.
+- 🟡 Use `.Where(specification)` for specification queries. Specifications support `.And()`, `.Or()`, `.Not()` composition.
+- 🔴 **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. **After adding `partial Maybe<T>` properties, run `dotnet build` before writing code that references the backing field (e.g., entity configurations, LINQ queries).** The source generator must run first to emit the `_camelCase` backing field; until it does, the field does not exist and the compiler will report errors.
+- 🔴 **`Maybe<T>` in indexes** — `HasIndex` with `Maybe<T>` properties requires string-based backing field references because `MaybeConvention` ignores the CLR property. Use the backing field name (underscore + camelCase): `builder.HasIndex("Status", "_submittedAt")`. Do NOT use lambda expressions like `o => new { o.Status, o.SubmittedAt }` — they will silently fail.
+- 🟡 **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. See §12 in `trellis-api-reference.md`.
+- 🟡 **Entity configurations:** Use `IEntityTypeConfiguration<T>` per entity in the Acl layer — one file per aggregate/entity (e.g., `OrderConfiguration.cs`, `CustomerConfiguration.cs`). Register them with `ApplyConfigurationsFromAssembly` in `OnModelCreating`. Do NOT inline configuration in `DbContext.OnModelCreating`.
+- 🟡 **Migrations:** After implementing all entities and configurations, run `dotnet ef migrations add InitialCreate -p Acl/src -s Api/src` to generate the initial migration. Do not rely on `EnsureCreated()` for anything beyond a quick prototype.
 
 ### MVC Controllers
 
@@ -232,7 +218,7 @@ Controllers inherit `ControllerBase` with `[ApiController]`. Actions are thin �
 
 ### Automatic Scalar Value Binding
 
-**Use value object types — not primitives — in controller action parameters.** Trellis automatically converts route parameters, query parameters, and JSON body properties via model binding and JSON converters. Never call `.Create()` or `.TryCreate()` manually in controllers.
+🔴 **Use value object types — not primitives — in controller action parameters.** Trellis automatically converts route parameters, query parameters, and JSON body properties via model binding and JSON converters. Never call `.Create()` or `.TryCreate()` manually in controllers.
 
 **Registration** — add scalar value validation to the MVC pipeline in `Api/src/DependencyInjection.cs`:
 ```csharp
@@ -243,7 +229,7 @@ And activate the middleware in `Program.cs`:
 app.UseScalarValueValidation();
 ```
 
-**Request/Response DTOs** live in `Api/src/{version}/Models/` (e.g., `Api/src/2026-11-12/Models/`). Never expose domain types directly. Request DTOs can use scalar value object types as properties — they will be validated automatically via the JSON converter.
+🟡 **Request/Response DTOs** live in `Api/src/{version}/Models/` (e.g., `Api/src/2026-11-12/Models/`). 🔴 Never expose domain types directly. Request DTOs can use scalar value object types as properties — they will be validated automatically via the JSON converter.
 
 ### API Versioning
 
@@ -301,6 +287,8 @@ The Scalar UI is available at `/scalar/{version}` (e.g., `/scalar/2026-11-12`).
 **API integration tests:** Use `WebApplicationFactory<Program>` with SQLite in-memory. Test HTTP round-trips, status codes, Problem Details, authorization enforcement. Use `MartinCostello.Logging.XUnit.v3` for test logging.
 
 **Do NOT** create `GlobalUsings.cs` files in test projects. Global usings come from `build/test.props`.
+
+🟡 **`Maybe<T>` assertions** — use `.Should().HaveValue()` and `.Should().BeNone()` (from `Trellis.Testing`) to assert on `Maybe<T>` values. Do NOT use `.Match()` or manual unwrapping in test assertions.
 
 ## Trellis Feedback
 

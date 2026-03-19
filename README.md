@@ -55,7 +55,7 @@ Each layer has `src/` and `tests/` projects.
 - **Service Level Indicators** — All API methods emit duration and status code metrics via [ServiceLevelIndicators](https://github.com/xavierjohn/ServiceLevelIndicators).
 - **OpenTelemetry** — Traces and metrics configured out of the box. Use the included [Aspire Dashboard](DockerOpenTelemetry/README.md) for local observability.
 - **API Versioning** — Date-based versioning with `Asp.Versioning`.
-- **Copilot Instructions** — `.github/copilot-instructions.md` and `.github/trellis-api-reference.md` guide AI assistants to follow Trellis patterns.
+- **Copilot Instructions** — `template/.github/copilot-instructions.md` and `template/.github/trellis-api-reference.md` ship with the template to guide AI assistants toward Trellis patterns.
 
 ### Template Parameters
 

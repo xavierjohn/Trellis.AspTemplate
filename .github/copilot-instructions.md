@@ -25,14 +25,13 @@ TrellisAspTemplate/
 │   ├── Api/
 │   └── build/
 └── .github/
-    ├── copilot-instructions.md       ← THIS FILE (template repo instructions)
-    └── trellis-api-reference.md      ← Trellis API reference (authoritative)
+    └── copilot-instructions.md       ← THIS FILE (template repo instructions)
 ```
 
 ## Key Files
 
-- **`template/.github/copilot-instructions.md`** — The most important file for Trellis conventions. This is what AI agents see when building services from the template. Keep it focused on architectural rules and conventions; defer API details to the API reference.
-- **`.github/trellis-api-reference.md`** — Authoritative Trellis API surface (types, signatures, usage patterns). Updated when Trellis releases new versions.
+- **`template/.github/copilot-instructions.md`** — The most important file for Trellis conventions. This is what AI agents see when building services from the template. Keep it focused on architectural rules and conventions; defer API details to the template API reference.
+- **`template/.github/trellis-api-reference.md`** — Trellis API surface shipped with the template for downstream AI use.
 - **`template/Directory.Packages.props`** — Central package version management. The `TrellisVersion` property controls all Trellis package versions.
 
 ## Working on the Template
@@ -63,5 +62,5 @@ dotnet new uninstall Trellis.AspTemplate
 When updating how AI should build services with Trellis:
 
 1. Edit `template/.github/copilot-instructions.md` for architectural rules and conventions.
-2. Edit `.github/trellis-api-reference.md` for API surface changes (new types, method signatures, etc.).
-3. Keep instructions DRY — the copilot instructions should reference the API reference by section number (e.g., "See §12") rather than duplicating API details.
+2. Edit `template/.github/trellis-api-reference.md` for API surface changes that should ship with the template.
+3. Keep instructions DRY — the copilot instructions should reference the template API reference by section number (e.g., "See §12") rather than duplicating API details.
