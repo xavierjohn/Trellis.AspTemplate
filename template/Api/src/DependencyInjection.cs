@@ -23,6 +23,7 @@ internal static class DependencyInjection
                 .AddApiExplorer()
                 .AddOpenApi(options => options.Document.AddScalarTransformers());
         services.AddScoped<ErrorHandlingMiddleware>();
+        services.AddHealthChecks();
         return services;
     }
 
