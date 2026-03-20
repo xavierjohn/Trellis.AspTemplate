@@ -2,7 +2,7 @@
 
 This project uses the **Trellis** framework (.NET 10). Trellis combines Railway-Oriented Programming (ROP) with Domain-Driven Design (DDD). Follow these patterns exactly.
 
-**API Reference:** See `.github/trellis-api-reference.md` for all Trellis types, method signatures, and usage patterns. Use it as the authoritative source for Trellis API surface.
+**API Reference:** See `.github/trellis-api-reference.md` for all Trellis types, method signatures, and usage patterns. Use it as the authoritative source for Trellis API surface. See `.github/trellis-api-testing-reference.md` for testing APIs (FluentAssertions extensions, FakeRepository, TestActorProvider, test patterns).
 
 ## Core Principles
 
@@ -49,7 +49,8 @@ The template provides the complete project structure. Do NOT modify or recreate 
 │   └── test.props                 ← DO NOT MODIFY
 ├── .github/
 │   ├── copilot-instructions.md    ← this file
-│   └── trellis-api-reference.md   ← Trellis API surface
+│   ├── trellis-api-reference.md   ← Trellis API surface
+│   └── trellis-api-testing-reference.md ← Trellis.Testing API surface
 ├── Domain/
 │   ├── src/
 │   │   └── Domain.csproj
@@ -316,6 +317,8 @@ if (app.Environment.IsDevelopment())
 The Scalar UI is available at `/scalar/{version}` (e.g., `/scalar/2026-11-12`).
 
 ## Testing Strategy
+
+**Testing API Reference:** See `.github/trellis-api-testing-reference.md` for all Trellis.Testing types, assertion methods, FakeRepository, TestActorProvider, and testing patterns including TRLS003 workarounds.
 
 **Domain tests:** Pure unit tests, no external dependencies. Test value object TryCreate, aggregate rules, state machine transitions, specifications.
 
