@@ -77,18 +77,18 @@ The template provides the complete project structure. Do NOT modify or recreate 
 
 **HTTP file:** The template includes `Api/src/api.http` with sample requests. After implementing the spec, **replace its contents** with requests covering every endpoint in the API — happy-path examples, error cases, and the full resource lifecycle. Use `@variables` for host, api-version, and response-chained IDs (e.g., `{{createCustomer.response.body.id}}`). This file is the living documentation for manual testing and onboarding.
 
-**Environment file:** Complex JSON variables (actors, auth tokens, reusable objects) do NOT work inline in `.http` files. Put them in `Api/src/http-client.env.json` instead:
+**Environment file:** Actor headers and other complex values must be stored as **escaped JSON strings** in `Api/src/http-client.env.json`. The `.http` file only supports scalar variable substitution — complex objects with nested properties do NOT work.
 ```json
 {
   "dev": {
-    "host": "https://localhost:5001",
+    "host": "https://localhost:7011",
     "apiVersion": "2026-11-12",
     "adminActor": "{\"Id\":\"admin-1\",\"Permissions\":[\"customers:create\",\"products:create\"]}",
     "userActor": "{\"Id\":\"user-1\",\"Permissions\":[\"orders:create\",\"orders:read\"]}"
   }
 }
 ```
-The `.http` file then references them as `{{adminActor}}`, `{{host}}`, etc. Only simple scalar `@variables` (strings, numbers, response-chained IDs) belong in the `.http` file itself.
+The `.http` file then references them as `{{adminActor}}`, `{{host}}`, etc. The `host` must match the port in `Properties/launchSettings.json`.
 
 ## Implementation Order and Build Checkpoints
 
