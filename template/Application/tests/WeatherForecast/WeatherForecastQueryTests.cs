@@ -24,9 +24,9 @@ public class WeatherForecastQueryTests
         var result = await _sender.Send(query!, TestContext.Current.CancellationToken);
 
         // Assert
-        result.Should().BeSuccess();
-        var forecast = result.Value;
-        forecast.Id.Value.Should().Be(query!.ZipCode);
+        var (isSuccess, forecast, _) = result;
+        isSuccess.Should().BeTrue();
+        forecast!.Id.Value.Should().Be(query!.ZipCode);
         forecast.DailyTemperatures.Should().HaveCount(3);
         var day = forecast.DailyTemperatures[0];
         day.Date.Should().Be(new DateOnly(2023, 6, 6));
@@ -57,9 +57,10 @@ public class WeatherForecastQueryTests
         var result = await _sender.Send(query!, TestContext.Current.CancellationToken);
 
         // Assert
-        result.Should().BeFailure()
-            .Which.Should().BeOfType<NotFoundError>();
-        var error = result.Error;
+        var (isSuccess, _, err) = result;
+        isSuccess.Should().BeFalse();
+        var error = err!;
+        error.Should().BeOfType<NotFoundError>();
         error.Code.Should().Be("not.found.error");
         error.Detail.Should().Be("No weather forecast found for the zip code.");
         error.Instance.Should().Be("12345");
