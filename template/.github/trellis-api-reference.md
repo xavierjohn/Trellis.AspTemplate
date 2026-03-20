@@ -145,10 +145,13 @@ TResult Match<TResult>(Func<T, TResult> some, Func<TResult> none)
 implicit operator Maybe<T>(T value)
 ```
 
-### Maybe Static Methods
+### Maybe Static Members
 
 ```csharp
-Maybe<T> None<T>() where T : notnull
+// On Maybe<T> struct:
+static Maybe<T> None { get; }           // e.g., Maybe<PhoneNumber>.None
+
+// On Maybe static helper class:
 Maybe<T> From<T>(T? value) where T : notnull
 Result<Maybe<TOut>> Optional<TIn, TOut>(TIn? value, Func<TIn, Result<TOut>> function) where TIn : class, TOut : notnull
 Result<Maybe<TOut>> Optional<TIn, TOut>(TIn? value, Func<TIn, Result<TOut>> function) where TIn : struct, TOut : notnull
@@ -818,6 +821,14 @@ static Foo Create(string stringValue)
 
 Inherits `ScalarValueObject<TSelf, decimal>`. Same pattern as RequiredInt with `decimal`.
 
+```csharp
+static Result<Foo> TryCreate(decimal value, string? fieldName = null)
+static Result<Foo> TryCreate(string? value, string? fieldName = null)
+static Foo Create(decimal value)
+static Foo Create(string stringValue)
+// IParsable<Foo>, explicit operator, JsonConverter
+```
+
 ### RequiredEnum\<TSelf\>
 
 **NOT a ScalarValueObject** — standalone hierarchy. Smart enum pattern.
@@ -837,6 +848,7 @@ bool IsNot(params TSelf[] values)
 
 // Source-generated:
 static Result<Foo> TryCreate(string? value, string? fieldName = null)
+static Foo Create(string value)   // throws on invalid input (from IScalarValue)
 // IParsable<Foo>, [JsonConverter(typeof(RequiredEnumJsonConverter<Foo>))]
 ```
 
@@ -1518,6 +1530,25 @@ var overdue = await context.Orders
     .Where(o => o.Status == OrderStatus.Submitted)
     .WhereLessThan(o => o.SubmittedAt, cutoff)
     .ToListAsync(ct);
+```
+
+### Maybe\<T\> Query Interceptor
+
+Automatically rewrites `Maybe<T>` property accesses in LINQ expression trees to EF Core-translatable storage member references. Enables natural LINQ syntax and `Specification<T>` patterns with `Maybe<T>` properties.
+
+```csharp
+// Registration — add to DbContext options
+optionsBuilder.AddInterceptors(new MaybeQueryInterceptor());
+
+// With interceptor registered, these LINQ expressions work directly:
+context.Customers.Where(c => c.Phone.HasValue)                                    // → IS NOT NULL
+context.Customers.Where(c => c.Phone.HasNoValue)                                  // → IS NULL
+context.Orders.Where(o => o.SubmittedAt.GetValueOrDefault(DateTime.MaxValue) < cutoff)  // → COALESCE < cutoff
+
+// Specifications with Maybe<T> properties also work:
+public override Expression<Func<Order, bool>> ToExpression() =>
+    order => order.Status == OrderStatus.Submitted
+          && order.SubmittedAt.GetValueOrDefault(DateTime.MaxValue) < _cutoff;
 ```
 
 ### Maybe\<T\> Index, Update, and Diagnostics Helpers
