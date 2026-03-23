@@ -33,7 +33,12 @@ Api → Acl → Application → Domain
 - Repository interfaces live in Application, implementations in Acl.
 - `Mediator.SourceGenerator` is installed in the **Application** project (where commands and queries are defined).
 - Each layer has one `DependencyInjection.cs` with an `Add{Layer}()` extension method.
-- Register `IActorProvider` as **singleton** in the Api layer. This is safe because `IHttpContextAccessor.HttpContext` uses `AsyncLocal` internally. Trellis pipeline behaviors are registered as singletons, so a scoped `IActorProvider` will cause a runtime exception.
+- 🔴 **Do NOT create a custom `HttpActorProvider` or `IActorProvider` implementation.** The template already registers the framework-provided actor providers conditionally:
+  - **Development:** `AddDevelopmentActorProvider()` reads the `X-Test-Actor` HTTP header (from `Trellis.Asp.Authorization`). Falls back to a default actor when no header is present. Throws `InvalidOperationException` if the header is present in production.
+  - **Production:** `AddEntraActorProvider()` reads JWT claims from Azure Entra ID tokens (from `Trellis.Asp.Authorization`).
+  - This is already wired in `Api/src/DependencyInjection.cs` — just use it.
+- For **API integration tests**, use `factory.CreateClientWithActor("user-1", "perm1", "perm2")` from `Trellis.Testing` — it sets the `X-Test-Actor` header automatically.
+- For **unit/application tests**, use `TestActorProvider` from `Trellis.Testing.Fakes` with `WithActor()` scoping.
 
 ## Project Layout
 

@@ -1,11 +1,15 @@
-﻿// Okay
+﻿### Health Check
+GET {{HostAddress}}/health
+
+### Get User (with actor)
 GET {{HostAddress}}/api/Users/xavier?api-version=2023-06-06
+X-Test-Actor: {{adminActor}}
 Accept: application/json
 
 ###
-// Create User
-// Okay
+### Create User (with actor)
 POST {{HostAddress}}/api/Users?api-version=2023-06-06
+X-Test-Actor: {{adminActor}}
 Content-Type: application/json
 
 {
@@ -16,8 +20,22 @@ Content-Type: application/json
 }
 
 ###
-// Bad Request email
+### Create User - restricted user
 POST {{HostAddress}}/api/Users?api-version=2023-06-06
+X-Test-Actor: {{testUserActor}}
+Content-Type: application/json
+
+{
+  "firstName": "Xavier",
+  "lastName": "John",
+  "email": "xavier@heaven.com",
+  "password": "Super!Complex6"
+}
+
+###
+### Bad Request - invalid email
+POST {{HostAddress}}/api/Users?api-version=2023-06-06
+X-Test-Actor: {{adminActor}}
 Content-Type: application/json
 
 {
@@ -28,8 +46,9 @@ Content-Type: application/json
 }
 
 ###
-// Bad Request password
+### Bad Request - invalid password
 POST {{HostAddress}}/api/Users?api-version=2023-06-06
+X-Test-Actor: {{adminActor}}
 Content-Type: application/json
 
 {
@@ -40,8 +59,9 @@ Content-Type: application/json
 }
 
 ###
-// Bad Request multiple fields
+### Bad Request - multiple fields
 POST {{HostAddress}}/api/Users?api-version=2023-06-06
+X-Test-Actor: {{adminActor}}
 Content-Type: application/json
 
 {

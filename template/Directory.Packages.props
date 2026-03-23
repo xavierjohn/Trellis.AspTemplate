@@ -7,6 +7,7 @@
     <PackageVersion Include="Asp.Versioning.OpenApi" Version="10.0.0-preview.1" />
     <PackageVersion Include="DotNet.ReproducibleBuilds" Version="1.1.1" />
     <PackageVersion Include="MartinCostello.Logging.XUnit.v3" Version="0.7.1" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.5" />
     <PackageVersion Include="Mediator.Abstractions" Version="3.0.2" />
     <PackageVersion Include="Mediator.SourceGenerator" Version="3.0.2" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Core" Version="2.2.5" />
@@ -25,6 +26,7 @@
     <PackageVersion Include="System.Text.Json" Version="10.0.5" />
     <PackageVersion Include="Trellis.Analyzers" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Asp" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.Asp.Authorization" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.DomainDrivenDesign" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Primitives" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Primitives.Generator" Version="$(TrellisVersion)" />

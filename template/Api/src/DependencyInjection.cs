@@ -8,11 +8,15 @@ using OpenTelemetry.Trace;
 using ServiceLevelIndicators;
 using Scalar.AspNetCore;
 using Trellis.Asp;
+using Trellis.Asp.Authorization;
 using Asp.Versioning.Conventions;
 
 internal static class DependencyInjection
 {
-    public static IServiceCollection AddPresentation(this IServiceCollection services)
+    public static IServiceCollection AddPresentation(
+        this IServiceCollection services,
+        IHostEnvironment environment,
+        IConfiguration configuration)
     {
         services.ConfigureOpenTelemetry();
         services.ConfigureServiceLevelIndicators();
@@ -24,6 +28,18 @@ internal static class DependencyInjection
                 .AddOpenApi(options => options.Document.AddScalarTransformers());
         services.AddScoped<ErrorHandlingMiddleware>();
         services.AddHealthChecks();
+
+        if (environment.IsDevelopment())
+        {
+            services.AddDevelopmentActorProvider();
+        }
+        else
+        {
+            services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme)
+                .AddJwtBearer(options => configuration.Bind("AzureAd", options));
+            services.AddEntraActorProvider();
+        }
+
         return services;
     }
 

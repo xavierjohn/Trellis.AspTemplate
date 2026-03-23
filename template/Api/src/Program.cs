@@ -11,7 +11,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 
 builder.Services
-    .AddPresentation()
+    .AddPresentation(builder.Environment, builder.Configuration)
     .AddApplication()
     .AddAntiCorruptionLayer();
 
@@ -35,6 +35,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseAuthentication();
 app.UseAuthorization();
 app.UseScalarValueValidation();
 app.UseServiceLevelIndicator();
