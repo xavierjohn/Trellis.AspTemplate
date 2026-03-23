@@ -228,7 +228,7 @@ context.Orders
     .WhereLessThan(o => o.SubmittedAt, cutoff);
 ```
 - 🟡 **Entity configurations:** Use `IEntityTypeConfiguration<T>` per entity in the Acl layer — one file per aggregate/entity (e.g., `OrderConfiguration.cs`, `CustomerConfiguration.cs`). Register them with `ApplyConfigurationsFromAssembly` in `OnModelCreating`. Do NOT inline configuration in `DbContext.OnModelCreating`.
-- 🟡 **`MaybeQueryInterceptor`** — enables natural LINQ with `Maybe<T>` properties. See §12 in `trellis-api-reference.md` for registration (must be a static singleton).
+- 🟡 **`MaybeQueryInterceptor`** — enables natural LINQ with `Maybe<T>` properties. Register via `optionsBuilder.AddTrellisInterceptors()` (uses a singleton internally). See §12 in `trellis-api-reference.md`.
 - 🟡 **Migrations:** After implementing all entities and configurations, run `dotnet ef migrations add InitialCreate -p Acl/src -s Api/src` to generate the initial migration. Do not rely on `EnsureCreated()` for anything beyond a quick prototype.
 
 ### MVC Controllers
