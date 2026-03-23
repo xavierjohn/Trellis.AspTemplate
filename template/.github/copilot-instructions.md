@@ -108,8 +108,20 @@ The build after Domain is especially critical — it triggers the `MaybePartialP
 ### Commands and Queries
 
 - 🔴 Commands receive **value object types** (e.g., `CustomerId`, not `Guid`). Scalar value binding validates at the API layer — handlers never call `TryCreate` on command properties.
-- 🟡 Use `IValidate` **only** for cross-field or collection validation (e.g., "at least one line item"). Single-field validation is handled by value objects.
-- 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can cancel").
+- 🟡 Use `IValidate` **only** for cross-field or collection validation (e.g., "at least one line item"). Single-field validation is handled by value objects. `Validate()` returns `IResult` — use `Result.Success()` for valid, `Result.Failure(ValidationError.For(...))` for invalid:
+```csharp
+public IResult Validate() =>
+    LineItems.Count > 0
+        ? Result.Success()
+        : Result.Failure(ValidationError.For("lineItems", "At least one line item is required."));
+```
+- 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can cancel"). `Authorize()` returns `IResult`:
+```csharp
+public IResult Authorize(Actor actor, Order order) =>
+    actor.HasPermission(Permissions.OrdersReadAll) || actor.IsOwner(order.CreatedByActorId.Value)
+        ? Result.Success()
+        : Result.Failure(Error.Forbidden("Only the order creator or an admin can cancel."));
+```
 - **`IAuthorizeResource<TResource>`:** The pipeline loads the resource via an `IResourceLoader<TMessage, TResource>` before calling `Authorize(Actor, TResource)`. The handler receives the entity already authorized — no auth logic in handlers. Register the resource loader as scoped in the Acl layer. Use `ResourceLoaderById<TMessage, TResource, TId>` as a convenience base class for ID-based lookups.
 - **Registration:** `AddResourceAuthorization(params Assembly[])` scans assemblies for both `IAuthorizeResource<T>` commands and `IResourceLoader<,>` implementations. Pass both the Application assembly (commands) and the Acl assembly (loaders):
 ```csharp
@@ -254,7 +266,14 @@ return await _sender.Send(new GetOrderByIdQuery(id), ct)
 
 **Do NOT add `[ApiVersion]` attributes.** Version is derived automatically from the controller namespace via `VersionByNamespaceConvention` (see API Versioning below).
 
-**Use `ToCreatedAtActionResult`** for POST endpoints that create resources — returns `201 Created` with `Location` header.
+**Use `ToCreatedAtActionResult`** for POST endpoints that create resources — returns `201 Created` with `Location` header. The `actionName` parameter is the GET action method name (e.g., `nameof(GetOrder)`). When the GET action is on the **same controller**, the controller name is inferred automatically. When it's on a different controller, pass the controller name (class name minus `Controller` suffix):
+```csharp
+// Same controller — controller name inferred
+result.ToCreatedAtActionResult(this, nameof(GetOrder), o => new { id = o.Id.Value }, OrderDto.From);
+
+// Different controller — specify controller name explicitly
+result.ToCreatedAtActionResult(this, nameof(CustomersController.GetCustomer), o => new { id = o.Id.Value }, CustomerDto.From, "Customers");
+```
 
 ### Automatic Scalar Value Binding
 
