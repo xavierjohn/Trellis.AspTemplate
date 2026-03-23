@@ -40,6 +40,7 @@ app.UseScalarValueValidation();
 app.UseServiceLevelIndicator();
 app.UseMiddleware<ErrorHandlingMiddleware>();
 app.MapControllers();
+app.MapHealthChecks("/health");
 
 app.Run();
 
