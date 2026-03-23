@@ -9,7 +9,7 @@ This project uses the **Trellis** framework (.NET 10). Trellis combines Railway-
 1. 🔴 **Errors are values, not exceptions.** Use `Result<T>` for expected failures. Never throw for business logic. Never use try/catch in Domain or Application layers.
 2. 🔴 **Make illegal states unrepresentable.** Every domain concept is a value object with `TryCreate`. If it exists, it's valid.
 3. 🔴 **No primitive obsession on domain surfaces.** No raw `Guid`, `string`, `int`, or `decimal` in aggregate/entity properties or public domain method signatures. Every property on an Aggregate or Entity must be a typed value object. If the same concept appears in two contexts (e.g., line item quantity vs. stock quantity), create separate types for each. 🟢 Private helpers and internal implementation details may use primitives when the value object adds no safety benefit.
-4. 🟡 **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>` subclasses to add length validation without writing custom `TryCreate`.
+4. 🟡 **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>` subclasses to add length validation, and `[Range]` on `RequiredInt<T>` subclasses to add min/max validation, without writing custom `TryCreate`.
 5. 🔴 **Optional values use `Maybe<T>`, never null.** `Maybe<PhoneNumber>`, not `PhoneNumber?`. When using EF Core, declare `Maybe<T>` properties as `partial` so the source generator can emit the backing field for persistence.
 
 ## Architecture
@@ -108,8 +108,20 @@ The build after Domain is especially critical — it triggers the `MaybePartialP
 ### Commands and Queries
 
 - 🔴 Commands receive **value object types** (e.g., `CustomerId`, not `Guid`). Scalar value binding validates at the API layer — handlers never call `TryCreate` on command properties.
-- 🟡 Use `IValidate` **only** for cross-field or collection validation (e.g., "at least one line item"). Single-field validation is handled by value objects.
-- 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can cancel").
+- 🟡 Use `IValidate` **only** for cross-field or collection validation (e.g., "at least one line item"). Single-field validation is handled by value objects. `Validate()` returns `IResult` — use `Result.Success()` for valid, `Result.Failure(ValidationError.For(...))` for invalid:
+```csharp
+public IResult Validate() =>
+    LineItems.Count > 0
+        ? Result.Success()
+        : Result.Failure(ValidationError.For("lineItems", "At least one line item is required."));
+```
+- 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can cancel"). `Authorize()` returns `IResult`:
+```csharp
+public IResult Authorize(Actor actor, Order order) =>
+    actor.HasPermission(Permissions.OrdersReadAll) || actor.IsOwner(order.CreatedByActorId.Value)
+        ? Result.Success()
+        : Result.Failure(Error.Forbidden("Only the order creator or an admin can cancel."));
+```
 - **`IAuthorizeResource<TResource>`:** The pipeline loads the resource via an `IResourceLoader<TMessage, TResource>` before calling `Authorize(Actor, TResource)`. The handler receives the entity already authorized — no auth logic in handlers. Register the resource loader as scoped in the Acl layer. Use `ResourceLoaderById<TMessage, TResource, TId>` as a convenience base class for ID-based lookups.
 - **Registration:** `AddResourceAuthorization(params Assembly[])` scans assemblies for both `IAuthorizeResource<T>` commands and `IResourceLoader<,>` implementations. Pass both the Application assembly (commands) and the Acl assembly (loaders):
 ```csharp
@@ -254,7 +266,14 @@ return await _sender.Send(new GetOrderByIdQuery(id), ct)
 
 **Do NOT add `[ApiVersion]` attributes.** Version is derived automatically from the controller namespace via `VersionByNamespaceConvention` (see API Versioning below).
 
-**Use `ToCreatedAtActionResult`** for POST endpoints that create resources — returns `201 Created` with `Location` header.
+**Use `ToCreatedAtActionResult`** for POST endpoints that create resources — returns `201 Created` with `Location` header. The `actionName` parameter is the GET action method name (e.g., `nameof(GetOrder)`). When the GET action is on the **same controller**, the controller name is inferred automatically. When it's on a different controller, pass the controller name (class name minus `Controller` suffix):
+```csharp
+// Same controller — controller name inferred
+result.ToCreatedAtActionResult(this, nameof(GetOrder), o => new { id = o.Id.Value }, OrderDto.From);
+
+// Different controller — specify controller name explicitly
+result.ToCreatedAtActionResult(this, nameof(CustomersController.GetCustomer), o => new { id = o.Id.Value }, CustomerDto.From, "Customers");
+```
 
 ### Automatic Scalar Value Binding
 
