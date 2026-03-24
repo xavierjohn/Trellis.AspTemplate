@@ -101,7 +101,7 @@ The `.http` file then references them as `{{adminActor}}`, `{{host}}`, etc. The 
 4. **Api/src** — Implement controllers, DTOs, Program.cs, IActorProvider. Then run `dotnet build`.
 5. **Tests** — Implement Domain.Tests, Application.Tests, Api.Tests. Then run `dotnet test`.
 
-The build after Domain is especially critical — it triggers the `MaybePartialPropertyGenerator` which emits the `_camelCase` backing fields that Acl entity configurations reference (e.g., `HasIndex("Status", "_submittedAt")`).
+The build after Domain is especially critical — it triggers the `MaybePartialPropertyGenerator` which emits the `_camelCase` backing fields that Acl entity configurations reference (e.g., `HasTrellisIndex(o => new { o.Status, o.SubmittedAt })`).
 
 ## Key Conventions
 
@@ -224,13 +224,13 @@ private StateMachine<string, string> Machine => _machine ??= ConfigureStateMachi
 
 - 🔴 **Always call `ApplyTrellisConventions`** in `ConfigureConventions` — it handles all scalar Trellis value objects automatically. 🟡 Do not write `HasConversion()` for types handled by Trellis conventions. 🟢 If a custom type is not handled by `ApplyTrellisConventions`, use explicit EF mapping (`HasConversion`, `OwnsOne`, etc.) for that type only.
 - 🟡 **`Money` properties** are auto-mapped by `ApplyTrellisConventions` — no `OwnsOne` needed. See §12 in `trellis-api-reference.md` for column naming.
-- 🟢 **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them with `OwnsOne` in the entity configuration and configure each property explicitly.
+- 🟢 **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them using standard EF Core owned entities (`OwnsOne`, `OwnsMany`) — refer to [EF Core Owned Entity Types documentation](https://learn.microsoft.com/en-us/ef/core/modeling/owned-entities).
 - 🟡 **Owned collection property types** — use `IReadOnlyList<T>` (not `ReadOnlyCollection<T>`) for `OwnsMany` navigation properties. EF Core cannot populate `ReadOnlyCollection<T>` from a backing `List<T>` field during materialization.
 - 🔴 Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Never use bare `SaveChangesAsync`.
 - 🟡 Use `FirstOrDefaultMaybeAsync` for optional lookups, `FirstOrDefaultResultAsync` for required lookups.
 - 🟡 Use `.Where(specification)` for specification queries. Specifications support `.And()`, `.Or()`, `.Not()` composition.
 - 🔴 **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. The `_camelCase` backing field is emitted by the source generator during `dotnet build` (see **Implementation Order and Build Checkpoints** above). 🔴 **If using EF Core**, add `Trellis.EntityFrameworkCore.Generator` to the **Domain project** (as an Analyzer, with `ReferenceOutputAssembly="false"`). The generator must be in the project that declares entities with `partial Maybe<T>` properties — without it, backing fields will not be emitted and EF Core persistence will silently fail.
-- 🔴 **`Maybe<T>` in indexes** — `HasIndex` with `Maybe<T>` properties requires string-based backing field references because `MaybeConvention` ignores the CLR property. Use the backing field name (underscore + camelCase): `builder.HasIndex("Status", "_submittedAt")`. Do NOT use lambda expressions like `o => new { o.Status, o.SubmittedAt }` — they will silently fail.
+- 🔴 **`Maybe<T>` in indexes** — Use `HasTrellisIndex` (not `HasIndex`) for indexes that include `Maybe<T>` properties. `HasTrellisIndex` accepts lambda expressions and automatically resolves `Maybe<T>` properties to their backing field names: `builder.HasTrellisIndex(o => new { o.Status, o.SubmittedAt })` resolves to `HasIndex("Status", "_submittedAt")`. Plain `HasIndex` with lambdas will silently fail for `Maybe<T>` properties. See §12 in `trellis-api-reference.md`.
 - 🟡 **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. For comparisons on `Maybe<T>` properties (e.g., date thresholds), use `WhereLessThan`, `WhereLessThanOrEqual`, `WhereGreaterThan`, `WhereGreaterThanOrEqual`. These rewrite the expression tree to target the backing storage field. See §12 in `trellis-api-reference.md`.
 ```csharp
 // ✅ Overdue orders: SubmittedAt < 7 days ago

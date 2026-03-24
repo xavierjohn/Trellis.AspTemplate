@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <TrellisVersion>3.0.0-alpha.127</TrellisVersion>
+    <TrellisVersion>3.0.0-alpha.133.ge4c4f89cee</TrellisVersion>
   </PropertyGroup>
   <!-- Runtime -->
   <ItemGroup>
@@ -25,10 +25,16 @@
     <PackageVersion Include="System.Text.Json" Version="10.0.5" />
     <PackageVersion Include="Trellis.Analyzers" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Asp" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.Asp.Authorization" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.Authorization" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.DomainDrivenDesign" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.EntityFrameworkCore" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.EntityFrameworkCore.Generator" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.Mediator" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Primitives" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Primitives.Generator" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Results" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.Stateless" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Testing" Version="$(TrellisVersion)" />
   </ItemGroup>
   <!-- Test -->

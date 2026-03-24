@@ -788,6 +788,27 @@ public partial class Description : RequiredString<Description> { }
 
 Generated validation errors: `"{Name} must be at least {min} characters."`, `"{Name} must be {max} characters or fewer."`
 
+#### `ValidateAdditional` — Optional Custom Validation Hook
+
+Implement the `ValidateAdditional` partial method to add domain-specific validation (regex patterns, format checks, etc.). Called after built-in validations pass. If not implemented, the compiler removes the call — zero overhead.
+
+```csharp
+[StringLength(10)]
+public partial class Sku : RequiredString<Sku>
+{
+    static partial void ValidateAdditional(string value, string fieldName, ref string? errorMessage)
+    {
+        if (!Regex.IsMatch(value, @"^SKU-\d{6}$"))
+            errorMessage = "Sku must match pattern SKU-XXXXXX.";
+    }
+}
+```
+
+**Signature:** `static partial void ValidateAdditional(string value, string fieldName, ref string? errorMessage)`
+- `value` — the validated string (not null, not whitespace, length-checked)
+- `fieldName` — the normalized field name for error messages
+- `errorMessage` — set to a non-null string to reject; leave null to accept. The generator wraps it in `Error.Validation(errorMessage, fieldName)` automatically.
+
 ### RequiredGuid\<TSelf\>
 
 Inherits `ScalarValueObject<TSelf, Guid>`. Source generator provides:
@@ -810,8 +831,8 @@ static explicit operator Foo(Guid value)
 Inherits `ScalarValueObject<TSelf, int>`. Source generator provides:
 
 ```csharp
-static Result<Foo> TryCreate(int value, string? fieldName = null)       // rejects zero
-static Result<Foo> TryCreate(int? value, string? fieldName = null)
+static Result<Foo> TryCreate(int value, string? fieldName = null)       // accepts any int
+static Result<Foo> TryCreate(int? value, string? fieldName = null)     // rejects null
 static Result<Foo> TryCreate(string? value, string? fieldName = null)
 static new Foo Create(int value)
 static Foo Create(string stringValue)
@@ -824,11 +845,27 @@ With range constraints using `[Range]`:
 [Range(1, 999)]
 public partial class LineItemQuantity : RequiredInt<LineItemQuantity> { }
 
-[Range(0, 100)]  // allows zero (overrides default zero rejection)
+[Range(0, 100)]  // constrains to 0–100 inclusive
 public partial class StockQuantity : RequiredInt<StockQuantity> { }
 
 // Generated TryCreate validates: min <= value <= max
 // Error: "Line Item Quantity must be at least 1." / "Line Item Quantity must be at most 999."
+```
+
+#### `ValidateAdditional` — Optional Custom Validation Hook
+
+Same pattern as RequiredString. Signature: `static partial void ValidateAdditional(int value, string fieldName, ref string? errorMessage)`
+
+```csharp
+[Range(1, 100)]
+public partial class EvenPercentage : RequiredInt<EvenPercentage>
+{
+    static partial void ValidateAdditional(int value, string fieldName, ref string? errorMessage)
+    {
+        if (value % 2 != 0)
+            errorMessage = "Even Percentage must be an even number.";
+    }
+}
 ```
 
 ### RequiredDecimal\<TSelf\>
@@ -842,6 +879,8 @@ static Foo Create(decimal value)
 static Foo Create(string stringValue)
 // IParsable<Foo>, explicit operator, JsonConverter
 ```
+
+`ValidateAdditional` is also available: `static partial void ValidateAdditional(decimal value, string fieldName, ref string? errorMessage)`
 
 ### RequiredEnum\<TSelf\>
 
@@ -1091,9 +1130,11 @@ Benefits: Native AOT compatible, no reflection, trimming-safe, faster startup.
 
 ---
 
-# 6. Trellis.Asp.Authorization — Entra ID Actor Provider
+# 6. Trellis.Asp.Authorization — Actor Providers
 
 **Namespace: `Trellis.Asp.Authorization`**
+
+## EntraActorProvider (Production)
 
 ```csharp
 // Registration
@@ -1106,6 +1147,38 @@ services.AddEntraActorProvider(options => {
 // EntraActorProvider : IActorProvider
 // Extracts Actor from HttpContext claims (Entra ID / Azure AD)
 ```
+
+## DevelopmentActorProvider (Development/Testing)
+
+```csharp
+// Registration — for development environments
+services.AddDevelopmentActorProvider();
+services.AddDevelopmentActorProvider(options => {
+    options.DefaultActorId = "admin";
+    options.DefaultPermissions = new HashSet<string> { "orders:create", "orders:read" };
+    options.ThrowOnMalformedHeader = false; // default
+});
+
+// DevelopmentActorProvider : IActorProvider
+// Reads Actor from X-Test-Actor HTTP header (JSON)
+// Throws InvalidOperationException if header present in Production
+// Falls back to configurable default Actor when header absent
+// Header JSON schema: { "Id": "...", "Permissions": [...], "ForbiddenPermissions": [...], "Attributes": {...} }
+
+// Conditional registration pattern:
+if (builder.Environment.IsDevelopment())
+    services.AddDevelopmentActorProvider();
+else
+    services.AddEntraActorProvider();
+```
+
+| Type | Purpose |
+|------|---------|
+| `EntraActorProvider` | Production — maps Entra JWT claims to `Actor` |
+| `EntraActorOptions` | Configuration for Entra claim mapping |
+| `DevelopmentActorProvider` | Development/testing — reads `X-Test-Actor` header |
+| `DevelopmentActorOptions` | Configuration for default actor and error handling |
+| `ServiceCollectionExtensions` | `AddEntraActorProvider()` and `AddDevelopmentActorProvider()` |
 
 ---
 
@@ -1205,7 +1278,7 @@ services.AddResourceLoaders(typeof(CancelOrderResourceLoader).Assembly);
 
 # 9. Trellis.Testing
 
-See **`.github/trellis-api-testing-reference.md`** for the complete Trellis.Testing API reference, including FluentAssertions extensions, test builders, FakeRepository, TestActorProvider, and testing patterns.
+See **`trellis-api-testing-reference.md`** for the complete Trellis.Testing API reference, including FluentAssertions extensions, test builders, FakeRepository, TestActorProvider, and testing patterns.
 
 ---
 
@@ -1555,6 +1628,20 @@ public partial class ProductName : RequiredString<ProductName> { }
 
 [StringLength(500, MinimumLength = 10)]
 public partial class Description : RequiredString<Description> { }
+```
+
+With custom validation (regex, format checks):
+
+```csharp
+[StringLength(10)]
+public partial class Sku : RequiredString<Sku>
+{
+    static partial void ValidateAdditional(string value, string fieldName, ref string? errorMessage)
+    {
+        if (!Regex.IsMatch(value, @"^SKU-\d{6}$"))
+            errorMessage = "Sku must match pattern SKU-XXXXXX.";
+    }
+}
 ```
 
 ## Create a Custom Value Object (RequiredEnum — Smart Enum)
