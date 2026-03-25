@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <TrellisVersion>3.0.0-alpha.133.ge4c4f89cee</TrellisVersion>
+    <TrellisVersion>3.0.0-alpha.133</TrellisVersion>
   </PropertyGroup>
   <!-- Runtime -->
   <ItemGroup>
@@ -46,3 +46,5 @@
     <PackageVersion Include="Xunit.DependencyInjection" Version="11.2.0" />
   </ItemGroup>
 </Project>
+
+
