@@ -1,6 +1,6 @@
-﻿namespace BestWeatherForecast.Api.v2026_03_26.Models;
+﻿namespace TodoSample.Api.v2026_03_26.Models;
 
-using BestWeatherForecast.Domain;
+using TodoSample.Domain;
 
 /// <summary>
 /// Request model for creating a todo item.

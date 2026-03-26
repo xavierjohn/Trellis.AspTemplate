@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Domain;
+﻿namespace TodoSample.Domain;
 
 using System.Linq.Expressions;
 

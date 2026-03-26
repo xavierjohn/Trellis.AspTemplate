@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Domain;
+﻿namespace TodoSample.Domain;
 
 /// <summary>
 /// Represents the lifecycle state of a todo item.

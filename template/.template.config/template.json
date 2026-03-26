@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "http://json.schemastore.org/template",
   "author": "Trellis",
   "classifications": ["Web", "API", "Trellis", "DDD", "ROP"],
@@ -18,7 +18,7 @@
       "type": "derived",
       "valueSource": "name",
       "valueTransform": "ValueWithoutSpaces",
-      "replaces": "BestWeatherForecast",
+      "replaces": "TodoSample",
       "description": "Derived from -n parameter. Used as namespace prefix (RootNamespace/AssemblyName)."
     },
     "authorName": {

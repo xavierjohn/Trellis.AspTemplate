@@ -1,6 +1,6 @@
 ﻿namespace Domain.Tests;
 
-using BestWeatherForecast.Domain;
+using TodoSample.Domain;
 
 #pragma warning disable TRLS003 // Tests assert success before accessing .Value
 
@@ -133,5 +133,32 @@ public class TodoItemTests
         result.Should().BeSuccess();
 
         result.Value.IsOverdue(DateTime.UtcNow).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Update_active_todo_succeeds()
+    {
+        var todo = CreateActiveTodo();
+        var newTitle = Title.Create("Updated title");
+        var newDueDate = DueDate.Create(DateTime.UtcNow.AddDays(14));
+        var newTag = Maybe.From(Tag.Create("updated"));
+
+        var result = todo.Update(newTitle, newDueDate, newTag);
+
+        result.Should().BeSuccess();
+        todo.Title.Should().Be(newTitle);
+        todo.DueDate.Should().Be(newDueDate);
+        todo.Tag.Should().HaveValueEqualTo(Tag.Create("updated"));
+    }
+
+    [Fact]
+    public void Update_completed_todo_fails()
+    {
+        var todo = CreateActiveTodo();
+        todo.Complete().Should().BeSuccess();
+
+        var result = todo.Update(Title.Create("Too late"), FutureDueDate, Maybe<Tag>.None);
+
+        result.Should().BeFailure();
     }
 }

@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Domain;
+﻿namespace TodoSample.Domain;
 
 using Trellis.Stateless;
 
@@ -92,6 +92,20 @@ public partial class TodoItem : Aggregate<TodoId>
     /// </summary>
     public bool IsOverdue(DateTime asOf) =>
         Status == TodoStatus.Active && DueDate.Value < asOf;
+
+    /// <summary>
+    /// Updates the todo's title, due date, and tag. Cannot update completed todos.
+    /// </summary>
+    public Result<TodoItem> Update(Title title, DueDate dueDate, Maybe<Tag> tag) =>
+        Status == TodoStatus.Completed
+            ? Result.Failure<TodoItem>(Error.Domain("Cannot update a completed todo."))
+            : Result.Success(this)
+                .Tap(_ =>
+                {
+                    Title = title;
+                    DueDate = dueDate;
+                    Tag = tag;
+                });
 
     private static void ConfigureStateMachine(Stateless.StateMachine<TodoStatus, string> machine)
     {

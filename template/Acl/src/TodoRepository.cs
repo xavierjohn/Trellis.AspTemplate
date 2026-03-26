@@ -1,7 +1,7 @@
-﻿namespace BestWeatherForecast.AntiCorruptionLayer;
+﻿namespace TodoSample.AntiCorruptionLayer;
 
-using BestWeatherForecast.Application;
-using BestWeatherForecast.Domain;
+using TodoSample.Application;
+using TodoSample.Domain;
 using Microsoft.EntityFrameworkCore;
 using Trellis.EntityFrameworkCore;
 

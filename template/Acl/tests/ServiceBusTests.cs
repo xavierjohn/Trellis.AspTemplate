@@ -1,6 +1,6 @@
 ﻿namespace AntiCorruptionLayer.Tests;
 
-using BestWeatherForecast.AntiCorruptionLayer;
+using TodoSample.AntiCorruptionLayer;
 
 public class ServiceBusTests
 {

@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Domain;
+﻿namespace TodoSample.Domain;
 
 /// <summary>
 /// Unique identifier for a todo item.

@@ -144,6 +144,39 @@ public class TodosControllerTests
     }
 
     [Fact]
+    public async Task Update_todo_returns_200()
+    {
+        var client = CreateClient("user-1", "todos:create", "todos:read");
+        var dueDate = DateTime.UtcNow.AddDays(5);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Original", dueDate }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+
+        var newDueDate = DateTime.UtcNow.AddDays(14);
+        var response = await client.PutAsJsonAsync($"api/Todos/{created.Id}?{VersionParam}", new { title = "Updated", dueDate = newDueDate, tag = "changed" }, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updated = await response.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+        updated.Title.Should().Be("Updated");
+        updated.Tag.Should().Be("changed");
+    }
+
+    [Fact]
+    public async Task Update_with_past_due_date_returns_400()
+    {
+        var client = CreateClient("user-1", "todos:create", "todos:read");
+        var dueDate = DateTime.UtcNow.AddDays(5);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Will fail update", dueDate }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+
+        var pastDate = DateTime.UtcNow.AddDays(-1);
+        var response = await client.PutAsJsonAsync($"api/Todos/{created.Id}?{VersionParam}", new { title = "Updated", dueDate = pastDate }, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task Full_lifecycle_create_get_complete_delete()
     {
         var client = CreateClient("lifecycle-user", "todos:create", "todos:read", "todos:complete", "todos:delete");

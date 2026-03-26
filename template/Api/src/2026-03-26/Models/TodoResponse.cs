@@ -1,4 +1,6 @@
-﻿namespace BestWeatherForecast.Api.v2026_03_26.Models;
+﻿namespace TodoSample.Api.v2026_03_26.Models;
+
+using TodoSample.Domain;
 
 /// <summary>
 /// Response model for a todo item.
@@ -29,16 +31,16 @@ public record TodoResponse
     /// <summary>When the todo was created.</summary>
     public DateTime CreatedAt { get; init; }
 
-    /// <summary>Maps from application DTO to API response.</summary>
-    public static TodoResponse From(Application.Todos.TodoDto dto) => new()
+    /// <summary>Maps from domain aggregate to API response.</summary>
+    public static TodoResponse From(TodoItem todo) => new()
     {
-        Id = dto.Id,
-        Title = dto.Title,
-        DueDate = dto.DueDate,
-        Status = dto.Status,
-        CompletedAt = dto.CompletedAt,
-        Tag = dto.Tag,
-        CreatedByActorId = dto.CreatedByActorId,
-        CreatedAt = dto.CreatedAt
+        Id = todo.Id.Value,
+        Title = todo.Title.Value,
+        DueDate = todo.DueDate.Value,
+        Status = todo.Status.ToString(),
+        CompletedAt = todo.CompletedAt.Match<DateTime?>(v => v, () => null),
+        Tag = todo.Tag.Match<string?>(t => t.Value, () => null),
+        CreatedByActorId = todo.CreatedByActorId,
+        CreatedAt = todo.CreatedAt
     };
 }

@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Domain;
+﻿namespace TodoSample.Domain;
 
 /// <summary>
 /// Raised when a new todo item is created.

@@ -1,7 +1,7 @@
 ﻿namespace Application.Tests;
 
-using BestWeatherForecast.Application.Todos;
-using BestWeatherForecast.Domain;
+using TodoSample.Application.Todos;
+using TodoSample.Domain;
 using Mediator;
 using Trellis.Testing.Fakes;
 
@@ -29,8 +29,8 @@ public class CreateTodoCommandTests
         var result = await _sender.Send(command, TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();
-        result.Value.Title.Should().Be("Buy groceries");
-        result.Value.Status.Should().Be("Active");
+        result.Value.Title.Value.Should().Be("Buy groceries");
+        result.Value.Status.Should().Be(TodoStatus.Active);
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public class CreateTodoCommandTests
         var result = await _sender.Send(command, TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();
-        result.Value.Tag.Should().Be("work");
+        result.Value.Tag.Should().HaveValueEqualTo(tag);
     }
 
     [Fact]
@@ -59,9 +59,7 @@ public class CreateTodoCommandTests
         var result = await _sender.Send(command, TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();
-        var todoId = TodoId.TryCreate(result.Value.Id);
-        todoId.Should().BeSuccess();
-        var stored = await _repo.GetByIdAsync(todoId.Value, TestContext.Current.CancellationToken);
+        var stored = await _repo.GetByIdAsync(result.Value.Id, TestContext.Current.CancellationToken);
         stored.Should().BeSuccess();
     }
 }

@@ -1,8 +1,8 @@
 ﻿namespace Application.Tests;
 
-using BestWeatherForecast.Application;
-using BestWeatherForecast.Application.Todos;
-using BestWeatherForecast.Domain;
+using TodoSample.Application;
+using TodoSample.Application.Todos;
+using TodoSample.Domain;
 using Microsoft.Extensions.DependencyInjection;
 using Trellis.Authorization;
 using Trellis.Mediator;

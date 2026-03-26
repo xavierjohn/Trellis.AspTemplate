@@ -1,13 +1,13 @@
-﻿namespace BestWeatherForecast.Application.Todos;
+﻿namespace TodoSample.Application.Todos;
 
-using BestWeatherForecast.Domain;
+using TodoSample.Domain;
 using Mediator;
 using Trellis.Authorization;
 
 /// <summary>
 /// Gets a single todo item by ID.
 /// </summary>
-public sealed record GetTodoByIdQuery(TodoId TodoId) : IQuery<Result<TodoDto>>, IAuthorize
+public sealed record GetTodoByIdQuery(TodoId TodoId) : IQuery<Result<TodoItem>>, IAuthorize
 {
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosRead];
@@ -16,13 +16,12 @@ public sealed record GetTodoByIdQuery(TodoId TodoId) : IQuery<Result<TodoDto>>, 
 /// <summary>
 /// Handler for GetTodoByIdQuery.
 /// </summary>
-public sealed class GetTodoByIdQueryHandler : IQueryHandler<GetTodoByIdQuery, Result<TodoDto>>
+public sealed class GetTodoByIdQueryHandler : IQueryHandler<GetTodoByIdQuery, Result<TodoItem>>
 {
     private readonly ITodoRepository _repository;
 
     public GetTodoByIdQueryHandler(ITodoRepository repository) => _repository = repository;
 
-    public async ValueTask<Result<TodoDto>> Handle(GetTodoByIdQuery query, CancellationToken cancellationToken) =>
-        await _repository.GetByIdAsync(query.TodoId, cancellationToken)
-            .MapAsync(TodoDto.From);
+    public async ValueTask<Result<TodoItem>> Handle(GetTodoByIdQuery query, CancellationToken cancellationToken) =>
+        await _repository.GetByIdAsync(query.TodoId, cancellationToken);
 }

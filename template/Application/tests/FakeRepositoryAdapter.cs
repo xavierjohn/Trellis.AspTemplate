@@ -1,7 +1,7 @@
 ﻿namespace Application.Tests;
 
-using BestWeatherForecast.Application;
-using BestWeatherForecast.Domain;
+using TodoSample.Application;
+using TodoSample.Domain;
 using Trellis.Testing.Fakes;
 
 /// <summary>

@@ -35,6 +35,27 @@ GET {{host}}/api/Todos/overdue?api-version={{apiVersion}}
 Accept: application/json
 X-Test-Actor: {{userActor}}
 
+### Update todo
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+
+{
+  "title": "Buy organic groceries",
+  "dueDate": "2026-04-15T12:00:00Z",
+  "tag": "health"
+}
+
+### Update todo with past due date (→ 400)
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+
+{
+  "title": "Too late",
+  "dueDate": "2020-01-01T12:00:00Z"
+}
+
 ### Complete todo (by creator)
 POST {{host}}/api/Todos/{{createTodo.response.body.id}}/complete?api-version={{apiVersion}}
 X-Test-Actor: {{adminActor}}

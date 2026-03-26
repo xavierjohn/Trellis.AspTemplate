@@ -1,6 +1,6 @@
-﻿namespace BestWeatherForecast.Application;
+﻿namespace TodoSample.Application;
 
-using BestWeatherForecast.Domain;
+using TodoSample.Domain;
 
 /// <summary>
 /// Repository interface for TodoItem persistence.

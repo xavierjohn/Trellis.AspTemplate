@@ -1,6 +1,6 @@
-﻿namespace BestWeatherForecast.Api;
+﻿namespace TodoSample.Api;
 
-using BestWeatherForecast.Api.Middleware;
+using TodoSample.Api.Middleware;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -35,7 +35,7 @@ internal static class DependencyInjection
     private static IServiceCollection ConfigureOpenTelemetry(this IServiceCollection services)
     {
         static void configureResource(ResourceBuilder r) => r.AddService(
-            serviceName: "BestWeatherForecastService",
+            serviceName: "TodoSampleService",
             serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown");
 
         services.AddOpenTelemetry()
@@ -53,7 +53,6 @@ internal static class DependencyInjection
             .WithTracing(builder =>
             {
                 builder.AddAspNetCoreInstrumentation();
-                builder.AddResultsInstrumentation();
                 builder.AddPrimitiveValueObjectInstrumentation();
                 builder.AddOtlpExporter();
             });

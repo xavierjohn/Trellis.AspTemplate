@@ -1,7 +1,7 @@
 ﻿namespace Application.Tests;
 
-using BestWeatherForecast.Application.Todos;
-using BestWeatherForecast.Domain;
+using TodoSample.Application.Todos;
+using TodoSample.Domain;
 using Mediator;
 using Trellis.Testing.Fakes;
 
@@ -28,14 +28,13 @@ public class CompleteTodoCommandTests
             new CreateTodoCommand(Title.Create("My todo"), DueDate.Create(DateTime.UtcNow.AddDays(1)), Maybe<Tag>.None),
             TestContext.Current.CancellationToken);
         createResult.Should().BeSuccess();
-        var todoId = TodoId.Create(createResult.Value.Id);
 
         // Complete it
-        var result = await _sender.Send(new CompleteTodoCommand(todoId), TestContext.Current.CancellationToken);
+        var result = await _sender.Send(new CompleteTodoCommand(createResult.Value.Id), TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();
-        result.Value.Status.Should().Be("Completed");
-        result.Value.CompletedAt.Should().NotBeNull();
+        result.Value.Status.Should().Be(TodoStatus.Completed);
+        result.Value.CompletedAt.Should().HaveValue();
     }
 
     [Fact]
@@ -47,11 +46,10 @@ public class CompleteTodoCommandTests
             new CreateTodoCommand(Title.Create("User1 todo"), DueDate.Create(DateTime.UtcNow.AddDays(1)), Maybe<Tag>.None),
             TestContext.Current.CancellationToken);
         createResult.Should().BeSuccess();
-        var todoId = TodoId.Create(createResult.Value.Id);
 
         // Switch to user-2 and try to complete
         await using var scope = _actorProvider.WithActor("user-2", Permissions.TodosComplete);
-        var result = await _sender.Send(new CompleteTodoCommand(todoId), TestContext.Current.CancellationToken);
+        var result = await _sender.Send(new CompleteTodoCommand(createResult.Value.Id), TestContext.Current.CancellationToken);
 
         result.Should().BeFailureOfType<ForbiddenError>();
     }

@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Application;
+﻿namespace TodoSample.Application;
 
 using Microsoft.Extensions.DependencyInjection;
 using Trellis.Mediator;

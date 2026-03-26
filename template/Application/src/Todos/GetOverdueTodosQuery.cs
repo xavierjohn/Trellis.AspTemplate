@@ -1,13 +1,13 @@
-﻿namespace BestWeatherForecast.Application.Todos;
+﻿namespace TodoSample.Application.Todos;
 
-using BestWeatherForecast.Domain;
+using TodoSample.Domain;
 using Mediator;
 using Trellis.Authorization;
 
 /// <summary>
 /// Gets all overdue todo items.
 /// </summary>
-public sealed record GetOverdueTodosQuery : IQuery<Result<IReadOnlyList<TodoDto>>>, IAuthorize
+public sealed record GetOverdueTodosQuery : IQuery<Result<IReadOnlyList<TodoItem>>>, IAuthorize
 {
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosRead];
@@ -16,13 +16,12 @@ public sealed record GetOverdueTodosQuery : IQuery<Result<IReadOnlyList<TodoDto>
 /// <summary>
 /// Handler for GetOverdueTodosQuery.
 /// </summary>
-public sealed class GetOverdueTodosQueryHandler : IQueryHandler<GetOverdueTodosQuery, Result<IReadOnlyList<TodoDto>>>
+public sealed class GetOverdueTodosQueryHandler : IQueryHandler<GetOverdueTodosQuery, Result<IReadOnlyList<TodoItem>>>
 {
     private readonly ITodoRepository _repository;
 
     public GetOverdueTodosQueryHandler(ITodoRepository repository) => _repository = repository;
 
-    public async ValueTask<Result<IReadOnlyList<TodoDto>>> Handle(GetOverdueTodosQuery query, CancellationToken cancellationToken) =>
-        await _repository.GetAllAsync(new OverdueTodoSpecification(DateTime.UtcNow), cancellationToken)
-            .MapAsync(todos => (IReadOnlyList<TodoDto>)todos.Select(TodoDto.From).ToList());
+    public async ValueTask<Result<IReadOnlyList<TodoItem>>> Handle(GetOverdueTodosQuery query, CancellationToken cancellationToken) =>
+        await _repository.GetAllAsync(new OverdueTodoSpecification(DateTime.UtcNow), cancellationToken);
 }

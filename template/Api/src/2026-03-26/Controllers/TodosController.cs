@@ -1,8 +1,8 @@
-﻿namespace BestWeatherForecast.Api.v2026_03_26.Controllers;
+﻿namespace TodoSample.Api.v2026_03_26.Controllers;
 
-using BestWeatherForecast.Api.v2026_03_26.Models;
-using BestWeatherForecast.Application.Todos;
-using BestWeatherForecast.Domain;
+using TodoSample.Api.v2026_03_26.Models;
+using TodoSample.Application.Todos;
+using TodoSample.Domain;
 using Mediator;
 using Microsoft.AspNetCore.Mvc;
 using ServiceLevelIndicators;
@@ -37,8 +37,7 @@ public class TodosController : ControllerBase
         await _sender.Send(
             new CreateTodoCommand(request.Title, request.DueDate, request.Tag),
             cancellationToken)
-            .MapAsync(TodoResponse.From)
-            .ToCreatedAtActionResultAsync(this, nameof(GetById), r => new { id = r.Id });
+            .ToCreatedAtActionResultAsync(this, nameof(GetById), r => new { id = r.Id }, TodoResponse.From);
 
     /// <summary>
     /// Get a todo item by ID.
@@ -61,6 +60,21 @@ public class TodosController : ControllerBase
         CancellationToken cancellationToken) =>
         await _sender.Send(new GetOverdueTodosQuery(), cancellationToken)
             .ToActionResultAsync(this, todos => (IReadOnlyList<TodoResponse>)todos.Select(TodoResponse.From).ToList());
+
+    /// <summary>
+    /// Update a todo item's title, due date, and tag.
+    /// </summary>
+    [HttpPut("{id}")]
+    [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async ValueTask<ActionResult<TodoResponse>> Update(
+        [CustomerResourceId] TodoId id,
+        [FromBody] UpdateTodoRequest request,
+        CancellationToken cancellationToken) =>
+        await UpdateTodoCommand.TryCreate(id, request.Title, request.DueDate, request.Tag)
+            .BindAsync(command => _sender.Send(command, cancellationToken))
+            .ToActionResultAsync(this, TodoResponse.From);
 
     /// <summary>
     /// Complete a todo item. Only the creator can complete their own todo.

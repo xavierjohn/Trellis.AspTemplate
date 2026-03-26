@@ -1,6 +1,6 @@
 ﻿namespace Domain.Tests;
 
-using BestWeatherForecast.Domain;
+using TodoSample.Domain;
 
 #pragma warning disable TRLS003 // Tests assert success before accessing .Value
 

@@ -1,7 +1,7 @@
-﻿using BestWeatherForecast.AntiCorruptionLayer;
-using BestWeatherForecast.Api;
-using BestWeatherForecast.Api.Middleware;
-using BestWeatherForecast.Application;
+﻿using TodoSample.AntiCorruptionLayer;
+using TodoSample.Api;
+using TodoSample.Api.Middleware;
+using TodoSample.Application;
 using Scalar.AspNetCore;
 using ServiceLevelIndicators;
 using Trellis.Asp;

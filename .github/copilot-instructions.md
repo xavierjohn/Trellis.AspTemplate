@@ -39,7 +39,7 @@ TrellisAspTemplate/
 - Template content lives entirely under `template/`. Files added there are included when a user runs `dotnet new`.
 - Do NOT modify `Directory.Build.props`, `global.json`, or `build/test.props` — these are pre-configured for template users.
 - Add new NuGet packages to `template/Directory.Packages.props` (version) and the relevant `.csproj` (reference without version).
-- The template uses `BestWeatherForecast` as a placeholder service name.
+- The template uses `TodoSample` as a placeholder service name.
 
 ## Building & Testing the Template Pack
 

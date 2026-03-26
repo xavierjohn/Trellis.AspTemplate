@@ -1,8 +1,8 @@
-﻿namespace BestWeatherForecast.AntiCorruptionLayer;
+﻿namespace TodoSample.AntiCorruptionLayer;
 
 public class EnvironmentOptions
 {
-    public string ServiceName { get; set; } = "BWF";
+    public string ServiceName { get; set; } = "TDO";
 
     public string Region { get; set; } = "local";
 

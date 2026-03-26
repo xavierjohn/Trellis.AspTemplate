@@ -1,6 +1,6 @@
 ﻿namespace Domain.Tests;
 
-using BestWeatherForecast.Domain;
+using TodoSample.Domain;
 
 public class TagTests
 {

@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Api.Middleware;
+﻿namespace TodoSample.Api.Middleware;
 
 using System.Diagnostics;
 using Microsoft.AspNetCore.Http;

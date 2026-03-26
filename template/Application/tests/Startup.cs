@@ -1,6 +1,6 @@
 ﻿namespace Application.Tests;
 
-using BestWeatherForecast.Application;
+using TodoSample.Application;
 using Microsoft.Extensions.Hosting;
 
 public class Startup

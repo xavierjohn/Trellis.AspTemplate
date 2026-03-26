@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Domain;
+﻿namespace TodoSample.Domain;
 
 /// <summary>
 /// Title of a todo item. 1–200 characters.

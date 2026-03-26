@@ -1,6 +1,6 @@
-﻿namespace BestWeatherForecast.Application.Todos;
+﻿namespace TodoSample.Application.Todos;
 
-using BestWeatherForecast.Domain;
+using TodoSample.Domain;
 using Mediator;
 using Trellis.Authorization;
 
@@ -10,7 +10,7 @@ using Trellis.Authorization;
 public sealed record CreateTodoCommand(
     Title Title,
     DueDate DueDate,
-    Maybe<Tag> Tag) : ICommand<Result<TodoDto>>, IAuthorize
+    Maybe<Tag> Tag) : ICommand<Result<TodoItem>>, IAuthorize
 {
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosCreate];
@@ -19,7 +19,7 @@ public sealed record CreateTodoCommand(
 /// <summary>
 /// Handler for CreateTodoCommand.
 /// </summary>
-public sealed class CreateTodoCommandHandler : ICommandHandler<CreateTodoCommand, Result<TodoDto>>
+public sealed class CreateTodoCommandHandler : ICommandHandler<CreateTodoCommand, Result<TodoItem>>
 {
     private readonly ITodoRepository _repository;
     private readonly IActorProvider _actorProvider;
@@ -30,12 +30,11 @@ public sealed class CreateTodoCommandHandler : ICommandHandler<CreateTodoCommand
         _actorProvider = actorProvider;
     }
 
-    public async ValueTask<Result<TodoDto>> Handle(CreateTodoCommand command, CancellationToken cancellationToken)
+    public async ValueTask<Result<TodoItem>> Handle(CreateTodoCommand command, CancellationToken cancellationToken)
     {
         var actor = _actorProvider.GetCurrentActor();
         return await TodoItem.TryCreate(command.Title, command.DueDate, command.Tag, actor.Id)
             .Bind(todo => todo.Start().Map(_ => todo))
-            .TapAsync(todo => _repository.SaveAsync(todo, cancellationToken))
-            .MapAsync(TodoDto.From);
+            .TapAsync(todo => _repository.SaveAsync(todo, cancellationToken));
     }
 }

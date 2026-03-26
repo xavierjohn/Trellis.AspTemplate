@@ -1,6 +1,6 @@
-﻿namespace BestWeatherForecast.Application.Todos;
+﻿namespace TodoSample.Application.Todos;
 
-using BestWeatherForecast.Domain;
+using TodoSample.Domain;
 using Mediator;
 using Trellis.Authorization;
 
