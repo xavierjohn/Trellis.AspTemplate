@@ -13,8 +13,11 @@ internal class FakeRepositoryAdapter : ITodoRepository
 
     public FakeRepositoryAdapter(FakeRepository<TodoItem, TodoId> repo) => _repo = repo;
 
-    public Task<Result<TodoItem>> GetByIdAsync(TodoId id, CancellationToken cancellationToken) =>
-        _repo.GetByIdAsync(id, cancellationToken);
+    public async Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken)
+    {
+        var result = await _repo.GetByIdAsync(id, cancellationToken);
+        return result.IsSuccess ? Maybe.From(result.Value) : Maybe<TodoItem>.None;
+    }
 
     public Task<Result<IReadOnlyList<TodoItem>>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken)
     {

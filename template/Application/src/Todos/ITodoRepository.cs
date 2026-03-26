@@ -7,8 +7,8 @@ using TodoSample.Domain;
 /// </summary>
 public interface ITodoRepository
 {
-    /// <summary>Gets a todo by ID. Returns NotFound if missing.</summary>
-    Task<Result<TodoItem>> GetByIdAsync(TodoId id, CancellationToken cancellationToken);
+    /// <summary>Finds a todo by ID. Returns Maybe.None if not found.</summary>
+    Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken);
 
     /// <summary>Gets all todos matching the specification.</summary>
     Task<Result<IReadOnlyList<TodoItem>>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken);

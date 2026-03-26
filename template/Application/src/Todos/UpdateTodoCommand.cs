@@ -49,8 +49,12 @@ public sealed class UpdateTodoCommandHandler : ICommandHandler<UpdateTodoCommand
 
     public UpdateTodoCommandHandler(ITodoRepository repository) => _repository = repository;
 
-    public async ValueTask<Result<TodoItem>> Handle(UpdateTodoCommand command, CancellationToken cancellationToken) =>
-        await _repository.GetByIdAsync(command.TodoId, cancellationToken)
-            .BindAsync(todo => todo.Update(command.Title, command.DueDate, command.Tag))
+    public async ValueTask<Result<TodoItem>> Handle(UpdateTodoCommand command, CancellationToken cancellationToken)
+    {
+        var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
+        return await maybe
+            .ToResult(Error.NotFound($"Todo {command.TodoId} not found."))
+            .Bind(todo => todo.Update(command.Title, command.DueDate, command.Tag))
             .TapAsync(todo => _repository.SaveAsync(todo, cancellationToken));
+    }
 }

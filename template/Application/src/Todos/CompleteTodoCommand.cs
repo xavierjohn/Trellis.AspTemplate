@@ -24,8 +24,12 @@ public sealed class CompleteTodoCommandHandler : ICommandHandler<CompleteTodoCom
 
     public CompleteTodoCommandHandler(ITodoRepository repository) => _repository = repository;
 
-    public async ValueTask<Result<TodoItem>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken) =>
-        await _repository.GetByIdAsync(command.TodoId, cancellationToken)
-            .BindAsync(todo => todo.Complete().Map(_ => todo))
+    public async ValueTask<Result<TodoItem>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken)
+    {
+        var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
+        return await maybe
+            .ToResult(Error.NotFound($"Todo {command.TodoId} not found."))
+            .Bind(todo => todo.Complete().Map(_ => todo))
             .TapAsync(todo => _repository.SaveAsync(todo, cancellationToken));
+    }
 }

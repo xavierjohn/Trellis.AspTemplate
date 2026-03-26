@@ -14,13 +14,13 @@ internal class TodoRepository : ITodoRepository
 
     public TodoRepository(AppDbContext context) => _context = context;
 
-    public async Task<Result<TodoItem>> GetByIdAsync(TodoId id, CancellationToken cancellationToken) =>
-        await _context.TodoItems
-            .FirstOrDefaultResultAsync(
-                t => t.Id == id,
-                Error.NotFound($"Todo item {id.Value} not found."),
-                cancellationToken)
+    public async Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken)
+    {
+        var entity = await _context.TodoItems
+            .FirstOrDefaultAsync(t => t.Id == id, cancellationToken)
             .ConfigureAwait(false);
+        return Maybe.From(entity);
+    }
 
     public async Task<Result<IReadOnlyList<TodoItem>>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken)
     {
@@ -40,13 +40,12 @@ internal class TodoRepository : ITodoRepository
         return await _context.SaveChangesResultUnitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<Result<Unit>> DeleteAsync(TodoId id, CancellationToken cancellationToken) =>
-        await GetByIdAsync(id, cancellationToken)
-            .TapAsync(todo =>
-            {
-                _context.TodoItems.Remove(todo);
-                return Task.CompletedTask;
-            })
-            .BindAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken))
-            .ConfigureAwait(false);
+    public async Task<Result<Unit>> DeleteAsync(TodoId id, CancellationToken cancellationToken)
+    {
+        var maybe = await FindByIdAsync(id, cancellationToken);
+        return await maybe
+            .ToResult(Error.NotFound($"Todo {id} not found."))
+            .Tap(todo => _context.TodoItems.Remove(todo))
+            .BindAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
+    }
 }

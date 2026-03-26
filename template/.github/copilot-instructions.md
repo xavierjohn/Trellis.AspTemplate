@@ -31,6 +31,7 @@ Api → Acl → Application → Domain
 **Rules:**
 - Domain has ZERO external dependencies (no EF Core, no ASP.NET, no Mediator).
 - Repository interfaces live in Application, implementations in Acl.
+- 🔴 **Repository lookups return `Maybe<T>`**, not `Result<T>`. Absence is not a failure — it's data. The handler decides whether "not found" is an error by calling `.ToResult(Error.NotFound(...))`. This keeps repositories as pure data access and puts domain interpretation in the handler.
 - `Mediator.SourceGenerator` is installed in the **Application** project (where commands and queries are defined).
 - Each layer has one `DependencyInjection.cs` with an `Add{Layer}()` extension method.
 - Register `IActorProvider` as **singleton** in the Api layer. This is safe because `IHttpContextAccessor.HttpContext` uses `AsyncLocal` internally. Trellis pipeline behaviors are registered as singletons, so a scoped `IActorProvider` will cause a runtime exception.
