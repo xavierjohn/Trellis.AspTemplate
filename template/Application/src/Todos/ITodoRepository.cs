@@ -11,7 +11,7 @@ public interface ITodoRepository
     Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken);
 
     /// <summary>Gets all todos matching the specification.</summary>
-    Task<Result<IReadOnlyList<TodoItem>>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken);
+    Task<IReadOnlyList<TodoItem>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken);
 
     /// <summary>Saves a new or updated todo.</summary>
     Task<Result<Unit>> SaveAsync(TodoItem todo, CancellationToken cancellationToken);

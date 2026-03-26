@@ -19,10 +19,10 @@ internal class FakeRepositoryAdapter : ITodoRepository
         return result.IsSuccess ? Maybe.From(result.Value) : Maybe<TodoItem>.None;
     }
 
-    public Task<Result<IReadOnlyList<TodoItem>>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<TodoItem>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken)
     {
         var items = _repo.GetAll().Where(specification.IsSatisfiedBy).ToList();
-        return Task.FromResult(Result.Success<IReadOnlyList<TodoItem>>(items));
+        return Task.FromResult<IReadOnlyList<TodoItem>>(items);
     }
 
     public async Task<Result<Unit>> SaveAsync(TodoItem todo, CancellationToken cancellationToken)

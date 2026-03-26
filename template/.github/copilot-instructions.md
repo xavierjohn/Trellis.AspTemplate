@@ -4,6 +4,23 @@ This project uses the **Trellis** framework (.NET 10). Trellis combines Railway-
 
 **API Reference:** See `.github/trellis-api-reference.md` for all Trellis types, method signatures, and usage patterns. Use it as the authoritative source for Trellis API surface. See `.github/trellis-api-testing-reference.md` for testing APIs (FluentAssertions extensions, FakeRepository, TestActorProvider, test patterns).
 
+## Todo Sample — Study Before Replacing
+
+🔴 **Before implementing your service, read all source files in the Todo sample.** The template ships with a working Todo application that demonstrates every key Trellis pattern. Study how it's built — then replace the Todo files with your domain.
+
+Key patterns demonstrated in the sample:
+- **Value objects** with `RequiredGuid`, `RequiredString`, `RequiredDateTime`, `ValidateAdditional` — see `Domain/src/ValueObjects/`
+- **Aggregate** with `LazyStateMachine` and `Maybe<T>` partial properties — see `Domain/src/Aggregates/TodoItem.cs`
+- **Specification** with `.And()` composition — see `Domain/src/Specifications/OverdueTodoSpecification.cs`
+- **Always-valid commands** with private constructor + `TryCreate` — see `Application/src/Todos/UpdateTodoCommand.cs`
+- **`Result.Ensure`** for authorization checks — see `Application/src/Todos/CompleteTodoCommand.cs`
+- **`IAuthorizeResource<T>`** with `ResourceLoaderById` — see `CompleteTodoCommand` + `Acl/src/CompleteTodoResourceLoader.cs`
+- **Repository returning `Maybe<T>`** for lookups — see `Application/src/Todos/ITodoRepository.cs`
+- **Handlers returning domain types**, DTO mapping at the controller — see handlers vs `Api/src/2026-03-26/Models/TodoResponse.cs`
+- **`TimeProvider`** for testable time-dependent validation — see `UpdateTodoCommand.TryCreate`
+- **Controller `TryCreate` → `BindAsync` → `Send`** pattern — see `Api/src/2026-03-26/Controllers/TodosController.cs`
+- **Domain, Application, and API tests** — see `*/tests/` directories
+
 ## Core Principles
 
 1. 🔴 **Errors are values, not exceptions.** Use `Result<T>` for expected failures. Never throw for business logic. Never use try/catch in Domain or Application layers.

@@ -22,13 +22,13 @@ internal class TodoRepository : ITodoRepository
         return Maybe.From(entity);
     }
 
-    public async Task<Result<IReadOnlyList<TodoItem>>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<TodoItem>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken)
     {
         var items = await _context.TodoItems
             .Where(specification)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return Result.Success<IReadOnlyList<TodoItem>>(items);
+        return items;
     }
 
     public async Task<Result<Unit>> SaveAsync(TodoItem todo, CancellationToken cancellationToken)
