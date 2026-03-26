@@ -2,6 +2,7 @@
 
 using BestWeatherForecast.Application;
 using Microsoft.Extensions.Hosting;
+
 public class Startup
 {
     public static void ConfigureHost(IHostBuilder hostBuilder) =>
@@ -9,6 +10,6 @@ public class Startup
             .ConfigureServices((context, services) =>
             {
                 services.AddApplication()
-                .AddMockAntiCorruptionLayer();
+                .AddMockDependencies();
             });
 }

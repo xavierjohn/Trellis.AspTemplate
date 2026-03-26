@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <PackageReference Include="Trellis.EntityFrameworkCore" />
+    <PackageReference Include="Trellis.Authorization" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\Application\src\Application.csproj" />
   </ItemGroup>
 </Project>

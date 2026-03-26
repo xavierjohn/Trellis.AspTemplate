@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="Trellis.Authorization" />
     <PackageReference Include="Xunit.DependencyInjection" />
   </ItemGroup>
   <ItemGroup>

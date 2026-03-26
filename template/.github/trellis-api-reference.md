@@ -150,7 +150,8 @@ T GetValueOrDefault(T defaultValue)
 bool TryGetValue(out T value)
 Maybe<TResult> Map<TResult>(Func<T, TResult> selector) where TResult : notnull
 TResult Match<TResult>(Func<T, TResult> some, Func<TResult> none)
-implicit operator Maybe<T>(T value)
+implicit operator Maybe<T>(T value)  // T → Maybe<T> (implicit)
+// No implicit conversion from Maybe<T> → T (by design — use .Value, Match, or TryGetValue)
 ```
 
 ### Maybe Static Members

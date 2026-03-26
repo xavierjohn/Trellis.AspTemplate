@@ -8,14 +8,19 @@ using Trellis.Asp;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
 builder.Services
-    .AddPresentation()
+    .AddPresentation(builder.Environment)
     .AddApplication()
-    .AddAntiCorruptionLayer();
+    .AddAntiCorruptionLayer(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=todos.db");
 
 var app = builder.Build();
+
+// Ensure database is created
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.EnsureCreatedAsync();
+}
 
 if (app.Environment.IsDevelopment())
 {

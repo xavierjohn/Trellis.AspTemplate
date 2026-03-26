@@ -1,0 +1,41 @@
+﻿namespace BestWeatherForecast.Application.Todos;
+
+using BestWeatherForecast.Domain;
+using Mediator;
+using Trellis.Authorization;
+
+/// <summary>
+/// Creates a new todo item.
+/// </summary>
+public sealed record CreateTodoCommand(
+    Title Title,
+    DueDate DueDate,
+    Maybe<Tag> Tag) : ICommand<Result<TodoDto>>, IAuthorize
+{
+    /// <inheritdoc />
+    public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosCreate];
+}
+
+/// <summary>
+/// Handler for CreateTodoCommand.
+/// </summary>
+public sealed class CreateTodoCommandHandler : ICommandHandler<CreateTodoCommand, Result<TodoDto>>
+{
+    private readonly ITodoRepository _repository;
+    private readonly IActorProvider _actorProvider;
+
+    public CreateTodoCommandHandler(ITodoRepository repository, IActorProvider actorProvider)
+    {
+        _repository = repository;
+        _actorProvider = actorProvider;
+    }
+
+    public async ValueTask<Result<TodoDto>> Handle(CreateTodoCommand command, CancellationToken cancellationToken)
+    {
+        var actor = _actorProvider.GetCurrentActor();
+        return await TodoItem.TryCreate(command.Title, command.DueDate, command.Tag, actor.Id)
+            .Bind(todo => todo.Start().Map(_ => todo))
+            .TapAsync(todo => _repository.SaveAsync(todo, cancellationToken))
+            .MapAsync(TodoDto.From);
+    }
+}

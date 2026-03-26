@@ -22,7 +22,7 @@ public class ErrorHandlingMiddlewareTests
         var client = _factory.CreateClient();
         var traceId = "0af7651916cd43dd8448eb211c80319c";
         var traceParent = $"00-{traceId}-00f067aa0ba902b7-01";
-        var request = new HttpRequestMessage(HttpMethod.Get, "api/WeatherForecast/Throw?api-version=2023-06-06");
+        var request = new HttpRequestMessage(HttpMethod.Get, "api/Todos/throw?api-version=2026-03-26");
         request.Headers.Add("traceparent", traceParent);
 
         // Act
