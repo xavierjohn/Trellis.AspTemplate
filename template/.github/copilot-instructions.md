@@ -107,28 +107,45 @@ The build after Domain is especially critical — it triggers the `MaybePartialP
 
 ### Commands and Queries
 
-- 🔴 Commands receive **value object types** (e.g., `CustomerId`, not `Guid`). Scalar value binding validates at the API layer — handlers never call `TryCreate` on command properties.
-- 🟡 Use `IValidate` **only** for cross-field or collection validation (e.g., "at least one line item"). Single-field validation is handled by value objects. `Validate()` returns `IResult` — use `Result.Success()` for valid, `Result.Failure(ValidationError.For(...))` for invalid:
+- 🔴 Commands receive **value object types** (e.g., `TodoId`, not `Guid`). Scalar value binding validates at the API layer — handlers never call `TryCreate` on command properties.
+- 🔴 **Commands should be always-valid.** Use a private constructor + `TryCreate` factory method for commands with cross-field validation. This ensures invalid commands cannot exist — no reliance on pipeline behaviors for validation:
+```csharp
+public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
+{
+    public TodoId TodoId { get; }
+    public Title Title { get; }
+    public DueDate DueDate { get; }
+
+    private UpdateTodoCommand(TodoId todoId, Title title, DueDate dueDate) { ... }
+
+    public static Result<UpdateTodoCommand> TryCreate(TodoId todoId, Title title, DueDate dueDate, TimeProvider? timeProvider = null) =>
+        Result.Ensure(dueDate.Value > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
+                Error.Validation("Due date must be in the future.", "dueDate"))
+            .Map(_ => new UpdateTodoCommand(todoId, title, dueDate));
+}
+```
+- 🟢 Use `TimeProvider` as an optional parameter (defaulting to `TimeProvider.System`) in `TryCreate` methods that validate against the current time. This makes time-dependent validation testable with `FakeTimeProvider`.
+- 🟡 **Handlers return domain types** (e.g., `Result<TodoItem>`, not `Result<TodoDto>`). DTO mapping is a presentation concern — do it in the controller, not the handler.
+- 🟡 Use `IValidate` **only** when `TryCreate` is not feasible (e.g., collection validation where the command must already exist). `Validate()` returns `IResult`:
 ```csharp
 public IResult Validate() =>
     LineItems.Count > 0
         ? Result.Success()
         : Result.Failure(ValidationError.For("lineItems", "At least one line item is required."));
 ```
-- 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can cancel"). `Authorize()` returns `IResult`:
+- 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can complete"). Use `Result.Ensure` for clean authorization checks:
 ```csharp
-public IResult Authorize(Actor actor, Order order) =>
-    actor.HasPermission(Permissions.OrdersReadAll) || actor.IsOwner(order.CreatedByActorId.Value)
-        ? Result.Success()
-        : Result.Failure(Error.Forbidden("Only the order creator or an admin can cancel."));
+public IResult Authorize(Actor actor, TodoItem resource) =>
+    Result.Ensure(actor.IsOwner(resource.CreatedByActorId),
+        Error.Forbidden("Only the creator can complete this todo."));
 ```
 - **`IAuthorizeResource<TResource>`:** The pipeline loads the resource via an `IResourceLoader<TMessage, TResource>` before calling `Authorize(Actor, TResource)`. The handler receives the entity already authorized — no auth logic in handlers. Register the resource loader as scoped in the Acl layer. Use `ResourceLoaderById<TMessage, TResource, TId>` as a convenience base class for ID-based lookups.
 - **Registration:** `AddResourceAuthorization(params Assembly[])` scans assemblies for both `IAuthorizeResource<T>` commands and `IResourceLoader<,>` implementations. Pass both the Application assembly (commands) and the Acl assembly (loaders):
 ```csharp
 // In Acl/src/DependencyInjection.cs
 services.AddResourceAuthorization(
-    typeof(CancelOrderCommand).Assembly,        // Application — finds IAuthorizeResource commands
-    typeof(CancelOrderResourceLoader).Assembly); // Acl — finds IResourceLoader implementations
+    typeof(CompleteTodoCommand).Assembly,        // Application — finds IAuthorizeResource commands
+    typeof(CompleteTodoResourceLoader).Assembly); // Acl — finds IResourceLoader implementations
 ```
 - 🔴 **`Unit` type disambiguation:** Both `Trellis` and `Mediator` define a `Unit` type. In handler return types and ROP chains, always use `Trellis.Unit` (or `default(Trellis.Unit)`). The global `using Trellis;` directive makes the unqualified `Unit` resolve to `Trellis.Unit`, but when both namespaces are imported, qualify explicitly.
 
@@ -259,15 +276,24 @@ context.Orders
 
 Controllers inherit `ControllerBase` with `[ApiController]`. Actions are thin — send command via Mediator, chain `.ToActionResult(this)` or `.ToActionResultAsync(this)`.
 
-**Mapping domain types to DTOs in controllers:** Use the mapping overload to transform results inline:
+**Mapping domain types to DTOs in controllers:** Handlers return domain types. Map to response DTOs in the controller using the mapping overload:
 ```csharp
-// GET endpoint — map domain to DTO
-var result = await _sender.Send(new GetOrderByIdQuery(id), cancellationToken);
-return result.ToActionResult(this, OrderDto.From);
+// GET endpoint — map domain aggregate to response DTO
+return await _sender.Send(new GetTodoByIdQuery(id), cancellationToken)
+    .ToActionResultAsync(this, TodoResponse.From);
 
-// Or fully async chained:
-return await _sender.Send(new GetOrderByIdQuery(id), cancellationToken)
-    .ToActionResultAsync(this, OrderDto.From);
+// POST endpoint — 201 Created with Location header and mapping
+return await _sender.Send(
+    new CreateTodoCommand(request.Title, request.DueDate, request.Tag),
+    cancellationToken)
+    .ToCreatedAtActionResultAsync(this, nameof(GetById), r => new { id = r.Id }, TodoResponse.From);
+```
+
+**Commands with `TryCreate` validation:** When a command uses `TryCreate`, chain it into `Send` via `BindAsync` in the controller:
+```csharp
+return await UpdateTodoCommand.TryCreate(id, request.Title, request.DueDate, request.Tag)
+    .BindAsync(command => _sender.Send(command, cancellationToken))
+    .ToActionResultAsync(this, TodoResponse.From);
 ```
 
 **Every controller must have:**
@@ -278,11 +304,8 @@ return await _sender.Send(new GetOrderByIdQuery(id), cancellationToken)
 
 **Do NOT add `[ApiVersion]` attributes.** Version is derived automatically from the controller namespace via `VersionByNamespaceConvention` (see API Versioning below).
 
-**Use `ToCreatedAtActionResult`** for POST endpoints that create resources — returns `201 Created` with `Location` header. The `actionName` parameter is the GET action method name (e.g., `nameof(GetOrder)`). When the GET action is on the **same controller**, the controller name is inferred automatically. When it's on a different controller, pass the controller name (class name minus `Controller` suffix):
+**Use `ToCreatedAtActionResult`** for POST endpoints that create resources — returns `201 Created` with `Location` header. When the GET action is on a **different controller**, pass the controller name (class name minus `Controller` suffix):
 ```csharp
-// Same controller — controller name inferred
-result.ToCreatedAtActionResult(this, nameof(GetOrder), o => new { id = o.Id.Value }, OrderDto.From);
-
 // Different controller — specify controller name explicitly
 result.ToCreatedAtActionResult(this, nameof(CustomersController.GetCustomer), o => new { id = o.Id.Value }, CustomerDto.From, "Customers");
 ```
@@ -300,7 +323,7 @@ And activate the middleware in `Program.cs`:
 app.UseScalarValueValidation();
 ```
 
-🟡 **Request/Response DTOs** live in `Api/src/{version}/Models/` (e.g., `Api/src/2026-11-12/Models/`). 🔴 Never expose domain types directly. Request DTOs can use scalar value object types as properties — they will be validated automatically via the JSON converter.
+🟡 **Request/Response DTOs** live in `Api/src/{version}/Models/` (e.g., `Api/src/2026-03-26/Models/`). 🔴 Never expose domain types directly. Request DTOs can use scalar value object types as properties — they will be validated automatically via the JSON converter. Response DTOs should have a `static From(DomainType)` method for mapping from domain aggregates.
 
 ### API Versioning
 
