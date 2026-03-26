@@ -4,6 +4,14 @@
 > fake repositories, actor providers, and testing patterns for Trellis applications.
 > For the core framework API, see `trellis-api-reference.md`.
 
+## Namespaces
+
+```csharp
+using Trellis.Testing;          // Assertions, WebApplicationFactory extensions, MSAL types
+using Trellis.Testing.Builders; // ResultBuilder, ValidationErrorBuilder
+using Trellis.Testing.Fakes;    // FakeRepository, TestActorProvider, TestActorScope
+```
+
 ---
 
 ## Result Assertions
@@ -19,7 +27,7 @@ result.Should().HaveErrorCode("not.found")
 result.Should().HaveErrorDetail("Order not found")
 result.Should().HaveErrorDetailContaining("not found")
 
-// Async
+// Async — works with both Task<Result<T>> and ValueTask<Result<T>>
 await result.Should().BeSuccessAsync()
 await result.Should().BeFailureAsync()
 await result.Should().BeFailureOfTypeAsync<ValidationError>()
@@ -89,18 +97,24 @@ In-memory repository for Application-layer handler tests. Stores entities in a d
 // Construction
 var repo = new FakeRepository<Order, OrderId>();
 
-// CRUD operations
-await repo.SaveAsync(order);
-var result = await repo.GetByIdAsync(orderId);        // Result<Order> (NotFound if missing)
-var maybe = await repo.FindByIdAsync(orderId);        // Result<Maybe<Order>>
-await repo.DeleteAsync(orderId);
+// Unique constraint — SaveAsync returns ConflictError on duplicate
+repo.WithUniqueConstraint(o => o.Email);
 
-// Seeding test data
-var order = Order.Create(...);
-await repo.SaveAsync(order);                           // Now GetByIdAsync will return it
+// CRUD operations
+await repo.SaveAsync(order);                               // Result<Unit> (ConflictError if unique violation)
+var result = await repo.GetByIdAsync(orderId);             // Result<Order> (NotFound if missing)
+var maybe = await repo.FindByIdAsync(orderId);             // Result<Maybe<Order>>
+await repo.DeleteAsync(orderId);                           // Result<Unit> (NotFound if missing)
+
+// Synchronous helpers for test setup and assertions
+repo.Clear();                                              // Remove all entities
+bool exists = repo.Exists(orderId);                        // Check existence
+Order? order = repo.Get(orderId);                          // Get or null (no Result)
+IEnumerable<Order> all = repo.GetAll();                    // All stored entities
+int count = repo.Count;                                    // Number of stored entities
 
 // Domain event inspection
-repo.PublishedEvents                                   // IReadOnlyList<IDomainEvent>
+repo.PublishedEvents                                       // IReadOnlyList<IDomainEvent>
 ```
 
 ## TestActorProvider and TestActorScope
@@ -116,6 +130,10 @@ Implements both `IActorProvider` (sync) and `IAsyncActorProvider` (async). Regis
 ```csharp
 var actorProvider = new TestActorProvider("admin", "Orders.Read", "Orders.Write");
 var actorFromInstance = new TestActorProvider(actor);               // from Actor instance
+
+// Access the current actor (implements IActorProvider and IAsyncActorProvider)
+Actor actor = actorProvider.GetCurrentActor();
+Actor actor = await actorProvider.GetCurrentActorAsync(cancellationToken);
 ```
 
 ### Scoped Actor Switching
@@ -166,6 +184,10 @@ Creates an `HttpClient` with the `X-Test-Actor` header pre-set, encoding actor i
 // Extension on WebApplicationFactory<TEntryPoint>
 var client = factory.CreateClientWithActor("user-1", "Orders.Create", "Orders.Read");
 // Sets header: X-Test-Actor: {"Id":"user-1","Permissions":["Orders.Create","Orders.Read"]}
+
+// Overload with full Actor object (for ForbiddenPermissions, Attributes)
+var actor = Actor.Create("user-1", new HashSet<string> { "Orders.Create" });
+var client = factory.CreateClientWithActor(actor);
 ```
 
 The full Actor JSON shape supports `ForbiddenPermissions` and `Attributes` in addition to `Id` and `Permissions`:
@@ -177,6 +199,41 @@ The full Actor JSON shape supports `ForbiddenPermissions` and `Attributes` in ad
   "Attributes": { "tenantId": "tenant-42" }
 }
 ```
+
+---
+
+## MSAL E2E Test Support
+
+**Namespace: `Trellis.Testing`**
+
+For end-to-end tests against a real Entra ID (Azure AD) tenant. Acquires real tokens using ROPC (Resource Owner Password Credentials) flow.
+
+```csharp
+// Configuration
+public sealed class MsalTestOptions
+{
+    public string TenantId { get; set; }
+    public string ClientId { get; set; }
+    public string[] Scopes { get; set; }
+    public Dictionary<string, TestUserCredentials> TestUsers { get; set; }
+}
+
+public sealed class TestUserCredentials
+{
+    public string Username { get; set; }
+    public string Password { get; set; }
+    public string[] ExpectedPermissions { get; set; }
+}
+
+// Token acquisition
+var tokenProvider = new MsalTestTokenProvider(msalOptions);
+string token = await tokenProvider.AcquireTokenAsync("admin-user", cancellationToken);
+
+// WebApplicationFactory extension — creates client with real Bearer token
+var client = await factory.CreateClientWithEntraTokenAsync(tokenProvider, "admin-user", cancellationToken);
+```
+
+> ⚠️ MSAL types use reflection and are not AOT-compatible.
 
 ---
 
