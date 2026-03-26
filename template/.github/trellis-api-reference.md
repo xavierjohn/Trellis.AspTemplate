@@ -271,6 +271,8 @@ Each error type maps to a specific HTTP status code. `ValidationError` → 400, 
 
 Represents input validation failures with field-level error details. Use `ValidationError.For(fieldName, message)` to create, or let value object `TryCreate` methods produce them automatically.
 
+> ⚠️ **Parameter order differs:** `Error.Validation(fieldDetail, fieldName)` vs `ValidationError.For(fieldName, message)`. The factory method on `Error` takes the detail first; the static method on `ValidationError` takes the field name first.
+
 ```csharp
 ImmutableArray<FieldError> FieldErrors { get; }
 readonly record struct FieldError(string FieldName, ImmutableArray<string> Details)
@@ -1278,7 +1280,7 @@ Registered automatically by `AddScalarValueValidation()`.
 
 ## Registration
 
-Service collection extension methods for registering Trellis ASP.NET services: `AddTrellisAsp()`, `AddScalarValueValidation()`, `UseScalarValueValidation()`.
+Service collection extension methods: `AddScalarValueValidation()` (on `IMvcBuilder`), `AddScalarValueValidationForMinimalApi()` (on `IServiceCollection`). Middleware: `UseScalarValueValidation()` (on `IApplicationBuilder`).
 
 ```csharp
 // MVC — registers model binders, JSON converters, validation filters
@@ -1490,7 +1492,7 @@ Result<T> ToResult<T>(this ValidationResult validationResult, T value)
 
 // Direct validate-and-return
 Result<T> ValidateToResult<T>(this IValidator<T> validator, T value)
-Task<Result<T>> ValidateToResultAsync<T>(this IValidator<T> validator, T value, CancellationToken ct = default)
+Task<Result<T>> ValidateToResultAsync<T>(this IValidator<T> validator, T value, CancellationToken cancellationToken = default)
 ```
 
 ---
@@ -1533,10 +1535,10 @@ Result<TState> FireResult(TTrigger trigger)  // Delegates to Machine.FireResult(
 `SaveChangesResultAsync()` and `SaveChangesResultUnitAsync()` wrap EF Core `SaveChanges` in `Result<T>`. Duplicate key violations become `ConflictError`; concurrency exceptions become `ConflictError`.
 
 ```csharp
-Task<Result<int>> SaveChangesResultAsync(this DbContext context, CancellationToken ct = default)
-Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken ct = default)
-Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken ct = default)
-Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken ct = default)
+Task<Result<int>> SaveChangesResultAsync(this DbContext context, CancellationToken cancellationToken = default)
+Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)
+Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
 // DbUpdateConcurrencyException → Error.Conflict
 // Duplicate key → Error.Conflict
 // FK violation → Error.Domain
@@ -1547,12 +1549,12 @@ Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool accep
 `FirstOrDefaultResultAsync` returns `NotFoundError` if missing; `FirstOrDefaultMaybeAsync` returns `Maybe<T>.None` if missing; `SingleOrDefaultMaybeAsync` for unique-or-none queries.
 
 ```csharp
-Task<Maybe<T>> FirstOrDefaultMaybeAsync<T>(this IQueryable<T> query, CancellationToken ct = default)
-Task<Maybe<T>> FirstOrDefaultMaybeAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, CancellationToken ct = default)
-Task<Maybe<T>> SingleOrDefaultMaybeAsync<T>(this IQueryable<T> query, CancellationToken ct = default)
-Task<Maybe<T>> SingleOrDefaultMaybeAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, CancellationToken ct = default)
-Task<Result<T>> FirstOrDefaultResultAsync<T>(this IQueryable<T> query, Error notFoundError, CancellationToken ct = default)
-Task<Result<T>> FirstOrDefaultResultAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, Error notFoundError, CancellationToken ct = default)
+Task<Maybe<T>> FirstOrDefaultMaybeAsync<T>(this IQueryable<T> query, CancellationToken cancellationToken = default)
+Task<Maybe<T>> FirstOrDefaultMaybeAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+Task<Maybe<T>> SingleOrDefaultMaybeAsync<T>(this IQueryable<T> query, CancellationToken cancellationToken = default)
+Task<Maybe<T>> SingleOrDefaultMaybeAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+Task<Result<T>> FirstOrDefaultResultAsync<T>(this IQueryable<T> query, Error notFoundError, CancellationToken cancellationToken = default)
+Task<Result<T>> FirstOrDefaultResultAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, Error notFoundError, CancellationToken cancellationToken = default)
 IQueryable<T> Where<T>(this IQueryable<T> query, Specification<T> specification)
 ```
 
@@ -1561,7 +1563,7 @@ IQueryable<T> Where<T>(this IQueryable<T> query, Specification<T> specification)
 `ApplyTrellisConventions()` in `ConfigureConventions` registers value converters for all `IScalarValue` types and `Money`. Call once — do NOT add manual `HasConversion` for Trellis types.
 
 ```csharp
-// In OnModelCreating or ConfigureConventions
+// In ConfigureConventions (NOT OnModelCreating)
 configurationBuilder.ApplyTrellisConventions(typeof(Order).Assembly);
 // Auto-registers converters for all IScalarValue and RequiredEnum types
 // Auto-maps Money properties as owned types (Amount + Currency columns)

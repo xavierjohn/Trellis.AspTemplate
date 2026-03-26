@@ -64,7 +64,7 @@ validationError.Should().HaveFieldCount(2)
 ResultBuilder.Success(value)
 ResultBuilder.Failure<T>(error)
 ResultBuilder.NotFound<T>("Order not found")
-ResultBuilder.NotFound<T>("Order", "123")      // "Order '123' not found"
+ResultBuilder.NotFound<T>("Order", "123")      // "Order 123 not found"
 ResultBuilder.Validation<T>("Invalid", "field")
 ResultBuilder.Unauthorized<T>()
 ResultBuilder.Forbidden<T>()
@@ -166,6 +166,16 @@ Creates an `HttpClient` with the `X-Test-Actor` header pre-set, encoding actor i
 // Extension on WebApplicationFactory<TEntryPoint>
 var client = factory.CreateClientWithActor("user-1", "Orders.Create", "Orders.Read");
 // Sets header: X-Test-Actor: {"Id":"user-1","Permissions":["Orders.Create","Orders.Read"]}
+```
+
+The full Actor JSON shape supports `ForbiddenPermissions` and `Attributes` in addition to `Id` and `Permissions`:
+```json
+{
+  "Id": "user-1",
+  "Permissions": ["Orders.Create", "Orders.Read"],
+  "ForbiddenPermissions": ["Orders.Delete"],
+  "Attributes": { "tenantId": "tenant-42" }
+}
 ```
 
 ---
