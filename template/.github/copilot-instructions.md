@@ -191,11 +191,12 @@ services.AddResourceAuthorization(
 
 ```csharp
 // ✅ Preferred — ROP chain with Bind/BindAsync
-public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
+// 🔴 Use BindAsync (not TapAsync) for SaveAsync — it returns Result<Unit> which may contain
+// a ConflictError (duplicate key) or other DB failure. TapAsync silently discards the Result.
+public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
     await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken)
         .BindAsync(order => order.Submit())
-        .TapAsync(order => _orderRepository.SaveAsync(order, cancellationToken))
-        .MapAsync(OrderDto.From);
+        .BindAsync(order => _orderRepository.SaveAsync(order, cancellationToken).MapAsync(_ => order));
 
 // 🟢 Acceptable — imperative style when it improves readability for complex branching
 public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken)

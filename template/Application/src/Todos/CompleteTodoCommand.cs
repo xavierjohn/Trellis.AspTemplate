@@ -7,8 +7,11 @@ using Trellis.Authorization;
 /// <summary>
 /// Completes a todo item. Only the creator can complete their own todo.
 /// </summary>
-public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoItem>>, IAuthorizeResource<TodoItem>
+public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>
 {
+    /// <inheritdoc />
+    public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosComplete];
+
     /// <inheritdoc />
     public IResult Authorize(Actor actor, TodoItem resource) =>
         Result.Ensure(actor.IsOwner(resource.CreatedByActorId),
@@ -30,6 +33,6 @@ public sealed class CompleteTodoCommandHandler : ICommandHandler<CompleteTodoCom
         return await maybe
             .ToResult(Error.NotFound($"Todo {command.TodoId} not found."))
             .Bind(todo => todo.Complete().Map(_ => todo))
-            .TapAsync(todo => _repository.SaveAsync(todo, cancellationToken));
+            .BindAsync(todo => _repository.SaveAsync(todo, cancellationToken).MapAsync(_ => todo));
     }
 }

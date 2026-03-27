@@ -35,6 +35,6 @@ public sealed class CreateTodoCommandHandler : ICommandHandler<CreateTodoCommand
         var actor = _actorProvider.GetCurrentActor();
         return await TodoItem.TryCreate(command.Title, command.DueDate, command.Tag, actor.Id)
             .Bind(todo => todo.Start().Map(_ => todo))
-            .TapAsync(todo => _repository.SaveAsync(todo, cancellationToken));
+            .BindAsync(todo => _repository.SaveAsync(todo, cancellationToken).MapAsync(_ => todo));
     }
 }

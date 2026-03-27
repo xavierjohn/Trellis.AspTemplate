@@ -146,7 +146,7 @@ public class TodosControllerTests
     [Fact]
     public async Task Update_todo_returns_200()
     {
-        var client = CreateClient("user-1", "todos:create", "todos:read");
+        var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
         var dueDate = DateTime.UtcNow.AddDays(5);
         var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Original", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -164,7 +164,7 @@ public class TodosControllerTests
     [Fact]
     public async Task Update_with_past_due_date_returns_400()
     {
-        var client = CreateClient("user-1", "todos:create", "todos:read");
+        var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
         var dueDate = DateTime.UtcNow.AddDays(5);
         var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Will fail update", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);

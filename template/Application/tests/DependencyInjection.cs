@@ -12,7 +12,7 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddMockDependencies(this IServiceCollection services)
     {
-        var actorProvider = new TestActorProvider("test-user", Permissions.TodosCreate, Permissions.TodosRead, Permissions.TodosComplete, Permissions.TodosDelete);
+        var actorProvider = new TestActorProvider("test-user", Permissions.TodosCreate, Permissions.TodosRead, Permissions.TodosUpdate, Permissions.TodosComplete, Permissions.TodosDelete);
         services.AddSingleton<TestActorProvider>(actorProvider);
         services.AddSingleton<IActorProvider>(actorProvider);
         services.AddSingleton<FakeRepository<TodoItem, TodoId>>();

@@ -16,7 +16,7 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
     public Maybe<Tag> Tag { get; }
 
     /// <inheritdoc />
-    public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosCreate];
+    public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosUpdate];
 
     private UpdateTodoCommand(TodoId todoId, Title title, DueDate dueDate, Maybe<Tag> tag)
     {
@@ -55,6 +55,6 @@ public sealed class UpdateTodoCommandHandler : ICommandHandler<UpdateTodoCommand
         return await maybe
             .ToResult(Error.NotFound($"Todo {command.TodoId} not found."))
             .Bind(todo => todo.Update(command.Title, command.DueDate, command.Tag))
-            .TapAsync(todo => _repository.SaveAsync(todo, cancellationToken));
+            .BindAsync(todo => _repository.SaveAsync(todo, cancellationToken).MapAsync(_ => todo));
     }
 }
