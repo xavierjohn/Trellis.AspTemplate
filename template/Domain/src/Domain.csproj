@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
-    <PackageReference Include="Trellis.Authorization" />
     <PackageReference Include="Trellis.DomainDrivenDesign" />
     <PackageReference Include="Trellis.EntityFrameworkCore.Generator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <PackageReference Include="Trellis.Primitives" />

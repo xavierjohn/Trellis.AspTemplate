@@ -25,10 +25,10 @@ public partial class TodoItem : Aggregate<TodoId>
     public TodoStatus Status { get; private set; }
 
     /// <summary>When the todo was completed, if applicable.</summary>
-    public partial Maybe<DateTime> CompletedAt { get; set; }
+    public partial Maybe<DateTime> CompletedAt { get; private set; }
 
     /// <summary>Optional categorization tag.</summary>
-    public partial Maybe<Tag> Tag { get; set; }
+    public partial Maybe<Tag> Tag { get; private set; }
 
     /// <summary>The actor who created this todo.</summary>
     public string CreatedByActorId { get; private set; } = null!;
@@ -60,7 +60,7 @@ public partial class TodoItem : Aggregate<TodoId>
             s => Status = s,
             ConfigureStateMachine);
 
-        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, DateTime.UtcNow));
+        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, CreatedAt));
     }
 
     /// <summary>

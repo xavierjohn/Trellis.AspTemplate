@@ -37,7 +37,7 @@ public class TodosController : ControllerBase
         await _sender.Send(
             new CreateTodoCommand(request.Title, request.DueDate, request.Tag),
             cancellationToken)
-            .ToCreatedAtActionResultAsync(this, nameof(GetById), r => new { id = r.Id }, TodoResponse.From);
+            .ToCreatedAtActionResultAsync(this, nameof(GetById), r => new { id = (Guid)r.Id }, TodoResponse.From);
 
     /// <summary>
     /// Get a todo item by ID.

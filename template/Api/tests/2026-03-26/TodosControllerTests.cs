@@ -206,4 +206,104 @@ public class TodosControllerTests
         var getDeletedResponse = await client.GetAsync($"api/Todos/{created.Id}?{VersionParam}", TestContext.Current.CancellationToken);
         getDeletedResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
+
+    #region Overdue endpoint
+
+    [Fact]
+    public async Task GetOverdue_returns_200()
+    {
+        var client = CreateClient("user-1", "todos:create", "todos:read");
+        // Create a todo with a past due date — it will be Active and overdue
+        var pastDue = DateTime.UtcNow.AddDays(-1);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Overdue todo", dueDate = pastDue }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var response = await client.GetAsync($"api/Todos/overdue?{VersionParam}", TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    #endregion
+
+    #region Permission denied tests (403)
+
+    [Fact]
+    public async Task Create_without_permission_returns_403()
+    {
+        var client = CreateClient("user-1", "todos:read"); // no todos:create
+        var body = new { title = "Denied", dueDate = DateTime.UtcNow.AddDays(5) };
+
+        var response = await client.PostAsJsonAsync(BaseUrl, body, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetById_without_permission_returns_403()
+    {
+        var client = CreateClient("user-1"); // no permissions at all
+        var fakeId = Guid.NewGuid();
+
+        var response = await client.GetAsync($"api/Todos/{fakeId}?{VersionParam}", TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetOverdue_without_permission_returns_403()
+    {
+        var client = CreateClient("user-1"); // no todos:read
+
+        var response = await client.GetAsync($"api/Todos/overdue?{VersionParam}", TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Update_without_permission_returns_403()
+    {
+        // Create a todo first with a permissioned client
+        var creator = CreateClient("user-1", "todos:create");
+        var createResponse = await creator.PostAsJsonAsync(BaseUrl, new { title = "To update", dueDate = DateTime.UtcNow.AddDays(5) }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+
+        // Try to update without todos:update
+        var client = CreateClient("user-1", "todos:read");
+        var response = await client.PutAsJsonAsync($"api/Todos/{created.Id}?{VersionParam}", new { title = "Updated", dueDate = DateTime.UtcNow.AddDays(10) }, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Complete_without_permission_returns_403()
+    {
+        var creator = CreateClient("owner-1", "todos:create");
+        var createResponse = await creator.PostAsJsonAsync(BaseUrl, new { title = "To complete", dueDate = DateTime.UtcNow.AddDays(5) }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+
+        // Try to complete without todos:complete
+        var client = CreateClient("owner-1", "todos:read");
+        var response = await client.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Delete_without_permission_returns_403()
+    {
+        var creator = CreateClient("user-1", "todos:create");
+        var createResponse = await creator.PostAsJsonAsync(BaseUrl, new { title = "To delete", dueDate = DateTime.UtcNow.AddDays(5) }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+
+        // Try to delete without todos:delete
+        var client = CreateClient("user-1", "todos:read");
+        var response = await client.DeleteAsync($"api/Todos/{created.Id}?{VersionParam}", TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    #endregion
 }
