@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <TrellisVersion>3.0.0-alpha.137.g751c46039e</TrellisVersion>
+    <TrellisVersion>3.0.0-alpha.137</TrellisVersion>
   </PropertyGroup>
   <!-- Runtime -->
   <ItemGroup>
