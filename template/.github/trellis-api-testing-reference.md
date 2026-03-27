@@ -343,3 +343,132 @@ public async Task Cancel_ByNonOwner_ReturnsForbidden()
     result.Should().BeFailureOfType<ForbiddenError>();
 }
 ```
+
+### Conflict/Uniqueness Test
+
+```csharp
+[Fact]
+public async Task Save_duplicate_email_returns_conflict()
+{
+    var repo = new FakeRepository<Customer, CustomerId>();
+    repo.WithUniqueConstraint(c => c.Email);
+
+    var customer1 = Customer.TryCreate(email: EmailAddress.Create("a@b.com")).Value;
+    await repo.SaveAsync(customer1);
+
+    var customer2 = Customer.TryCreate(email: EmailAddress.Create("a@b.com")).Value;
+    var result = await repo.SaveAsync(customer2);
+
+    result.Should().BeFailureOfType<ConflictError>();
+}
+```
+
+### Maybe Query Test
+
+```csharp
+[Fact]
+public async Task FindById_missing_returns_none()
+{
+    var repo = new FakeRepository<Order, OrderId>();
+
+    var result = await repo.FindByIdAsync(OrderId.NewUniqueV7());
+
+    result.Should().BeSuccess();
+    result.Value.Should().BeNone();
+}
+
+[Fact]
+public async Task FindById_existing_returns_value()
+{
+    var repo = new FakeRepository<Order, OrderId>();
+    var order = Order.TryCreate(...).Value;
+    await repo.SaveAsync(order);
+
+    var result = await repo.FindByIdAsync(order.Id);
+
+    result.Should().BeSuccess();
+    result.Value.Should().HaveValue();
+}
+```
+
+### State Machine Transition Test
+
+```csharp
+[Fact]
+public void Valid_transition_returns_new_state()
+{
+    var todo = TodoItem.TryCreate(title, dueDate, tag, actorId).Value;
+    todo.Start().Should().BeSuccess();
+
+    var result = todo.Complete();
+
+    result.Should().BeSuccess()
+        .Which.Should().Be(TodoStatus.Completed);
+}
+
+[Fact]
+public void Invalid_transition_returns_failure()
+{
+    var todo = TodoItem.TryCreate(title, dueDate, tag, actorId).Value;
+    // Skip Start — try to Complete from Pending
+
+    var result = todo.Complete();
+
+    result.Should().BeFailure();
+}
+```
+
+### Domain Event Assertions
+
+```csharp
+[Fact]
+public async Task Save_publishes_domain_events()
+{
+    var repo = new FakeRepository<Order, OrderId>();
+    var order = Order.TryCreate(customerId).Value;
+    await repo.SaveAsync(order);
+
+    repo.PublishedEvents.Should().ContainSingle()
+        .Which.Should().BeOfType<OrderCreated>();
+}
+```
+
+### HTTP Authorization Matrix
+
+Test all permission scenarios for an endpoint:
+
+```csharp
+[Fact]
+public async Task Complete_by_owner_returns_200()
+{
+    var client = factory.CreateClientWithActor("owner-1", "todos:complete");
+    // ... create todo as owner-1, then complete
+    response.StatusCode.Should().Be(HttpStatusCode.OK);
+}
+
+[Fact]
+public async Task Complete_by_non_owner_returns_403()
+{
+    // ... create todo as owner-1
+    var client = factory.CreateClientWithActor("other-user", "todos:complete");
+    response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+}
+
+[Fact]
+public async Task Complete_without_permission_returns_403()
+{
+    var client = factory.CreateClientWithActor("owner-1"); // no todos:complete permission
+    response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+}
+```
+
+### Decision Table — When to Use What
+
+| Scenario | Tool | Why |
+|----------|------|-----|
+| Domain unit tests (value objects, aggregates, specs) | Direct construction, no DI | Pure logic, no infrastructure |
+| Handler tests (commands, queries) | `FakeRepository` + `TestActorProvider` + `ISender` via DI | Tests handler logic with mocked persistence and auth |
+| Authorization tests | `TestActorProvider.WithActor(...)` scoped switching | Tests permission and ownership checks |
+| Resource authorization tests | `ReplaceResourceLoader(...)` + `TestActorProvider` | Tests `IAuthorizeResource<T>` pipeline |
+| API integration tests | `WebApplicationFactory` + `CreateClientWithActor(...)` | Tests full HTTP round-trip with real middleware |
+| E2E with real Entra ID | `CreateClientWithEntraTokenAsync(...)` + `MsalTestTokenProvider` | Tests against real identity provider |
