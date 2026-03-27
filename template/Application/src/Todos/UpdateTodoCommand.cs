@@ -35,7 +35,7 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
     /// <param name="tag">New optional tag.</param>
     /// <param name="timeProvider">Optional time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>
     public static Result<UpdateTodoCommand> TryCreate(TodoId todoId, Title title, DueDate dueDate, Maybe<Tag> tag, TimeProvider? timeProvider = null) =>
-        Result.Ensure(dueDate.Value > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
+        Result.Ensure(dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
                 Error.Validation("Due date must be in the future.", "dueDate"))
             .Map(_ => new UpdateTodoCommand(todoId, title, dueDate, tag));
 }

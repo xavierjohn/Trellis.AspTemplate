@@ -91,7 +91,7 @@ public partial class TodoItem : Aggregate<TodoId>
     /// Returns true if this todo is overdue (active and past its due date).
     /// </summary>
     public bool IsOverdue(DateTime asOf) =>
-        Status == TodoStatus.Active && DueDate.Value < asOf;
+        Status == TodoStatus.Active && DueDate < asOf;
 
     /// <summary>
     /// Updates the todo's title, due date, and tag. Cannot update completed todos.
