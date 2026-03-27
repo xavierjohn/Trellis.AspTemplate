@@ -28,6 +28,10 @@ internal static class DependencyInjection
 
         if (environment.IsDevelopment())
             services.AddDevelopmentActorProvider();
+        else
+            throw new InvalidOperationException(
+                "Production IActorProvider not configured. " +
+                "Register AddEntraActorProvider() with your Azure Entra ID configuration for non-development environments.");
 
         return services;
     }
