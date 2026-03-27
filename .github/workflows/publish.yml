@@ -51,7 +51,7 @@ jobs:
 
     - name: Run tests
       working-directory: template
-      run: dotnet test TrellisAspTemplate.slnx --no-build -c Release --filter-not-trait "Category=Integration"
+      run: dotnet test --solution TrellisAspTemplate.slnx --no-build -c Release --filter-not-trait "Category=Integration"
 
     - name: Pack template
       run: dotnet pack templatepack.csproj -c Release -o nupkg
