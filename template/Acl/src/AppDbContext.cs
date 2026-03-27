@@ -1,7 +1,7 @@
 ﻿namespace TodoSample.AntiCorruptionLayer;
 
-using TodoSample.Domain;
 using Microsoft.EntityFrameworkCore;
+using TodoSample.Domain;
 using Trellis.EntityFrameworkCore;
 
 /// <summary>

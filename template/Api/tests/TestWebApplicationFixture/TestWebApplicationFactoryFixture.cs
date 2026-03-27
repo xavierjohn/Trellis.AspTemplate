@@ -1,6 +1,5 @@
 ﻿namespace Api.Tests;
 
-using TodoSample.AntiCorruptionLayer;
 using MartinCostello.Logging.XUnit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -9,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using TodoSample.AntiCorruptionLayer;
 using Trellis.EntityFrameworkCore;
 using Xunit.v3;
 

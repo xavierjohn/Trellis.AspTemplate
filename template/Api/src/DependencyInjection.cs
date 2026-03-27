@@ -1,15 +1,15 @@
 ﻿namespace TodoSample.Api;
 
-using TodoSample.Api.Middleware;
+using Asp.Versioning.Conventions;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using ServiceLevelIndicators;
 using Scalar.AspNetCore;
+using ServiceLevelIndicators;
+using TodoSample.Api.Middleware;
 using Trellis.Asp;
 using Trellis.Asp.Authorization;
-using Asp.Versioning.Conventions;
 
 internal static class DependencyInjection
 {

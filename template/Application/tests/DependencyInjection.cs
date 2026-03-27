@@ -1,9 +1,9 @@
 ﻿namespace Application.Tests;
 
+using Microsoft.Extensions.DependencyInjection;
 using TodoSample.Application;
 using TodoSample.Application.Todos;
 using TodoSample.Domain;
-using Microsoft.Extensions.DependencyInjection;
 using Trellis.Authorization;
 using Trellis.Mediator;
 using Trellis.Testing.Fakes;

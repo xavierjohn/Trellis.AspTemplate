@@ -1,7 +1,7 @@
 ﻿namespace Application.Tests;
 
-using TodoSample.Application;
 using Microsoft.Extensions.Hosting;
+using TodoSample.Application;
 
 public class Startup
 {

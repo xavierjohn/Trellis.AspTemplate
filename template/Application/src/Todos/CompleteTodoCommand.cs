@@ -1,7 +1,7 @@
 ﻿namespace TodoSample.Application.Todos;
 
-using TodoSample.Domain;
 using Mediator;
+using TodoSample.Domain;
 using Trellis.Authorization;
 
 /// <summary>

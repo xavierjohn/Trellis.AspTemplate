@@ -1,8 +1,8 @@
 ﻿namespace Application.Tests;
 
+using Mediator;
 using TodoSample.Application.Todos;
 using TodoSample.Domain;
-using Mediator;
 using Trellis.Testing.Fakes;
 
 #pragma warning disable TRLS003 // Tests assert success before accessing .Value

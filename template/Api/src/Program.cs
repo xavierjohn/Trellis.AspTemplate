@@ -1,9 +1,9 @@
-﻿using TodoSample.AntiCorruptionLayer;
+﻿using Scalar.AspNetCore;
+using ServiceLevelIndicators;
+using TodoSample.AntiCorruptionLayer;
 using TodoSample.Api;
 using TodoSample.Api.Middleware;
 using TodoSample.Application;
-using Scalar.AspNetCore;
-using ServiceLevelIndicators;
 using Trellis.Asp;
 
 var builder = WebApplication.CreateBuilder(args);

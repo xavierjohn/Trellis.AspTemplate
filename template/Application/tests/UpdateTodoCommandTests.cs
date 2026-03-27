@@ -1,8 +1,8 @@
 ﻿namespace Application.Tests;
 
+using Microsoft.Extensions.Time.Testing;
 using TodoSample.Application.Todos;
 using TodoSample.Domain;
-using Microsoft.Extensions.Time.Testing;
 
 public class UpdateTodoCommandTests
 {

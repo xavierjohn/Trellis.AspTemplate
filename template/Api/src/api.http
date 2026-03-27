@@ -1,9 +1,4 @@
-﻿@host = {{host}}
-@apiVersion = {{apiVersion}}
-@adminActor = {{adminActor}}
-@userActor = {{userActor}}
-
-### Create a todo (admin)
+﻿### Create a todo (admin)
 # @name createTodo
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json

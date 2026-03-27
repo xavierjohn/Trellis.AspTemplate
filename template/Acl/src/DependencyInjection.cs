@@ -1,9 +1,9 @@
 ﻿namespace TodoSample.AntiCorruptionLayer;
 
-using TodoSample.Application;
-using TodoSample.Application.Todos;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using TodoSample.Application;
+using TodoSample.Application.Todos;
 using Trellis.EntityFrameworkCore;
 using Trellis.Mediator;
 
