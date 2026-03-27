@@ -1,6 +1,6 @@
 ﻿namespace AntiCorruptionLayer.Tests;
 
-using BestWeatherForecast.AntiCorruptionLayer;
+using TodoSample.AntiCorruptionLayer;
 
 public class ServiceBusTests
 {
@@ -14,10 +14,10 @@ public class ServiceBusTests
         {
             Environment = env,
             RegionShortName = "usw2",
-            ServiceName = "bwf"
+            ServiceName = "tdo"
         };
 
-        var expected = $"{env}-bwf-sbns";
+        var expected = $"{env}-tdo-sbns";
 
         // Act
         var actual = environmentOptions.GetServiceBusName();
@@ -27,10 +27,10 @@ public class ServiceBusTests
     }
 
     [Theory]
-    [InlineData(CloudType.AzureCloud, "ppe-bwf-sbns.servicebus.windows.net")]
-    [InlineData(CloudType.AzureUSGovernment, "ppe-bwf-sbns.servicebus.usgovcloudapi.net")]
-    [InlineData(CloudType.AzureChinaCloud, "ppe-bwf-sbns.servicebus.chinacloudapi.cn")]
-    [InlineData(CloudType.AzureGermanCloud, "ppe-bwf-sbns.servicebus.cloudapi.de")]
+    [InlineData(CloudType.AzureCloud, "ppe-tdo-sbns.servicebus.windows.net")]
+    [InlineData(CloudType.AzureUSGovernment, "ppe-tdo-sbns.servicebus.usgovcloudapi.net")]
+    [InlineData(CloudType.AzureChinaCloud, "ppe-tdo-sbns.servicebus.chinacloudapi.cn")]
+    [InlineData(CloudType.AzureGermanCloud, "ppe-tdo-sbns.servicebus.cloudapi.de")]
     public void Will_get_namespace_for_Cloud(string cloudType, string expectedNamespace)
     {
         // Arrange
@@ -38,7 +38,7 @@ public class ServiceBusTests
         {
             Environment = EnvironmentType.Ppe,
             RegionShortName = "usw2",
-            ServiceName = "bwf",
+            ServiceName = "tdo",
             Cloud = cloudType
         };
 

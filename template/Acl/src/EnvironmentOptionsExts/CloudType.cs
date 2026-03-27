@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.AntiCorruptionLayer;
+﻿namespace TodoSample.AntiCorruptionLayer;
 
 /// <summary>
 /// Provides string constants for supported cloud types.

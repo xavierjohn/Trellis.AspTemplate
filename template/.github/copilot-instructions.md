@@ -4,12 +4,30 @@ This project uses the **Trellis** framework (.NET 10). Trellis combines Railway-
 
 **API Reference:** See `.github/trellis-api-reference.md` for all Trellis types, method signatures, and usage patterns. Use it as the authoritative source for Trellis API surface. See `.github/trellis-api-testing-reference.md` for testing APIs (FluentAssertions extensions, FakeRepository, TestActorProvider, test patterns).
 
+## Todo Sample — Study Before Replacing
+
+🔴 **Before implementing your service, read all source files in the Todo sample.** The template ships with a working Todo application that demonstrates every key Trellis pattern. Study how it's built — then replace the Todo files with your domain.
+
+Key patterns demonstrated in the sample:
+- **Value objects** with `RequiredGuid`, `RequiredString`, `RequiredDateTime`, `ValidateAdditional` — see `Domain/src/ValueObjects/`
+- **Aggregate** with `LazyStateMachine` and `Maybe<T>` partial properties — see `Domain/src/Aggregates/TodoItem.cs`
+- **Specification** with `.And()` composition — see `Domain/src/Specifications/OverdueTodoSpecification.cs`
+- **Always-valid commands** with private constructor + `TryCreate` — see `Application/src/Todos/UpdateTodoCommand.cs`
+- **`Result.Ensure`** for authorization checks — see `Application/src/Todos/CompleteTodoCommand.cs`
+- **`IAuthorizeResource<T>`** with `ResourceLoaderById` — see `CompleteTodoCommand` + `Acl/src/CompleteTodoResourceLoader.cs`
+- **Repository returning `Maybe<T>`** for lookups — see `Application/src/Todos/ITodoRepository.cs`
+- **Handlers returning domain types**, DTO mapping at the controller — see handlers vs `Api/src/2026-03-26/Models/TodoResponse.cs`
+- **`TimeProvider`** for testable time-dependent validation — see `UpdateTodoCommand.TryCreate`
+- **Controller `TryCreate` → `BindAsync` → `Send`** pattern — see `Api/src/2026-03-26/Controllers/TodosController.cs`
+- **Domain, Application, and API tests** — see `*/tests/` directories
+
 ## Core Principles
 
 1. 🔴 **Errors are values, not exceptions.** Use `Result<T>` for expected failures. Never throw for business logic. Never use try/catch in Domain or Application layers.
 2. 🔴 **Make illegal states unrepresentable.** Every domain concept is a value object with `TryCreate`. If it exists, it's valid.
 3. 🔴 **No primitive obsession on domain surfaces.** No raw `Guid`, `string`, `int`, or `decimal` in aggregate/entity properties or public domain method signatures. Every property on an Aggregate or Entity must be a typed value object. If the same concept appears in two contexts (e.g., line item quantity vs. stock quantity), create separate types for each. 🟢 Private helpers and internal implementation details may use primitives when the value object adds no safety benefit.
-4. 🟡 **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>` subclasses to add length validation, and `[Range]` on `RequiredInt<T>` subclasses to add min/max validation, without writing custom `TryCreate`.
+4. 🟡 **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>`, `[Range]` on `RequiredInt<T>`, and `ValidateAdditional` for custom validation (regex, format checks) — see `trellis-api-reference.md` §5. Do NOT hand-roll `ScalarValueObject<T, string>` when `RequiredString<T>` + `ValidateAdditional` can express the same validation.
+   > ⚠️ **`[StringLength]` and `[Range]` are Trellis attributes** (`Trellis.StringLengthAttribute`, `Trellis.RangeAttribute`), not `System.ComponentModel.DataAnnotations`. The global `using Trellis;` directive resolves them automatically. Do NOT add `using System.ComponentModel.DataAnnotations;` — the wrong attribute will silently compile but the source generator won't recognize it.
 5. 🔴 **Optional values use `Maybe<T>`, never null.** `Maybe<PhoneNumber>`, not `PhoneNumber?`. When using EF Core, declare `Maybe<T>` properties as `partial` so the source generator can emit the backing field for persistence.
 
 ## Architecture
@@ -31,6 +49,7 @@ Api → Acl → Application → Domain
 **Rules:**
 - Domain has ZERO external dependencies (no EF Core, no ASP.NET, no Mediator).
 - Repository interfaces live in Application, implementations in Acl.
+- 🔴 **Repository lookups return `Maybe<T>`**, not `Result<T>`. Absence is not a failure — it's data. The handler decides whether "not found" is an error by calling `.ToResult(Error.NotFound(...))`. This keeps repositories as pure data access and puts domain interpretation in the handler.
 - `Mediator.SourceGenerator` is installed in the **Application** project (where commands and queries are defined).
 - Each layer has one `DependencyInjection.cs` with an `Add{Layer}()` extension method.
 - Register `IActorProvider` as **singleton** in the Api layer. This is safe because `IHttpContextAccessor.HttpContext` uses `AsyncLocal` internally. Trellis pipeline behaviors are registered as singletons, so a scoped `IActorProvider` will cause a runtime exception.
@@ -101,34 +120,51 @@ The `.http` file then references them as `{{adminActor}}`, `{{host}}`, etc. The 
 4. **Api/src** — Implement controllers, DTOs, Program.cs, IActorProvider. Then run `dotnet build`.
 5. **Tests** — Implement Domain.Tests, Application.Tests, Api.Tests. Then run `dotnet test`.
 
-The build after Domain is especially critical — it triggers the `MaybePartialPropertyGenerator` which emits the `_camelCase` backing fields that Acl entity configurations reference (e.g., `HasIndex("Status", "_submittedAt")`).
+The build after Domain is especially critical — it triggers the `MaybePartialPropertyGenerator` which emits the `_camelCase` backing fields that Acl entity configurations reference (e.g., `HasTrellisIndex(o => new { o.Status, o.SubmittedAt })`).
 
 ## Key Conventions
 
 ### Commands and Queries
 
-- 🔴 Commands receive **value object types** (e.g., `CustomerId`, not `Guid`). Scalar value binding validates at the API layer — handlers never call `TryCreate` on command properties.
-- 🟡 Use `IValidate` **only** for cross-field or collection validation (e.g., "at least one line item"). Single-field validation is handled by value objects. `Validate()` returns `IResult` — use `Result.Success()` for valid, `Result.Failure(ValidationError.For(...))` for invalid:
+- 🔴 Commands receive **value object types** (e.g., `TodoId`, not `Guid`). Scalar value binding validates at the API layer — handlers never call `TryCreate` on command properties.
+- 🔴 **Commands should be always-valid.** Use a private constructor + `TryCreate` factory method for commands with cross-field validation. This ensures invalid commands cannot exist — no reliance on pipeline behaviors for validation:
+```csharp
+public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
+{
+    public TodoId TodoId { get; }
+    public Title Title { get; }
+    public DueDate DueDate { get; }
+
+    private UpdateTodoCommand(TodoId todoId, Title title, DueDate dueDate) { ... }
+
+    public static Result<UpdateTodoCommand> TryCreate(TodoId todoId, Title title, DueDate dueDate, TimeProvider? timeProvider = null) =>
+        Result.Ensure(dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
+                Error.Validation("Due date must be in the future.", "dueDate"))
+            .Map(_ => new UpdateTodoCommand(todoId, title, dueDate));
+}
+```
+- 🟢 Use `TimeProvider` as an optional parameter (defaulting to `TimeProvider.System`) in `TryCreate` methods that validate against the current time. This makes time-dependent validation testable with `FakeTimeProvider`.
+- 🟡 **Handlers return domain types** (e.g., `Result<TodoItem>`, not `Result<TodoDto>`). DTO mapping is a presentation concern — do it in the controller, not the handler.
+- 🟡 Use `IValidate` **only** when `TryCreate` is not feasible (e.g., collection validation where the command must already exist). `Validate()` returns `IResult`:
 ```csharp
 public IResult Validate() =>
     LineItems.Count > 0
         ? Result.Success()
         : Result.Failure(ValidationError.For("lineItems", "At least one line item is required."));
 ```
-- 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can cancel"). `Authorize()` returns `IResult`:
+- 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can complete"). Use `Result.Ensure` for clean authorization checks:
 ```csharp
-public IResult Authorize(Actor actor, Order order) =>
-    actor.HasPermission(Permissions.OrdersReadAll) || actor.IsOwner(order.CreatedByActorId.Value)
-        ? Result.Success()
-        : Result.Failure(Error.Forbidden("Only the order creator or an admin can cancel."));
+public IResult Authorize(Actor actor, TodoItem resource) =>
+    Result.Ensure(actor.IsOwner(resource.CreatedByActorId),
+        Error.Forbidden("Only the creator can complete this todo."));
 ```
 - **`IAuthorizeResource<TResource>`:** The pipeline loads the resource via an `IResourceLoader<TMessage, TResource>` before calling `Authorize(Actor, TResource)`. The handler receives the entity already authorized — no auth logic in handlers. Register the resource loader as scoped in the Acl layer. Use `ResourceLoaderById<TMessage, TResource, TId>` as a convenience base class for ID-based lookups.
 - **Registration:** `AddResourceAuthorization(params Assembly[])` scans assemblies for both `IAuthorizeResource<T>` commands and `IResourceLoader<,>` implementations. Pass both the Application assembly (commands) and the Acl assembly (loaders):
 ```csharp
 // In Acl/src/DependencyInjection.cs
 services.AddResourceAuthorization(
-    typeof(CancelOrderCommand).Assembly,        // Application — finds IAuthorizeResource commands
-    typeof(CancelOrderResourceLoader).Assembly); // Acl — finds IResourceLoader implementations
+    typeof(CompleteTodoCommand).Assembly,        // Application — finds IAuthorizeResource commands
+    typeof(CompleteTodoResourceLoader).Assembly); // Acl — finds IResourceLoader implementations
 ```
 - 🔴 **`Unit` type disambiguation:** Both `Trellis` and `Mediator` define a `Unit` type. In handler return types and ROP chains, always use `Trellis.Unit` (or `default(Trellis.Unit)`). The global `using Trellis;` directive makes the unqualified `Unit` resolve to `Trellis.Unit`, but when both namespaces are imported, qualify explicitly.
 
@@ -156,11 +192,12 @@ services.AddResourceAuthorization(
 
 ```csharp
 // ✅ Preferred — ROP chain with Bind/BindAsync
-public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
+// 🔴 Use BindAsync (not TapAsync) for SaveAsync — it returns Result<Unit> which may contain
+// a ConflictError (duplicate key) or other DB failure. TapAsync silently discards the Result.
+public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
     await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken)
         .BindAsync(order => order.Submit())
-        .TapAsync(order => _orderRepository.SaveAsync(order, cancellationToken))
-        .MapAsync(OrderDto.From);
+        .BindAsync(order => _orderRepository.SaveAsync(order, cancellationToken).MapAsync(_ => order));
 
 // 🟢 Acceptable — imperative style when it improves readability for complex branching
 public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken)
@@ -209,28 +246,40 @@ var products = await _productRepository.GetByIdsAsync(command.ProductIds, cancel
 
 Use `Trellis.Stateless` for aggregate state transitions. The `FireResult()` extension returns `Result<TState>` instead of throwing on invalid transitions.
 
-🔴 **Lazy initialization required for EF Core.** The third-party `StateMachine<TState, TTrigger>` constructor eagerly invokes its `stateAccessor` function. When EF Core materializes an aggregate via its parameterless constructor, state properties are not yet populated — causing a `NullReferenceException`. Use lazy initialization:
+🔴 **Lazy initialization required for EF Core.** The third-party `StateMachine<TState, TTrigger>` constructor eagerly invokes its `stateAccessor` function. When EF Core materializes an aggregate via its parameterless constructor, state properties are not yet populated — causing a `NullReferenceException`. Use `LazyStateMachine<TState, TTrigger>` which defers construction until first access:
 
 ```csharp
-// ✅ Lazy — defers construction until first use (after EF Core populates properties)
-private StateMachine<string, string>? _machine;
-private StateMachine<string, string> Machine => _machine ??= ConfigureStateMachine();
+// ✅ LazyStateMachine — defers construction until first use (after EF Core populates properties)
+private readonly LazyStateMachine<OrderStatus, string> _machine;
 
-// ❌ Wrong — eager construction crashes when EF Core calls parameterless constructor
-// private readonly StateMachine<string, string> _machine = new(...);
+private Order() // EF Core constructor
+{
+    _machine = new LazyStateMachine<OrderStatus, string>(
+        () => Status,
+        s => Status = s,
+        ConfigureStateMachine);
+}
+
+private static void ConfigureStateMachine(StateMachine<OrderStatus, string> machine)
+{
+    // Configure transitions here
+}
+
+// Usage in domain methods:
+public Result<OrderStatus> Submit() => _machine.FireResult("Submit");
 ```
 
 ### EF Core
 
-- 🔴 **Always call `ApplyTrellisConventions`** in `ConfigureConventions` — it handles all scalar Trellis value objects automatically. 🟡 Do not write `HasConversion()` for types handled by Trellis conventions. 🟢 If a custom type is not handled by `ApplyTrellisConventions`, use explicit EF mapping (`HasConversion`, `OwnsOne`, etc.) for that type only.
+- 🔴 **Always call `ApplyTrellisConventions`** in `ConfigureConventions` — it handles all scalar Trellis value objects automatically. 🔴 Do NOT write `HasConversion()` for types handled by Trellis conventions — it silently overrides the convention and causes runtime failures. 🟢 If a custom type is not handled by `ApplyTrellisConventions`, use explicit EF mapping (`HasConversion`, `OwnsOne`, etc.) for that type only.
 - 🟡 **`Money` properties** are auto-mapped by `ApplyTrellisConventions` — no `OwnsOne` needed. See §12 in `trellis-api-reference.md` for column naming.
-- 🟢 **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them with `OwnsOne` in the entity configuration and configure each property explicitly.
+- 🟢 **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them using standard EF Core owned entities (`OwnsOne`, `OwnsMany`) — refer to [EF Core Owned Entity Types documentation](https://learn.microsoft.com/en-us/ef/core/modeling/owned-entities).
 - 🟡 **Owned collection property types** — use `IReadOnlyList<T>` (not `ReadOnlyCollection<T>`) for `OwnsMany` navigation properties. EF Core cannot populate `ReadOnlyCollection<T>` from a backing `List<T>` field during materialization.
 - 🔴 Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Never use bare `SaveChangesAsync`.
 - 🟡 Use `FirstOrDefaultMaybeAsync` for optional lookups, `FirstOrDefaultResultAsync` for required lookups.
 - 🟡 Use `.Where(specification)` for specification queries. Specifications support `.And()`, `.Or()`, `.Not()` composition.
 - 🔴 **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. The `_camelCase` backing field is emitted by the source generator during `dotnet build` (see **Implementation Order and Build Checkpoints** above). 🔴 **If using EF Core**, add `Trellis.EntityFrameworkCore.Generator` to the **Domain project** (as an Analyzer, with `ReferenceOutputAssembly="false"`). The generator must be in the project that declares entities with `partial Maybe<T>` properties — without it, backing fields will not be emitted and EF Core persistence will silently fail.
-- 🔴 **`Maybe<T>` in indexes** — `HasIndex` with `Maybe<T>` properties requires string-based backing field references because `MaybeConvention` ignores the CLR property. Use the backing field name (underscore + camelCase): `builder.HasIndex("Status", "_submittedAt")`. Do NOT use lambda expressions like `o => new { o.Status, o.SubmittedAt }` — they will silently fail.
+- 🔴 **`Maybe<T>` in indexes** — Use `HasTrellisIndex` (not `HasIndex`) for indexes that include `Maybe<T>` properties. `HasTrellisIndex` accepts lambda expressions and automatically resolves `Maybe<T>` properties to their backing field names: `builder.HasTrellisIndex(o => new { o.Status, o.SubmittedAt })` resolves to `HasIndex("Status", "_submittedAt")`. Plain `HasIndex` with lambdas will silently fail for `Maybe<T>` properties. See §12 in `trellis-api-reference.md`.
 - 🟡 **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. For comparisons on `Maybe<T>` properties (e.g., date thresholds), use `WhereLessThan`, `WhereLessThanOrEqual`, `WhereGreaterThan`, `WhereGreaterThanOrEqual`. These rewrite the expression tree to target the backing storage field. See §12 in `trellis-api-reference.md`.
 ```csharp
 // ✅ Overdue orders: SubmittedAt < 7 days ago
@@ -247,15 +296,24 @@ context.Orders
 
 Controllers inherit `ControllerBase` with `[ApiController]`. Actions are thin — send command via Mediator, chain `.ToActionResult(this)` or `.ToActionResultAsync(this)`.
 
-**Mapping domain types to DTOs in controllers:** Use the mapping overload to transform results inline:
+**Mapping domain types to DTOs in controllers:** Handlers return domain types. Map to response DTOs in the controller using the mapping overload:
 ```csharp
-// GET endpoint — map domain to DTO
-var result = await _sender.Send(new GetOrderByIdQuery(id), ct);
-return result.ToActionResult(this, OrderDto.From);
+// GET endpoint — map domain aggregate to response DTO
+return await _sender.Send(new GetTodoByIdQuery(id), cancellationToken)
+    .ToActionResultAsync(this, TodoResponse.From);
 
-// Or fully async chained:
-return await _sender.Send(new GetOrderByIdQuery(id), ct)
-    .ToActionResultAsync(this, OrderDto.From);
+// POST endpoint — 201 Created with Location header and mapping
+return await _sender.Send(
+    new CreateTodoCommand(request.Title, request.DueDate, request.Tag),
+    cancellationToken)
+    .ToCreatedAtActionResultAsync(this, nameof(GetById), r => new { id = r.Id }, TodoResponse.From);
+```
+
+**Commands with `TryCreate` validation:** When a command uses `TryCreate`, chain it into `Send` via `BindAsync` in the controller:
+```csharp
+return await UpdateTodoCommand.TryCreate(id, request.Title, request.DueDate, request.Tag)
+    .BindAsync(command => _sender.Send(command, cancellationToken))
+    .ToActionResultAsync(this, TodoResponse.From);
 ```
 
 **Every controller must have:**
@@ -266,11 +324,8 @@ return await _sender.Send(new GetOrderByIdQuery(id), ct)
 
 **Do NOT add `[ApiVersion]` attributes.** Version is derived automatically from the controller namespace via `VersionByNamespaceConvention` (see API Versioning below).
 
-**Use `ToCreatedAtActionResult`** for POST endpoints that create resources — returns `201 Created` with `Location` header. The `actionName` parameter is the GET action method name (e.g., `nameof(GetOrder)`). When the GET action is on the **same controller**, the controller name is inferred automatically. When it's on a different controller, pass the controller name (class name minus `Controller` suffix):
+**Use `ToCreatedAtActionResult`** for POST endpoints that create resources — returns `201 Created` with `Location` header. When the GET action is on a **different controller**, pass the controller name (class name minus `Controller` suffix):
 ```csharp
-// Same controller — controller name inferred
-result.ToCreatedAtActionResult(this, nameof(GetOrder), o => new { id = o.Id.Value }, OrderDto.From);
-
 // Different controller — specify controller name explicitly
 result.ToCreatedAtActionResult(this, nameof(CustomersController.GetCustomer), o => new { id = o.Id.Value }, CustomerDto.From, "Customers");
 ```
@@ -288,7 +343,7 @@ And activate the middleware in `Program.cs`:
 app.UseScalarValueValidation();
 ```
 
-🟡 **Request/Response DTOs** live in `Api/src/{version}/Models/` (e.g., `Api/src/2026-11-12/Models/`). 🔴 Never expose domain types directly. Request DTOs can use scalar value object types as properties — they will be validated automatically via the JSON converter.
+🟡 **Request/Response DTOs** live in `Api/src/{version}/Models/` (e.g., `Api/src/2026-03-26/Models/`). 🔴 Never expose domain types directly. Request DTOs can use scalar value object types as properties — they will be validated automatically via the JSON converter. Response DTOs should have a `static From(DomainType)` method for mapping from domain aggregates.
 
 ### API Versioning
 

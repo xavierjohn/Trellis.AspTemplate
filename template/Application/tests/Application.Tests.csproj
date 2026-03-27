@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="Trellis.Authorization" />
     <PackageReference Include="Xunit.DependencyInjection" />
   </ItemGroup>
   <ItemGroup>

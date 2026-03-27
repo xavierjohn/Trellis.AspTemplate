@@ -1,6 +1,6 @@
 ﻿namespace AntiCorruptionLayer.Tests;
 
-using BestWeatherForecast.AntiCorruptionLayer;
+using TodoSample.AntiCorruptionLayer;
 using Xunit;
 
 public class StorageNameTests
@@ -15,10 +15,10 @@ public class StorageNameTests
         {
             Environment = env,
             RegionShortName = "usw2",
-            ServiceName = "bwf"
+            ServiceName = "tdo"
         };
 
-        var expected = $"{env}bwfst";
+        var expected = $"{env}tdost";
 
         // Act
         var actual = environmentOptions.GetStorageNameShared();
@@ -46,10 +46,10 @@ public class StorageNameTests
     }
 
     [Theory]
-    [InlineData(CloudType.AzureCloud, "https://ppebwfst.blob.core.windows.net")]
-    [InlineData(CloudType.AzureUSGovernment, "https://ppebwfst.blob.core.usgovcloudapi.net")]
-    [InlineData(CloudType.AzureChinaCloud, "https://ppebwfst.blob.core.chinacloud.cn")]
-    [InlineData(CloudType.AzureGermanCloud, "https://ppebwfst.blob.core.cloudapi.de")]
+    [InlineData(CloudType.AzureCloud, "https://ppetdost.blob.core.windows.net")]
+    [InlineData(CloudType.AzureUSGovernment, "https://ppetdost.blob.core.usgovcloudapi.net")]
+    [InlineData(CloudType.AzureChinaCloud, "https://ppetdost.blob.core.chinacloud.cn")]
+    [InlineData(CloudType.AzureGermanCloud, "https://ppetdost.blob.core.cloudapi.de")]
     public void Will_get_blob_url_for_Cloud(string cloudType, string expectedUrl)
     {
         // Arrange
@@ -57,7 +57,7 @@ public class StorageNameTests
         {
             Environment = EnvironmentType.Ppe,
             RegionShortName = "usw2",
-            ServiceName = "bwf",
+            ServiceName = "tdo",
             Cloud = cloudType
         };
 

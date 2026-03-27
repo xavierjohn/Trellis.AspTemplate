@@ -5,6 +5,8 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="Trellis.Authorization" />
+    <PackageReference Include="Trellis.Mediator" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\Domain\src\Domain.csproj" />

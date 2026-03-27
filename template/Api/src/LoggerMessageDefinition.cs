@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.Api;
+﻿namespace TodoSample.Api;
 
 internal static partial class LoggerMessageDefinition
 {

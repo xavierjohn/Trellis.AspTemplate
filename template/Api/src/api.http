@@ -1,52 +1,99 @@
-﻿// Okay
-GET {{HostAddress}}/api/Users/xavier?api-version=2023-06-06
+﻿### Create a todo (admin)
+# @name createTodo
+POST {{host}}/api/Todos?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+
+{
+  "title": "Buy groceries",
+  "dueDate": "2026-04-01T12:00:00Z",
+  "tag": "shopping"
+}
+
+### Create a todo without tag
+POST {{host}}/api/Todos?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+
+{
+  "title": "Finish quarterly report",
+  "dueDate": "2026-03-31T17:00:00Z"
+}
+
+### Get todo by ID
+GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Accept: application/json
+X-Test-Actor: {{userActor}}
 
-###
-// Create User
-// Okay
-POST {{HostAddress}}/api/Users?api-version=2023-06-06
+### Get overdue todos
+GET {{host}}/api/Todos/overdue?api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+
+### Update todo
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
+X-Test-Actor: {{adminActor}}
 
 {
-  "firstName": "Xavier",
-  "lastName": "John",
-  "email": "xavier@heaven.com",
-  "password": "Super!Complex6"
+  "title": "Buy organic groceries",
+  "dueDate": "2026-04-15T12:00:00Z",
+  "tag": "health"
 }
 
-###
-// Bad Request email
-POST {{HostAddress}}/api/Users?api-version=2023-06-06
+### Update todo with past due date (→ 400)
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
+X-Test-Actor: {{adminActor}}
 
 {
-  "firstName": "Xavier",
-  "lastName": "John",
-  "email": "xavier",
-  "password": "Super!Complex6"
+  "title": "Too late",
+  "dueDate": "2020-01-01T12:00:00Z"
 }
 
-###
-// Bad Request password
-POST {{HostAddress}}/api/Users?api-version=2023-06-06
+### Complete todo (by creator)
+POST {{host}}/api/Todos/{{createTodo.response.body.id}}/complete?api-version={{apiVersion}}
+X-Test-Actor: {{adminActor}}
+
+### Complete todo (by non-creator → 403)
+POST {{host}}/api/Todos/{{createTodo.response.body.id}}/complete?api-version={{apiVersion}}
+X-Test-Actor: {{userActor}}
+
+### Delete todo
+DELETE {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+X-Test-Actor: {{adminActor}}
+
+### Get deleted todo (→ 404)
+GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+
+### Bad Request — empty title
+POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
+X-Test-Actor: {{adminActor}}
 
 {
-  "firstName": "Xavier",
-  "lastName": "John",
-  "email": "xavier@heaven.com",
-  "password": "SimplePassword"
+  "title": "",
+  "dueDate": "2026-04-01T12:00:00Z"
 }
 
-###
-// Bad Request multiple fields
-POST {{HostAddress}}/api/Users?api-version=2023-06-06
+### Bad Request — invalid tag
+POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
+X-Test-Actor: {{adminActor}}
 
 {
-  "firstName": "",
-  "lastName": "",
-  "email": "xavier",
-  "password": "Super!Complex6"
+  "title": "Test invalid tag",
+  "dueDate": "2026-04-01T12:00:00Z",
+  "tag": "INVALID TAG"
 }
+
+### Not Found — nonexistent todo
+GET {{host}}/api/Todos/00000000-0000-0000-0000-000000000001?api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+
+### Throw (error handling middleware test)
+GET {{host}}/api/Todos/throw?api-version={{apiVersion}}
+Accept: application/json

@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.AntiCorruptionLayer;
+﻿namespace TodoSample.AntiCorruptionLayer;
 
 /// <summary>
 /// Defines string constants for supported environment types.

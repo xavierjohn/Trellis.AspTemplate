@@ -5,6 +5,7 @@
   <ItemGroup>
     <PackageReference Include="Asp.Versioning.OpenApi" />
     <PackageReference Include="Trellis.Asp" />
+    <PackageReference Include="Trellis.Asp.Authorization" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />

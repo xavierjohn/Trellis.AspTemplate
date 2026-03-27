@@ -1,6 +1,6 @@
 ﻿namespace AntiCorruptionLayer.Tests;
 
-using BestWeatherForecast.AntiCorruptionLayer;
+using TodoSample.AntiCorruptionLayer;
 
 public class CosmosDbTests
 {
@@ -14,10 +14,10 @@ public class CosmosDbTests
         {
             Environment = env,
             RegionShortName = "usw2",
-            ServiceName = "bwf"
+            ServiceName = "tdo"
         };
 
-        var expected = $"{env}-bwf-cosno";
+        var expected = $"{env}-tdo-cosno";
 
         // Act
         var actual = environmentOptions.GetCosmosDbNameShared();
@@ -27,10 +27,10 @@ public class CosmosDbTests
     }
 
     [Theory]
-    [InlineData(CloudType.AzureCloud, "https://ppe-bwf-cosno.documents.azure.com:443/")]
-    [InlineData(CloudType.AzureUSGovernment, "https://ppe-bwf-cosno.documents.azure.us:443/")]
-    [InlineData(CloudType.AzureChinaCloud, "https://ppe-bwf-cosno.documents.azure.cn:443/")]
-    [InlineData(CloudType.AzureGermanCloud, "https://ppe-bwf-cosno.documents.azure.com:443/")]
+    [InlineData(CloudType.AzureCloud, "https://ppe-tdo-cosno.documents.azure.com:443/")]
+    [InlineData(CloudType.AzureUSGovernment, "https://ppe-tdo-cosno.documents.azure.us:443/")]
+    [InlineData(CloudType.AzureChinaCloud, "https://ppe-tdo-cosno.documents.azure.cn:443/")]
+    [InlineData(CloudType.AzureGermanCloud, "https://ppe-tdo-cosno.documents.azure.com:443/")]
     public void Will_get_url_for_Cloud(string cloudType, string expectedUrl)
     {
         // Arrange
@@ -38,7 +38,7 @@ public class CosmosDbTests
         {
             Environment = EnvironmentType.Ppe,
             RegionShortName = "usw2",
-            ServiceName = "bwf",
+            ServiceName = "tdo",
             Cloud = cloudType
         };
 

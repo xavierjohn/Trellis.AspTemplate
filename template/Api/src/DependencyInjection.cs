@@ -1,18 +1,19 @@
-﻿namespace BestWeatherForecast.Api;
+﻿namespace TodoSample.Api;
 
-using BestWeatherForecast.Api.Middleware;
+using Asp.Versioning.Conventions;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using ServiceLevelIndicators;
 using Scalar.AspNetCore;
+using ServiceLevelIndicators;
+using TodoSample.Api.Middleware;
 using Trellis.Asp;
-using Asp.Versioning.Conventions;
+using Trellis.Asp.Authorization;
 
 internal static class DependencyInjection
 {
-    public static IServiceCollection AddPresentation(this IServiceCollection services)
+    public static IServiceCollection AddPresentation(this IServiceCollection services, IHostEnvironment environment)
     {
         services.ConfigureOpenTelemetry();
         services.ConfigureServiceLevelIndicators();
@@ -24,13 +25,21 @@ internal static class DependencyInjection
                 .AddOpenApi(options => options.Document.AddScalarTransformers());
         services.AddScoped<ErrorHandlingMiddleware>();
         services.AddHealthChecks();
+
+        if (environment.IsDevelopment())
+            services.AddDevelopmentActorProvider();
+        else
+            throw new InvalidOperationException(
+                "Production IActorProvider not configured. " +
+                "Register AddEntraActorProvider() with your Azure Entra ID configuration for non-development environments.");
+
         return services;
     }
 
     private static IServiceCollection ConfigureOpenTelemetry(this IServiceCollection services)
     {
         static void configureResource(ResourceBuilder r) => r.AddService(
-            serviceName: "BestWeatherForecastService",
+            serviceName: "TodoSampleService",
             serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown");
 
         services.AddOpenTelemetry()
@@ -48,7 +57,6 @@ internal static class DependencyInjection
             .WithTracing(builder =>
             {
                 builder.AddAspNetCoreInstrumentation();
-                builder.AddResultsInstrumentation();
                 builder.AddPrimitiveValueObjectInstrumentation();
                 builder.AddOtlpExporter();
             });

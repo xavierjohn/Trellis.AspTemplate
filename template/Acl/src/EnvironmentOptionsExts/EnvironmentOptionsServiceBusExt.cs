@@ -1,4 +1,4 @@
-﻿namespace BestWeatherForecast.AntiCorruptionLayer;
+﻿namespace TodoSample.AntiCorruptionLayer;
 
 public static class EnvironmentOptionsServiceBusExt
 {

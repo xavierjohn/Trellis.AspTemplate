@@ -1,6 +1,6 @@
 ﻿namespace AntiCorruptionLayer.Tests;
 
-using BestWeatherForecast.AntiCorruptionLayer;
+using TodoSample.AntiCorruptionLayer;
 
 public class KeyVaultTests
 {
@@ -14,10 +14,10 @@ public class KeyVaultTests
         {
             Environment = env,
             RegionShortName = "usw2",
-            ServiceName = "bwf"
+            ServiceName = "tdo"
         };
 
-        var expected = $"{env}-bwf-usw2-kv";
+        var expected = $"{env}-tdo-usw2-kv";
 
         // Act
         var actual = environmentOptions.GetKeyVaultName();
@@ -27,10 +27,10 @@ public class KeyVaultTests
     }
 
     [Theory]
-    [InlineData(CloudType.AzureCloud, "https://ppe-bwf-usw2-kv.vault.azure.net/")]
-    [InlineData(CloudType.AzureUSGovernment, "https://ppe-bwf-usw2-kv.vault.usgovcloudapi.net/")]
-    [InlineData(CloudType.AzureChinaCloud, "https://ppe-bwf-usw2-kv.vault.azure.cn/")]
-    [InlineData(CloudType.AzureGermanCloud, "https://ppe-bwf-usw2-kv.vault.microsoftazure.de/")]
+    [InlineData(CloudType.AzureCloud, "https://ppe-tdo-usw2-kv.vault.azure.net/")]
+    [InlineData(CloudType.AzureUSGovernment, "https://ppe-tdo-usw2-kv.vault.usgovcloudapi.net/")]
+    [InlineData(CloudType.AzureChinaCloud, "https://ppe-tdo-usw2-kv.vault.azure.cn/")]
+    [InlineData(CloudType.AzureGermanCloud, "https://ppe-tdo-usw2-kv.vault.microsoftazure.de/")]
     public void Will_get_keyvault_uri_for_Cloud(string cloudType, string expectedUri)
     {
         // Arrange
@@ -38,7 +38,7 @@ public class KeyVaultTests
         {
             Environment = EnvironmentType.Ppe,
             RegionShortName = "usw2",
-            ServiceName = "bwf",
+            ServiceName = "tdo",
             Cloud = cloudType
         };
 
