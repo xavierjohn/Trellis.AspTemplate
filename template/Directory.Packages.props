@@ -50,6 +50,3 @@
     <PackageVersion Include="Xunit.DependencyInjection" Version="11.2.0" />
   </ItemGroup>
 </Project>
-
-
-
