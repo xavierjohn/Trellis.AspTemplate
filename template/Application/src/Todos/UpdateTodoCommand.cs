@@ -55,6 +55,6 @@ public sealed class UpdateTodoCommandHandler : ICommandHandler<UpdateTodoCommand
         return await maybe
             .ToResult(Error.NotFound($"Todo {command.TodoId} not found."))
             .Bind(todo => todo.Update(command.Title, command.DueDate, command.Tag))
-            .BindAsync(todo => _repository.SaveAsync(todo, cancellationToken).MapAsync(_ => todo));
+            .CheckAsync(todo => _repository.SaveAsync(todo, cancellationToken));
     }
 }
