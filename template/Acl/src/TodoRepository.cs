@@ -14,22 +14,13 @@ internal class TodoRepository : ITodoRepository
 
     public TodoRepository(AppDbContext context) => _context = context;
 
-    public async Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken)
-    {
-        var entity = await _context.TodoItems
-            .FirstOrDefaultAsync(t => t.Id == id, cancellationToken)
-            .ConfigureAwait(false);
-        return Maybe.From(entity);
-    }
+    public async Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken) =>
+        await _context.TodoItems.FirstOrDefaultMaybeAsync(t => t.Id == id, cancellationToken);
 
-    public async Task<IReadOnlyList<TodoItem>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken)
-    {
-        var items = await _context.TodoItems
+    public async Task<IReadOnlyList<TodoItem>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken) =>
+        await _context.TodoItems
             .Where(specification)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-        return items;
-    }
+            .ToListAsync(cancellationToken);
 
     public async Task<Result<Unit>> SaveAsync(TodoItem todo, CancellationToken cancellationToken)
     {
@@ -37,7 +28,7 @@ internal class TodoRepository : ITodoRepository
         if (entry.State == EntityState.Detached)
             _context.TodoItems.Add(todo);
 
-        return await _context.SaveChangesResultUnitAsync(cancellationToken).ConfigureAwait(false);
+        return await _context.SaveChangesResultUnitAsync(cancellationToken);
     }
 
     public async Task<Result<Unit>> DeleteAsync(TodoId id, CancellationToken cancellationToken)

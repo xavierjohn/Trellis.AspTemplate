@@ -21,6 +21,5 @@ internal class CompleteTodoResourceLoader : ResourceLoaderById<CompleteTodoComma
             .Where(t => t.Id == id)
             .FirstOrDefaultResultAsync(
                 Error.NotFound($"Todo item {id.Value} not found."),
-                cancellationToken)
-            .ConfigureAwait(false);
+                cancellationToken);
 }

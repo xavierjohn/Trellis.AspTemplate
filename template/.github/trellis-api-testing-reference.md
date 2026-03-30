@@ -4,14 +4,6 @@
 > fake repositories, actor providers, and testing patterns for Trellis applications.
 > For the core framework API, see `trellis-api-reference.md`.
 
-## Namespaces
-
-```csharp
-using Trellis.Testing;          // Assertions, WebApplicationFactory extensions, MSAL types
-using Trellis.Testing.Builders; // ResultBuilder, ValidationErrorBuilder
-using Trellis.Testing.Fakes;    // FakeRepository, TestActorProvider, TestActorScope
-```
-
 ---
 
 ## Result Assertions
@@ -27,7 +19,7 @@ result.Should().HaveErrorCode("not.found")
 result.Should().HaveErrorDetail("Order not found")
 result.Should().HaveErrorDetailContaining("not found")
 
-// Async — works with both Task<Result<T>> and ValueTask<Result<T>>
+// Async
 await result.Should().BeSuccessAsync()
 await result.Should().BeFailureAsync()
 await result.Should().BeFailureOfTypeAsync<ValidationError>()
@@ -72,7 +64,7 @@ validationError.Should().HaveFieldCount(2)
 ResultBuilder.Success(value)
 ResultBuilder.Failure<T>(error)
 ResultBuilder.NotFound<T>("Order not found")
-ResultBuilder.NotFound<T>("Order", "123")      // "Order 123 not found"
+ResultBuilder.NotFound<T>("Order", "123")      // "Order '123' not found"
 ResultBuilder.Validation<T>("Invalid", "field")
 ResultBuilder.Unauthorized<T>()
 ResultBuilder.Forbidden<T>()
@@ -97,43 +89,33 @@ In-memory repository for Application-layer handler tests. Stores entities in a d
 // Construction
 var repo = new FakeRepository<Order, OrderId>();
 
-// Unique constraint — SaveAsync returns ConflictError on duplicate
-repo.WithUniqueConstraint(o => o.Email);
-
 // CRUD operations
-await repo.SaveAsync(order);                               // Result<Unit> (ConflictError if unique violation)
-var result = await repo.GetByIdAsync(orderId);             // Result<Order> (NotFound if missing)
-var maybe = await repo.FindByIdAsync(orderId);             // Result<Maybe<Order>>
-await repo.DeleteAsync(orderId);                           // Result<Unit> (NotFound if missing)
+await repo.SaveAsync(order);
+var result = await repo.GetByIdAsync(orderId);        // Result<Order> (NotFound if missing)
+var maybe = await repo.FindByIdAsync(orderId);        // Result<Maybe<Order>>
+await repo.DeleteAsync(orderId);
 
-// Synchronous helpers for test setup and assertions
-repo.Clear();                                              // Remove all entities
-bool exists = repo.Exists(orderId);                        // Check existence
-Order? order = repo.Get(orderId);                          // Get or null (no Result)
-IEnumerable<Order> all = repo.GetAll();                    // All stored entities
-int count = repo.Count;                                    // Number of stored entities
+// Seeding test data
+var order = Order.Create(...);
+await repo.SaveAsync(order);                           // Now GetByIdAsync will return it
 
 // Domain event inspection
-repo.PublishedEvents                                       // IReadOnlyList<IDomainEvent>
+repo.PublishedEvents                                   // IReadOnlyList<IDomainEvent>
 ```
 
 ## TestActorProvider and TestActorScope
 
 **Namespace: `Trellis.Testing.Fakes`**
 
-Mutable `IActorProvider` and `IAsyncActorProvider` for authorization testing. Uses `AsyncLocal<Actor?>` internally so parallel tests sharing a singleton provider never interfere. `WithActor` returns a scope that restores the previous actor on dispose, eliminating `try/finally` boilerplate.
+Mutable `IActorProvider` for authorization testing. Uses `AsyncLocal<Actor?>` internally so parallel tests sharing a singleton provider never interfere. `WithActor` returns a scope that restores the previous actor on dispose, eliminating `try/finally` boilerplate.
 
-Implements both `IActorProvider` (sync) and `IAsyncActorProvider` (async). Register as both interfaces in DI when the system under test uses `IAsyncActorProvider`.
+Implements `IActorProvider` with `GetCurrentActorAsync()` returning `Task.FromResult()`. Register as `IActorProvider` in DI.
 
 ### Construction
 
 ```csharp
 var actorProvider = new TestActorProvider("admin", "Orders.Read", "Orders.Write");
 var actorFromInstance = new TestActorProvider(actor);               // from Actor instance
-
-// Access the current actor (implements IActorProvider and IAsyncActorProvider)
-Actor actor = actorProvider.GetCurrentActor();
-Actor actor = await actorProvider.GetCurrentActorAsync(cancellationToken);
 ```
 
 ### Scoped Actor Switching
@@ -184,56 +166,48 @@ Creates an `HttpClient` with the `X-Test-Actor` header pre-set, encoding actor i
 // Extension on WebApplicationFactory<TEntryPoint>
 var client = factory.CreateClientWithActor("user-1", "Orders.Create", "Orders.Read");
 // Sets header: X-Test-Actor: {"Id":"user-1","Permissions":["Orders.Create","Orders.Read"]}
-
-// Overload with full Actor object (for ForbiddenPermissions, Attributes)
-var actor = Actor.Create("user-1", new HashSet<string> { "Orders.Create" });
-var client = factory.CreateClientWithActor(actor);
-```
-
-The full Actor JSON shape supports `ForbiddenPermissions` and `Attributes` in addition to `Id` and `Permissions`:
-```json
-{
-  "Id": "user-1",
-  "Permissions": ["Orders.Create", "Orders.Read"],
-  "ForbiddenPermissions": ["Orders.Delete"],
-  "Attributes": { "tenantId": "tenant-42" }
-}
 ```
 
 ---
 
-## MSAL E2E Test Support
+## ReplaceDbProvider
 
-**Namespace: `Trellis.Testing`**
-
-For end-to-end tests against a real Entra ID (Azure AD) tenant. Acquires real tokens using ROPC (Resource Owner Password Credentials) flow.
+Cleanly swaps the EF Core database provider in `WebApplicationFactory` tests. Removes all EF Core internal services for the context (including `IDbContextOptionsConfiguration<TContext>` in EF Core 10) and re-registers with the new provider.
 
 ```csharp
-// Configuration
-public sealed class MsalTestOptions
-{
-    public string TenantId { get; set; }
-    public string ClientId { get; set; }
-    public string[] Scopes { get; set; }
-    public Dictionary<string, TestUserCredentials> TestUsers { get; set; }
-}
-
-public sealed class TestUserCredentials
-{
-    public string Username { get; set; }
-    public string Password { get; set; }
-    public string[] ExpectedPermissions { get; set; }
-}
-
-// Token acquisition
-var tokenProvider = new MsalTestTokenProvider(msalOptions);
-string token = await tokenProvider.AcquireTokenAsync("admin-user", cancellationToken);
-
-// WebApplicationFactory extension — creates client with real Bearer token
-var client = await factory.CreateClientWithEntraTokenAsync(tokenProvider, "admin-user", cancellationToken);
+// In TestWebApplicationFactoryFixture.ConfigureWebHost
+builder.ConfigureServices(services =>
+    services.ReplaceDbProvider<AppDbContext>(options =>
+        options.UseSqlite(_connection).AddTrellisInterceptors()));
 ```
 
-> ⚠️ MSAL types use reflection and are not AOT-compatible.
+> **Limitation:** Always re-registers via `AddDbContext<TContext>`. If the application uses `AddDbContextFactory` or `AddPooledDbContextFactory`, swap providers manually instead of using this helper.
+
+---
+
+## ClaimsActorProvider and CachingActorProvider in Tests
+
+For integration tests using `WebApplicationFactory`, the `DevelopmentActorProvider` (via `X-Test-Actor` header) is the standard approach. `ClaimsActorProvider` and `CachingActorProvider` are production providers — they read from `HttpContext.User` which requires real authentication middleware.
+
+If your tests need to exercise `ClaimsActorProvider` directly, construct a `ClaimsPrincipal` and set it on `HttpContext.User`:
+
+```csharp
+var identity = new ClaimsIdentity(new[]
+{
+    new Claim("sub", "user-1"),
+    new Claim("permissions", "orders:read"),
+}, "Bearer");
+var httpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) };
+```
+
+For `CachingActorProvider`, register via DI using `AddCachingActorProvider<T>()`. For unit tests, construct with an `IHttpContextAccessor`:
+
+```csharp
+var inner = new TestActorProvider("user-1", "orders:read");
+var accessor = new HttpContextAccessor(); // no HttpContext in unit tests — uses CancellationToken.None
+var caching = new CachingActorProvider(inner, accessor);
+var actor = await caching.GetCurrentActorAsync(ct);  // calls inner once, caches
+```
 
 ---
 
@@ -343,132 +317,3 @@ public async Task Cancel_ByNonOwner_ReturnsForbidden()
     result.Should().BeFailureOfType<ForbiddenError>();
 }
 ```
-
-### Conflict/Uniqueness Test
-
-```csharp
-[Fact]
-public async Task Save_duplicate_email_returns_conflict()
-{
-    var repo = new FakeRepository<Customer, CustomerId>();
-    repo.WithUniqueConstraint(c => c.Email);
-
-    var customer1 = Customer.TryCreate(email: EmailAddress.Create("a@b.com")).Value;
-    await repo.SaveAsync(customer1);
-
-    var customer2 = Customer.TryCreate(email: EmailAddress.Create("a@b.com")).Value;
-    var result = await repo.SaveAsync(customer2);
-
-    result.Should().BeFailureOfType<ConflictError>();
-}
-```
-
-### Maybe Query Test
-
-```csharp
-[Fact]
-public async Task FindById_missing_returns_none()
-{
-    var repo = new FakeRepository<Order, OrderId>();
-
-    var result = await repo.FindByIdAsync(OrderId.NewUniqueV7());
-
-    result.Should().BeSuccess();
-    result.Value.Should().BeNone();
-}
-
-[Fact]
-public async Task FindById_existing_returns_value()
-{
-    var repo = new FakeRepository<Order, OrderId>();
-    var order = Order.TryCreate(...).Value;
-    await repo.SaveAsync(order);
-
-    var result = await repo.FindByIdAsync(order.Id);
-
-    result.Should().BeSuccess();
-    result.Value.Should().HaveValue();
-}
-```
-
-### State Machine Transition Test
-
-```csharp
-[Fact]
-public void Valid_transition_returns_new_state()
-{
-    var todo = TodoItem.TryCreate(title, dueDate, tag, actorId).Value;
-    todo.Start().Should().BeSuccess();
-
-    var result = todo.Complete();
-
-    result.Should().BeSuccess()
-        .Which.Should().Be(TodoStatus.Completed);
-}
-
-[Fact]
-public void Invalid_transition_returns_failure()
-{
-    var todo = TodoItem.TryCreate(title, dueDate, tag, actorId).Value;
-    // Skip Start — try to Complete from Pending
-
-    var result = todo.Complete();
-
-    result.Should().BeFailure();
-}
-```
-
-### Domain Event Assertions
-
-```csharp
-[Fact]
-public async Task Save_publishes_domain_events()
-{
-    var repo = new FakeRepository<Order, OrderId>();
-    var order = Order.TryCreate(customerId).Value;
-    await repo.SaveAsync(order);
-
-    repo.PublishedEvents.Should().ContainSingle()
-        .Which.Should().BeOfType<OrderCreated>();
-}
-```
-
-### HTTP Authorization Matrix
-
-Test all permission scenarios for an endpoint:
-
-```csharp
-[Fact]
-public async Task Complete_by_owner_returns_200()
-{
-    var client = factory.CreateClientWithActor("owner-1", "todos:complete");
-    // ... create todo as owner-1, then complete
-    response.StatusCode.Should().Be(HttpStatusCode.OK);
-}
-
-[Fact]
-public async Task Complete_by_non_owner_returns_403()
-{
-    // ... create todo as owner-1
-    var client = factory.CreateClientWithActor("other-user", "todos:complete");
-    response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-}
-
-[Fact]
-public async Task Complete_without_permission_returns_403()
-{
-    var client = factory.CreateClientWithActor("owner-1"); // no todos:complete permission
-    response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-}
-```
-
-### Decision Table — When to Use What
-
-| Scenario | Tool | Why |
-|----------|------|-----|
-| Domain unit tests (value objects, aggregates, specs) | Direct construction, no DI | Pure logic, no infrastructure |
-| Handler tests (commands, queries) | `FakeRepository` + `TestActorProvider` + `ISender` via DI | Tests handler logic with mocked persistence and auth |
-| Authorization tests | `TestActorProvider.WithActor(...)` scoped switching | Tests permission and ownership checks |
-| Resource authorization tests | `ReplaceResourceLoader(...)` + `TestActorProvider` | Tests `IAuthorizeResource<T>` pipeline |
-| API integration tests | `WebApplicationFactory` + `CreateClientWithActor(...)` | Tests full HTTP round-trip with real middleware |
-| E2E with real Entra ID | `CreateClientWithEntraTokenAsync(...)` + `MsalTestTokenProvider` | Tests against real identity provider |
