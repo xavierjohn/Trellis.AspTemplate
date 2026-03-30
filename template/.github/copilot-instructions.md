@@ -29,6 +29,19 @@ Key patterns demonstrated in the sample:
 4. 🟡 **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>`, `[Range]` on `RequiredInt<T>`, and `ValidateAdditional` for custom validation (regex, format checks) — see `trellis-api-reference.md` §5. Do NOT hand-roll `ScalarValueObject<T, string>` when `RequiredString<T>` + `ValidateAdditional` can express the same validation.
    > ⚠️ **`[StringLength]` and `[Range]` are Trellis attributes** (`Trellis.StringLengthAttribute`, `Trellis.RangeAttribute`), not `System.ComponentModel.DataAnnotations`. The global `using Trellis;` directive resolves them automatically. Do NOT add `using System.ComponentModel.DataAnnotations;` — the wrong attribute will silently compile but the source generator won't recognize it.
 5. 🔴 **Optional values use `Maybe<T>`, never null.** `Maybe<PhoneNumber>`, not `PhoneNumber?`. When using EF Core, declare `Maybe<T>` properties as `partial` so the source generator can emit the backing field for persistence.
+6. 🟡 **Composite value objects** (e.g., `ShippingAddress`) — use `Result.Combine` to validate all fields and return all errors at once, not just the first:
+```csharp
+public static Result<ShippingAddress> TryCreate(
+    string? street, string? city, string? state, string? postalCode, string? country) =>
+    Result.Combine(
+        Street.TryCreate(street),
+        City.TryCreate(city),
+        State.TryCreate(state),
+        PostalCode.TryCreate(postalCode),
+        Country.TryCreate(country))
+    .Map((s, c, st, p, co) => new ShippingAddress { Street = s, City = c, State = st, PostalCode = p, Country = co });
+```
+This returns a `ValidationError` containing all field errors when multiple fields are invalid — not just the first one. See `trellis-api-reference.md` §Combine and §ValidationError.
 
 ## Architecture
 
@@ -144,6 +157,30 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
 }
 ```
 - 🟢 Use `TimeProvider` as an optional parameter (defaulting to `TimeProvider.System`) in `TryCreate` methods that validate against the current time. This makes time-dependent validation testable with `FakeTimeProvider`.
+- 🔴 **No `DateTime.UtcNow` or `DateTimeOffset.UtcNow` anywhere.** All timestamps must come from `TimeProvider` — in domain methods, domain events, handlers, and repositories. Pass `TimeProvider` as a parameter to domain methods that set timestamps or raise time-stamped events, and inject it into repositories that compute time-based queries:
+```csharp
+// ✅ Domain method — receives TimeProvider, uses it for event timestamp
+public Result<Order> Approve(TimeProvider timeProvider) =>
+    _machine.FireResult(Triggers.Approve)
+        .Tap(_ => DomainEvents.Add(new OrderApprovedEvent(Id, OccurredAt: timeProvider.GetUtcNow().UtcDateTime)))
+        .Map(_ => this);
+
+// ✅ Repository — injects TimeProvider for time-based queries
+public async Task<IReadOnlyList<Order>> GetOverdueAsync(CancellationToken ct)
+{
+    var cutoff = _timeProvider.GetUtcNow().UtcDateTime.AddDays(-7);
+    return await _context.Orders
+        .Where(o => o.Status == OrderStatus.Submitted)
+        .WhereLessThan(o => o.SubmittedAt, cutoff)
+        .ToListAsync(ct);
+}
+
+// ❌ Never do this — untestable
+public Result<Order> Approve() =>
+    _machine.FireResult(Triggers.Approve)
+        .Tap(_ => DomainEvents.Add(new OrderApprovedEvent(Id, OccurredAt: DateTime.UtcNow)))  // ❌
+        .Map(_ => this);
+```
 - 🟡 **Handlers return domain types** (e.g., `Result<TodoItem>`, not `Result<TodoDto>`). DTO mapping is a presentation concern — do it in the controller, not the handler.
 - 🟡 Use `IValidate` **only** when `TryCreate` is not feasible (e.g., collection validation where the command must already exist). `Validate()` returns `IResult`:
 ```csharp
@@ -152,6 +189,7 @@ public IResult Validate() =>
         ? Result.Success()
         : Result.Failure(ValidationError.For("lineItems", "At least one line item is required."));
 ```
+  > 🟢 **Validate early, enforce always.** It is acceptable for `IValidate` and the domain aggregate's `TryCreate` to check the same invariant (e.g., "at least one line item"). `IValidate` runs in the pipeline before the handler — failing fast before loading aggregates. The domain enforces its own invariants regardless of how it's called. This duplication is intentional, not a bug.
 - 🟡 Use `IAuthorize` for permission-based authorization. Use `IAuthorizeResource<TResource>` for resource-based authorization (e.g., "only the owner can complete"). Use `Result.Ensure` for clean authorization checks:
 ```csharp
 public IResult Authorize(Actor actor, TodoItem resource) =>
@@ -219,6 +257,36 @@ public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, Canc
 }
 ```
 
+### Multi-Aggregate Save with TraverseAsync
+
+When a handler modifies multiple aggregates (e.g., reserving stock on products then saving the order), use `TraverseAsync` to stay in the ROP pipeline. `TraverseAsync` applies a Result-returning function to each element, short-circuiting on the first failure.
+
+🔴 **All aggregates share the same `DbContext`.** EF Core tracks all changes in a single unit of work — calling `SaveChangesResultUnitAsync` once at the end commits everything atomically. Do NOT call `SaveAsync` per aggregate (which commits each individually); instead, stage all changes and save once:
+
+```csharp
+// ✅ Preferred — stage all changes, single SaveChanges at the end
+public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
+    await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken)
+        .BindAsync(order => order.Submit(products, _timeProvider))
+        .CheckAsync(_ => _orderRepository.SaveAsync(order, cancellationToken));
+        // Products are tracked by the same DbContext — saved atomically with the order
+
+// ✅ When repositories use different DbContexts or you need explicit multi-save,
+// use TraverseAsync to keep the ROP chain:
+await products.TraverseAsync(
+        (p, ct) => _productRepository.SaveAsync(p, ct), cancellationToken)
+    .CheckAsync(_ => _orderRepository.SaveAsync(order, cancellationToken));
+
+// ❌ Avoid — imperative foreach breaks the ROP chain
+foreach (var product in products)
+{
+    var saveResult = await _productRepository.SaveAsync(product, cancellationToken);
+    if (saveResult.IsFailure) return saveResult.Error;
+}
+```
+
+`TraverseAsync` supports `CancellationToken`, `Task`, and `ValueTask` overloads. See `trellis-api-reference.md` §Traverse for the full API.
+
 ### Parallel Async Operations
 
 When a handler needs multiple independent async results (e.g., fetching a customer AND products), use `Result.ParallelAsync` + `.WhenAllAsync()` instead of sequential `await`:
@@ -271,6 +339,28 @@ public Result<OrderStatus> Submit() => _machine.FireResult("Submit");
 
 ### EF Core
 
+- 🔴 **EF Core materialization boilerplate** — every `Aggregate<T>` and `Entity<T>` persisted by EF Core needs:
+  1. A **private parameterless constructor** (EF Core cannot materialize without it)
+  2. **`private set`** on all properties (EF Core sets properties via reflection)
+  3. **`= null!`** on reference-type properties (suppresses nullable warning for the private constructor path)
+  4. **`base(default!)`** in the parameterless constructor (satisfies the base class's required ID parameter)
+
+```csharp
+public class Customer : Aggregate<CustomerId>
+{
+    public FirstName FirstName { get; private set; } = null!;
+    public LastName LastName { get; private set; } = null!;
+    public EmailAddress Email { get; private set; } = null!;
+    public ShippingAddress ShippingAddress { get; private set; } = null!;
+    public partial Maybe<PhoneNumber> Phone { get; set; }
+
+    private Customer() : base(default!) { }  // EF Core materialization
+
+    // Public factory — the only way to create instances
+    public static Result<Customer> TryCreate(...) => ...;
+}
+```
+
 - 🔴 **Always call `ApplyTrellisConventions`** in `ConfigureConventions` — it handles all scalar Trellis value objects automatically, including `RequiredString<T>`, `RequiredGuid<T>`, `RequiredInt<T>`, `RequiredDecimal<T>`, `RequiredDateTime<T>`, `RequiredBool<T>`, `RequiredLong<T>`, `RequiredEnum<T>`, and all built-in primitives (`EmailAddress`, `PhoneNumber`, etc.). 🔴 Do NOT write `HasConversion()` for types handled by Trellis conventions — it silently overrides the convention and causes runtime failures. 🟢 If a custom type is not handled by `ApplyTrellisConventions`, use explicit EF mapping (`HasConversion`, `OwnsOne`, etc.) for that type only.
 - 🟡 **`Money` properties** are auto-mapped by `ApplyTrellisConventions` — no `OwnsOne` needed. See §12 in `trellis-api-reference.md` for column naming.
 - 🟢 **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them using standard EF Core owned entities (`OwnsOne`, `OwnsMany`) — refer to [EF Core Owned Entity Types documentation](https://learn.microsoft.com/en-us/ef/core/modeling/owned-entities).
@@ -278,12 +368,21 @@ public Result<OrderStatus> Submit() => _machine.FireResult("Submit");
 - 🔴 Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Never use bare `SaveChangesAsync`.
 - 🟡 Use `FirstOrDefaultMaybeAsync` for optional lookups, `FirstOrDefaultResultAsync` for required lookups.
 - 🟡 Use `.Where(specification)` for specification queries. Specifications support `.And()`, `.Or()`, `.Not()` composition.
+- 🟡 **`Maybe<T>` in `Specification<T>` expressions** — accessing `Maybe<T>.Value` inside `ToExpression()` triggers TRLS006, even with a `HasValue` guard in the same `&&` chain. Suppress with `#pragma warning disable TRLS006` around the expression:
+```csharp
+public override Expression<Func<Order, bool>> ToExpression() =>
+#pragma warning disable TRLS006
+    order => order.Status == OrderStatus.Submitted
+          && order.SubmittedAt.HasValue
+          && order.SubmittedAt.Value < _cutoff;
+#pragma warning restore TRLS006
+```
 - 🔴 **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. The `_camelCase` backing field is emitted by the source generator during `dotnet build` (see **Implementation Order and Build Checkpoints** above). 🔴 **If using EF Core**, add `Trellis.EntityFrameworkCore.Generator` to the **Domain project** (as an Analyzer, with `ReferenceOutputAssembly="false"`). The generator must be in the project that declares entities with `partial Maybe<T>` properties — without it, backing fields will not be emitted and EF Core persistence will silently fail.
 - 🔴 **`Maybe<T>` in indexes** — Use `HasTrellisIndex` (not `HasIndex`) for indexes that include `Maybe<T>` properties. `HasTrellisIndex` accepts lambda expressions and automatically resolves `Maybe<T>` properties to their backing field names: `builder.HasTrellisIndex(o => new { o.Status, o.SubmittedAt })` resolves to `HasIndex("Status", "_submittedAt")`. Plain `HasIndex` with lambdas will silently fail for `Maybe<T>` properties. See §12 in `trellis-api-reference.md`.
 - 🟡 **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. For comparisons on `Maybe<T>` properties (e.g., date thresholds), use `WhereLessThan`, `WhereLessThanOrEqual`, `WhereGreaterThan`, `WhereGreaterThanOrEqual`. These rewrite the expression tree to target the backing storage field. See §12 in `trellis-api-reference.md`.
 ```csharp
 // ✅ Overdue orders: SubmittedAt < 7 days ago
-var cutoff = DateTime.UtcNow.AddDays(-7);
+var cutoff = _timeProvider.GetUtcNow().UtcDateTime.AddDays(-7);
 context.Orders
     .Where(o => o.Status == OrderStatus.Submitted)
     .WhereLessThan(o => o.SubmittedAt, cutoff);
@@ -332,7 +431,23 @@ result.ToCreatedAtActionResult(this, nameof(CustomersController.GetCustomer), o 
 
 ### Automatic Scalar Value Binding
 
-🔴 **Use value object types — not primitives — in controller action parameters.** Trellis automatically converts route parameters, query parameters, and JSON body properties via model binding and JSON converters. Never call `.Create()` or `.TryCreate()` manually in controllers.
+🔴 **Use value object types — not primitives — in controller action parameters.** Trellis automatically converts route parameters, query parameters, and JSON body properties via model binding and JSON converters. Never call `.Create()` or `.TryCreate()` manually in controllers for **scalar** value objects — the binding layer handles them.
+
+🟡 **Composite value objects** (e.g., `ShippingAddress` with multiple fields) are NOT auto-bound. Construct them in the controller using `TryCreate` → `BindAsync` → `Send`:
+```csharp
+// ✅ Composite VO — construct in controller, chain into command
+return await ShippingAddress.TryCreate(
+        request.ShippingAddress.Street,
+        request.ShippingAddress.City,
+        request.ShippingAddress.State,
+        request.ShippingAddress.PostalCode,
+        request.ShippingAddress.Country)
+    .BindAsync(address => _sender.Send(
+        new CreateCustomerCommand(request.FirstName, request.LastName, request.Email, request.PhoneNumber, address),
+        cancellationToken))
+    .ToCreatedAtActionResultAsync(this, nameof(GetCustomer), c => new { id = c.Id }, CustomerResponse.From);
+```
+This keeps commands receiving **valid domain types** (not raw strings) and the controller stays in the ROP pipeline. The `ShippingAddress` validation errors automatically flow through as Problem Details responses.
 
 🟡 **Service Level Indicator (SLI) attributes** — from the `ServiceLevelIndicators` package. Applied to controller action parameters:
 - `[CustomerResourceId]` — identifies the customer, customer group, or calling service
@@ -435,7 +550,7 @@ _ = todo.Start();
 customer.PhoneNumber.Should().HaveValue();
 customer.PhoneNumber.Should().BeNone();
 order.SubmittedAt.Should().HaveValue();
-order.SubmittedAt.Should().HaveValueMatching(d => d > DateTime.UtcNow.AddMinutes(-1));
+order.SubmittedAt.Should().HaveValueMatching(d => d >= expectedTime && d <= expectedTime.AddSeconds(1));
 
 // ❌ Wrong — bypasses Trellis.Testing, poor error messages
 customer.PhoneNumber.HasValue.Should().BeTrue();
