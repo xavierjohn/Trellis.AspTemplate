@@ -4,12 +4,12 @@ using MartinCostello.Logging.XUnit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TodoSample.AntiCorruptionLayer;
 using Trellis.EntityFrameworkCore;
+using Trellis.Testing;
 using Xunit.v3;
 
 public class TestWebApplicationFactoryFixture : WebApplicationFactory<Program>, ITestOutputHelperAccessor
@@ -32,14 +32,9 @@ public class TestWebApplicationFactoryFixture : WebApplicationFactory<Program>, 
         builder.ConfigureLogging(p => p.AddXUnit(this));
 
         builder.ConfigureServices(services =>
-        {
-            // Remove the production database registration
-            services.RemoveAll<DbContextOptions<AppDbContext>>();
-
-            services.AddDbContext<AppDbContext>(options =>
+            services.ReplaceDbProvider<AppDbContext>(options =>
                 options.UseSqlite(_connection)
-                       .AddTrellisInterceptors());
-        });
+                       .AddTrellisInterceptors()));
     }
 
     protected override void Dispose(bool disposing)

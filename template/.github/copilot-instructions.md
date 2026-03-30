@@ -271,7 +271,7 @@ public Result<OrderStatus> Submit() => _machine.FireResult("Submit");
 
 ### EF Core
 
-- 🔴 **Always call `ApplyTrellisConventions`** in `ConfigureConventions` — it handles all scalar Trellis value objects automatically. 🔴 Do NOT write `HasConversion()` for types handled by Trellis conventions — it silently overrides the convention and causes runtime failures. 🟢 If a custom type is not handled by `ApplyTrellisConventions`, use explicit EF mapping (`HasConversion`, `OwnsOne`, etc.) for that type only.
+- 🔴 **Always call `ApplyTrellisConventions`** in `ConfigureConventions` — it handles all scalar Trellis value objects automatically, including `RequiredString<T>`, `RequiredGuid<T>`, `RequiredInt<T>`, `RequiredDecimal<T>`, `RequiredDateTime<T>`, `RequiredBool<T>`, `RequiredLong<T>`, `RequiredEnum<T>`, and all built-in primitives (`EmailAddress`, `PhoneNumber`, etc.). 🔴 Do NOT write `HasConversion()` for types handled by Trellis conventions — it silently overrides the convention and causes runtime failures. 🟢 If a custom type is not handled by `ApplyTrellisConventions`, use explicit EF mapping (`HasConversion`, `OwnsOne`, etc.) for that type only.
 - 🟡 **`Money` properties** are auto-mapped by `ApplyTrellisConventions` — no `OwnsOne` needed. See §12 in `trellis-api-reference.md` for column naming.
 - 🟢 **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them using standard EF Core owned entities (`OwnsOne`, `OwnsMany`) — refer to [EF Core Owned Entity Types documentation](https://learn.microsoft.com/en-us/ef/core/modeling/owned-entities).
 - 🟡 **Owned collection property types** — use `IReadOnlyList<T>` (not `ReadOnlyCollection<T>`) for `OwnsMany` navigation properties. EF Core cannot populate `ReadOnlyCollection<T>` from a backing `List<T>` field during materialization.
@@ -334,6 +334,13 @@ result.ToCreatedAtActionResult(this, nameof(CustomersController.GetCustomer), o 
 
 🔴 **Use value object types — not primitives — in controller action parameters.** Trellis automatically converts route parameters, query parameters, and JSON body properties via model binding and JSON converters. Never call `.Create()` or `.TryCreate()` manually in controllers.
 
+🟡 **Service Level Indicator (SLI) attributes** — from the `ServiceLevelIndicators` package. Applied to controller action parameters:
+- `[CustomerResourceId]` — identifies the customer, customer group, or calling service
+- `[LocationId]` — the location where the service is running (e.g., Public cloud, West US 3 region, Azure Core)
+- `[Operation]` — the name of the operation
+
+See the [ServiceLevelIndicators documentation](https://github.com/xavierjohn/ServiceLevelIndicators) for details.
+
 **Registration** — add scalar value validation to the MVC pipeline in `Api/src/DependencyInjection.cs`:
 ```csharp
 services.AddControllers().AddScalarValueValidation();
@@ -343,7 +350,17 @@ And activate the middleware in `Program.cs`:
 app.UseScalarValueValidation();
 ```
 
-🟡 **Request/Response DTOs** live in `Api/src/{version}/Models/` (e.g., `Api/src/2026-03-26/Models/`). 🔴 Never expose domain types directly. Request DTOs can use scalar value object types as properties — they will be validated automatically via the JSON converter. Response DTOs should have a `static From(DomainType)` method for mapping from domain aggregates.
+🟡 **Request/Response DTOs** live in `Api/src/{version}/Models/` (e.g., `Api/src/2026-03-26/Models/`). 🔴 Never expose domain types directly. Request DTOs can use scalar value object types and `Money` as properties — they will be validated automatically via JSON converters. Response DTOs should have a `static From(DomainType)` method for mapping from domain aggregates.
+```csharp
+// ✅ All Trellis value objects work directly in request DTOs
+public record CreateProductRequest
+{
+    public ProductName Name { get; init; } = null!;    // scalar VO — validated by ParsableJsonConverter
+    public Sku Sku { get; init; } = null!;             // scalar VO
+    public Money UnitPrice { get; init; } = null!;     // structured VO — validated by MoneyJsonConverter
+}
+// JSON: { "name": "Widget", "sku": "WGT-001", "unitPrice": { "amount": 9.99, "currency": "USD" } }
+```
 
 ### API Versioning
 
@@ -403,6 +420,14 @@ The Scalar UI is available at `/scalar/{version}` (e.g., `/scalar/2026-11-12`).
 **API integration tests:** Use `WebApplicationFactory<Program>` with SQLite in-memory. Test HTTP round-trips, status codes, Problem Details, authorization enforcement. Use `MartinCostello.Logging.XUnit.v3` for test logging.
 
 **Do NOT** create `GlobalUsings.cs` files in test projects. Global usings come from `build/test.props`.
+
+🟡 **TRLS001 (`Result not handled`) in test setup code** — when calling methods like `todo.Start()` or `repo.SaveAsync()` in test setup where the result is intentionally ignored, suppress with `#pragma warning disable TRLS001` at the top of the file, or discard with `_ =`:
+```csharp
+#pragma warning disable TRLS001 // Result intentionally ignored in test setup
+
+// Or per-line:
+_ = todo.Start();
+```
 
 🔴 **`Maybe<T>` assertions** — use `.Should().HaveValue()` and `.Should().BeNone()` (from `Trellis.Testing`) to assert on `Maybe<T>` values. Do NOT use `.HasValue.Should().BeTrue()` or `.HasNoValue.Should().BeTrue()` — these bypass Trellis.Testing's assertion messages. Also available: `.Should().HaveValueEqualTo(expected)` and `.Should().HaveValueMatching(predicate)`.
 ```csharp

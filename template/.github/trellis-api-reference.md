@@ -147,8 +147,16 @@ bool HasValue { get; }
 bool HasNoValue { get; }
 T GetValueOrThrow(string? errorMessage = null)
 T GetValueOrDefault(T defaultValue)
+T GetValueOrDefault(Func<T> defaultFactory)
 bool TryGetValue(out T value)
 Maybe<TResult> Map<TResult>(Func<T, TResult> selector) where TResult : notnull
+Maybe<TResult> Bind<TResult>(Func<T, Maybe<TResult>> selector) where TResult : notnull
+Maybe<T> Or(T fallback)
+Maybe<T> Or(Func<T> fallbackFactory)
+Maybe<T> Or(Maybe<T> fallback)
+Maybe<T> Or(Func<Maybe<T>> fallbackFactory)
+Maybe<T> Where(Func<T, bool> predicate)
+Maybe<T> Tap(Action<T> action)
 TResult Match<TResult>(Func<T, TResult> some, Func<TResult> none)
 implicit operator Maybe<T>(T value)  // T → Maybe<T> (implicit)
 // No implicit conversion from Maybe<T> → T (by design — use .Value, Match, or TryGetValue)
@@ -207,6 +215,24 @@ ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> valueTask, Error) where
 ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> valueTask, Func<Error>) where T : struct
 ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> valueTask, Error) where T : class
 ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> valueTask, Func<Error>) where T : class
+```
+
+### Collection Helpers — Safe Enumerable → Maybe
+
+Extension methods on `IEnumerable<T>` for safely extracting elements as `Maybe<T>`, and filtering/unwrapping collections of `Maybe<T>`.
+
+```csharp
+// TryFirst — safe first element (no exception on empty)
+Maybe<T> TryFirst<T>(this IEnumerable<T>) where T : notnull
+Maybe<T> TryFirst<T>(this IEnumerable<T>, Func<T, bool> predicate) where T : notnull
+
+// TryLast — safe last element (no exception on empty)
+Maybe<T> TryLast<T>(this IEnumerable<T>) where T : notnull
+Maybe<T> TryLast<T>(this IEnumerable<T>, Func<T, bool> predicate) where T : notnull
+
+// Choose — filter and unwrap Maybe collections (like Seq.choose in F#)
+IEnumerable<T> Choose<T>(this IEnumerable<Maybe<T>>) where T : notnull
+IEnumerable<TResult> Choose<T, TResult>(this IEnumerable<Maybe<T>>, Func<T, TResult>)
 ```
 
 ---
@@ -351,6 +377,18 @@ Result<TOut> Map<TIn, TOut>(this Result<TIn>, Func<TIn, TOut>)
 // + 6 async variants (same pattern as Bind)
 ```
 
+### MapIf — Conditional Pure Transformation
+
+Transforms value only when a condition is met, otherwise passes through unchanged. Short-circuits on failure. Useful for optional transformations in pipelines without branching into `When`/`Unless`.
+
+```csharp
+// Static condition
+Result<T> MapIf<T>(this Result<T>, bool condition, Func<T, T> func)
+
+// Value-based predicate
+Result<T> MapIf<T>(this Result<T>, Func<T, bool> predicate, Func<T, T> func)
+```
+
 ### Ensure — Add Validation
 
 Validates value, returns failure if predicate fails. Short-circuits on prior failure.
@@ -391,6 +429,36 @@ var result = Result.Success(request)
         (r => r.Age >= 18, Error.Validation("Must be 18+", "age")),
         (r => r.Email.Contains('@'), Error.Validation("Invalid email", "email")));
 // Returns ONE ValidationError with all 3 field errors if all fail
+```
+
+### EnsureNotNull — Null-Guard + Type Narrowing
+
+Validates that a nullable value is not null, narrowing `Result<T?>` to `Result<T>`. Returns the supplied error on null. Supports both reference and value types.
+
+```csharp
+Result<T> EnsureNotNull<T>(this Result<T?>, Error error) where T : class
+Result<T> EnsureNotNull<T>(this Result<T?>, Error error) where T : struct
+```
+
+### Check — Validate Without Losing Pipeline Value
+
+Runs a validation function that returns a Result, but discards the inner value and keeps the original pipeline value on success. Useful for "fire a validation, keep the current value" patterns — like `Ensure`, but the validation itself is expressed as a `Result`-returning function.
+
+```csharp
+Result<T> Check<T, TK>(this Result<T>, Func<T, Result<TK>>)
+Result<T> Check<T>(this Result<T>, Func<T, Result<Unit>>)
+// Async: CheckAsync with Task/ValueTask Left/Right/Both variants
+```
+
+### BindZip — Sequential Tuple Accumulation
+
+Binds a function over the current value and zips the original value with the new result into a tuple. Enables sequential accumulation of values through a pipeline without nested closures. T4-generated overloads support growing tuples from 2 up to 9 elements.
+
+```csharp
+Result<(T1, T2)> BindZip<T1, T2>(this Result<T1>, Func<T1, Result<T2>>)
+// T4-generated: tuple continuation overloads (2 → 9 tuples)
+// e.g., Result<(T1, T2, T3)> BindZip<T1, T2, T3>(this Result<(T1, T2)>, Func<T1, T2, Result<T3>>)
+// Async: BindZipAsync with Task/ValueTask Left/Right/Both variants
 ```
 
 ### Tap — Side Effects on Success
@@ -645,6 +713,16 @@ Result<T> DebugOnFailure<T>(this Result<T>, Action<Error>)
 // + async variants
 ```
 
+### GetValueOrDefault — Terminal Extraction
+
+Extracts the value from a successful Result or returns a default/fallback. Terminal operator — exits the ROP pipeline. Supports static defaults, lazy factories, and error-aware factories.
+
+```csharp
+TValue GetValueOrDefault<TValue>(this Result<TValue>, TValue defaultValue)
+TValue GetValueOrDefault<TValue>(this Result<TValue>, Func<TValue> defaultFactory)
+TValue GetValueOrDefault<TValue>(this Result<TValue>, Func<Error, TValue> defaultFactory)
+```
+
 ## OpenTelemetry Tracing
 
 ROP operations automatically create `Activity` spans when instrumentation is enabled. Each `Bind`, `Map`, `Tap`, `Ensure`, `RecoverOnFailure`, and `Combine` call starts a child activity with success/error status.
@@ -775,6 +853,16 @@ static abstract Result<TSelf> TryCreate(TPrimitive value, string? fieldName = nu
 static virtual TSelf Create(TPrimitive value)  // default: TryCreate + throw
 TPrimitive Value { get; }
 ```
+
+## IFormattableScalarValue\<TSelf, TPrimitive\> (interface)
+
+Extends `IScalarValue` with culture-aware string parsing. Implemented by numeric and date value objects where culture affects string parsing (decimal separators, date formats).
+
+```csharp
+static abstract Result<TSelf> TryCreate(string? value, IFormatProvider? provider, string? fieldName = null);
+```
+
+Implementors: `Age`, `MonetaryAmount`, `Percentage` (hand-implemented), `RequiredInt<T>`, `RequiredDecimal<T>`, `RequiredLong<T>`, `RequiredDateTime<T>` (source-generated). Not implemented by string-based types (`EmailAddress`, `Slug`, etc.) — culture doesn't affect their parsing.
 
 ## Specification\<T\> (abstract class)
 
@@ -1138,7 +1226,27 @@ All have `TryCreate` → `Result<T>` and `Create` → `T` (throws). All implemen
 | `LanguageCode` | `string` | 2 letters, ISO 639-1, lowercase | — |
 | `Age` | `int` | 0–150 inclusive | — |
 | `Percentage` | `decimal` | 0–100 inclusive | `Zero`, `Full`, `AsFraction()`, `Of(decimal)`, `FromFraction(decimal, fieldName?)`, `TryCreate(decimal?)` |
+| `MonetaryAmount` | `decimal` | Non-negative, rounds to 2 dp | `Zero`, `Add`, `Subtract`, `Multiply(int)`, `Multiply(decimal)` |
 | `Money` | multi-value | Amount ≥ 0, valid currency code | See below |
+
+### MonetaryAmount (extends ScalarValueObject)
+
+Scalar value object for single-currency systems where currency is a system-wide policy, not per-row data. Wraps a non-negative `decimal` rounded to 2 decimal places. JSON: plain number (e.g. `99.99`). EF Core: maps to 1 `decimal` column (via `ApplyTrellisConventions`).
+
+```csharp
+// Implements: ScalarValueObject<MonetaryAmount, decimal>, IScalarValue<MonetaryAmount, decimal>, IParsable<MonetaryAmount>
+
+static Result<MonetaryAmount> TryCreate(decimal value)
+static Result<MonetaryAmount> TryCreate(decimal? value)
+static MonetaryAmount Create(decimal value)
+static MonetaryAmount Zero { get; }
+
+// Arithmetic (returns Result — handles overflow)
+Result<MonetaryAmount> Add(MonetaryAmount other)
+Result<MonetaryAmount> Subtract(MonetaryAmount other)
+Result<MonetaryAmount> Multiply(int quantity)
+Result<MonetaryAmount> Multiply(decimal multiplier)
+```
 
 ### Money (extends ValueObject, NOT ScalarValueObject)
 
@@ -1193,16 +1301,14 @@ string? GetAttribute(string key)
 
 ## Interfaces
 
-- **`IActorProvider`** — Provides the current authenticated actor synchronously (from JWT claims).
-- **`IAsyncActorProvider`** — Async variant for when permission resolution requires I/O.
+- **`IActorProvider`** — Provides the current authenticated actor asynchronously. Unified interface for all actor resolution (JWT claims, database lookups, etc.).
 - **`IAuthorize`** — Declares required permissions; checked by authorization pipeline behavior.
 - **`IAuthorizeResource<TResource>`** — Resource-based authorization; receives the loaded resource and actor.
 - **`IResourceLoader<TMessage, TResource>`** — Loads the resource for resource-based authorization checks.
 - **`ResourceLoaderById<TMessage, TResource, TId>`** — Base class for the common "extract ID from message, load by ID" pattern.
 
 ```csharp
-interface IActorProvider { Actor GetCurrentActor(); }
-interface IAsyncActorProvider { Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default); }
+interface IActorProvider { Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default); }
 interface IAuthorize { IReadOnlyList<string> RequiredPermissions { get; } }
 interface IAuthorizeResource<TResource> { IResult Authorize(Actor actor, TResource resource); }
 interface IResourceLoader<TMessage, TResource> { Task<Result<TResource>> LoadAsync(TMessage message, CancellationToken cancellationToken); }
@@ -1212,19 +1318,6 @@ abstract class ResourceLoaderById<TMessage, TResource, TId> : IResourceLoader<TM
     protected abstract Task<Result<TResource>> GetByIdAsync(TId id, CancellationToken cancellationToken);
 }
 ```
-
-### IAsyncActorProvider
-
-Asynchronous variant of `IActorProvider`. Use when permission resolution requires async operations such as database lookups or external service calls.
-
-```csharp
-public interface IAsyncActorProvider
-{
-    Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default);
-}
-```
-
-Use `IActorProvider` when the actor can be resolved synchronously (e.g., from in-memory claims). Use `IAsyncActorProvider` when resolution requires I/O (e.g., loading permissions from a database).
 
 ## ActorAttributes Constants
 
@@ -1389,9 +1482,25 @@ Benefits: Native AOT compatible, no reflection, trimming-safe, faster startup.
 
 **Namespace: `Trellis.Asp.Authorization`**
 
+## ClaimsActorProvider (Generic OIDC/JWT)
+
+Generic actor provider that maps standard OIDC/JWT claims to an `Actor`. Works with any identity provider (Auth0, Keycloak, Okta, Entra, etc.).
+
+```csharp
+// Registration
+services.AddClaimsActorProvider();
+services.AddClaimsActorProvider(options => {
+    options.ActorIdClaim = "sub";           // default: "sub"
+    options.PermissionsClaim = "permissions"; // default: "permissions"
+});
+
+// ClaimsActorProvider : IActorProvider
+// Extracts Actor from HttpContext claims using configurable claim names
+```
+
 ## EntraActorProvider (Production)
 
-Production actor provider that maps Microsoft Entra ID (Azure AD) JWT claims to an `Actor`. Extracts user ID from `sub` claim and permissions from roles/scopes claims.
+Production actor provider that maps Microsoft Entra ID (Azure AD) JWT claims to an `Actor`. Extends `ClaimsActorProvider` with Entra-specific claim mapping for permissions, forbidden permissions, and ABAC attributes.
 
 ```csharp
 // Registration
@@ -1401,13 +1510,13 @@ services.AddEntraActorProvider(options => {
     options.MapPermissions = claims => /* custom extraction */;
 });
 
-// EntraActorProvider : IActorProvider
+// EntraActorProvider : ClaimsActorProvider
 // Extracts Actor from HttpContext claims (Entra ID / Azure AD)
 ```
 
 ## DevelopmentActorProvider (Development/Testing)
 
-Development/testing actor provider that reads `Actor` from the `X-Test-Actor` HTTP header (JSON). Falls back to a configurable default actor. Throws in Production to prevent accidental use.
+Development/testing actor provider that reads `Actor` from the `X-Test-Actor` HTTP header (JSON). Falls back to a configurable default actor. **Throws unconditionally in any non-Development environment** to prevent accidental use in Production.
 
 ```csharp
 // Registration — for development environments
@@ -1419,8 +1528,8 @@ services.AddDevelopmentActorProvider(options => {
 });
 
 // DevelopmentActorProvider : IActorProvider
-// Reads Actor from X-Test-Actor HTTP header (JSON)
-// Throws InvalidOperationException if header present in Production
+// Throws InvalidOperationException unconditionally in non-Development environments
+// Reads Actor from X-Test-Actor HTTP header (JSON) in Development
 // Falls back to configurable default Actor when header absent
 // Header JSON schema: { "Id": "...", "Permissions": [...], "ForbiddenPermissions": [...], "Attributes": {...} }
 
@@ -1431,13 +1540,40 @@ else
     services.AddEntraActorProvider();
 ```
 
+## CachingActorProvider (Decorator)
+
+Caching decorator that wraps any `IActorProvider` and caches the result per-scope. Use with database-backed providers to avoid redundant queries within a single request.
+
+```csharp
+// Registration — wraps DatabaseActorProvider with per-request caching
+services.AddCachingActorProvider<DatabaseActorProvider>();
+
+// CachingActorProvider : IActorProvider
+// Caches the Task<Actor> from the first call; subsequent calls return the same result
+```
+
 | Type | Purpose |
 |------|---------|
-| `EntraActorProvider` | Production — maps Entra JWT claims to `Actor` |
+| `ClaimsActorProvider` | Generic OIDC/JWT — maps configurable claims to `Actor` |
+| `ClaimsActorOptions` | Configuration for generic claim mapping (`ActorIdClaim`, `PermissionsClaim`) |
+| `EntraActorProvider` | Production — maps Entra JWT claims to `Actor` (extends `ClaimsActorProvider`) |
 | `EntraActorOptions` | Configuration for Entra claim mapping |
 | `DevelopmentActorProvider` | Development/testing — reads `X-Test-Actor` header |
 | `DevelopmentActorOptions` | Configuration for default actor and error handling |
-| `ServiceCollectionExtensions` | `AddEntraActorProvider()` and `AddDevelopmentActorProvider()` |
+| `CachingActorProvider` | Decorator — caches inner provider per-scope |
+| `ServiceCollectionExtensions` | `AddClaimsActorProvider()`, `AddEntraActorProvider()`, `AddDevelopmentActorProvider()`, `AddCachingActorProvider<T>()` |
+
+### ClaimsActorOptions
+
+Configures how `ClaimsActorProvider` extracts actor identity from JWT claims.
+
+```csharp
+public class ClaimsActorOptions
+{
+    string ActorIdClaim { get; set; }     // default: "sub"
+    string PermissionsClaim { get; set; } // default: "permissions"
+}
+```
 
 ### EntraActorOptions
 
@@ -1672,6 +1808,7 @@ IQueryable<T> Where<T>(this IQueryable<T> query, Specification<T> specification)
 configurationBuilder.ApplyTrellisConventions(typeof(Order).Assembly);
 // Auto-registers converters for all IScalarValue and RequiredEnum types
 // Auto-maps Money properties as owned types (Amount + Currency columns)
+// MonetaryAmount maps to a single decimal column (scalar value object convention)
 ```
 
 ### Money Property Convention
@@ -1684,6 +1821,8 @@ configurationBuilder.ApplyTrellisConventions(typeof(Order).Assembly);
 | `ShippingCost` | `ShippingCost` | `ShippingCostCurrency` | `decimal(18,3)` | `nvarchar(3)` |
 
 Explicit `OwnsOne` configuration takes precedence over the convention.
+
+`Maybe<Money>` properties are also supported — `MaybeConvention` creates an optional ownership navigation with nullable Amount/Currency columns. No manual `OwnsOne` needed.
 
 ### Maybe\<T\> Property Mapping
 
@@ -1707,7 +1846,7 @@ modelBuilder.Entity<Customer>(b =>
 });
 ```
 
-The source generator emits a private `_camelCase` backing field and getter/setter for each `partial Maybe<T>` property. The `MaybeConvention` (registered by `ApplyTrellisConventions`) auto-discovers `Maybe<T>` properties, ignores the struct property, maps the backing field as nullable, and sets the column name to the property name.
+The source generator emits a private `_camelCase` backing field and getter/setter for each `partial Maybe<T>` property. The `MaybeConvention` (registered by `ApplyTrellisConventions`) auto-discovers `Maybe<T>` properties, ignores the struct property, maps the backing field as nullable, and sets the column name to the property name. When `T` is a composite owned type (e.g., `Money`), `MaybeConvention` creates an optional ownership navigation instead of a scalar column.
 
 Backing field naming: `Phone` → `_phone`, `SubmittedAt` → `_submittedAt`, `AlternateEmail` → `_alternateEmail`.
 
@@ -1899,6 +2038,9 @@ UpdateSettersBuilder<TEntity> SetMaybeValue<TEntity, TInner>(
 UpdateSettersBuilder<TEntity> SetMaybeNone<TEntity, TInner>(
     this UpdateSettersBuilder<TEntity> updateSettersBuilder,
     Expression<Func<TEntity, Maybe<TInner>>> propertySelector)
+
+// Note: SetMaybeValue/SetMaybeNone throw InvalidOperationException for composite
+// owned types like Money. Use tracked entity updates (load, modify, SaveChangesAsync) instead.
 
 // Diagnostics
 IReadOnlyList<MaybePropertyMapping> GetMaybePropertyMappings(this IModel model)
@@ -2192,14 +2334,14 @@ Complete example showing how to model optional fields with `Maybe<T>` in request
 public record CreateProfileRequest(
     string Email,
     string FirstName,
-    Maybe<string> MiddleName,    // optional
+    string? MiddleName,    // optional
     string LastName,
-    Maybe<Url> Website           // optional value object
+    Url? Website           // optional value object
 );
 
 // Validation with Optional
 var result = EmailAddress.TryCreate(dto.Email)
-    .Combine(Maybe.Optional(dto.MiddleName.AsNullable(), MiddleName.TryCreate))
+    .Combine(Maybe.Optional(dto.MiddleName, MiddleName.TryCreate))
     .Bind((email, middleName) => CreateProfile(email, middleName));
 
 // EF Core persistence — use partial Maybe<T> property (see §12 Maybe<T> Property Mapping)
@@ -2217,26 +2359,22 @@ Complete example showing how to map `Result<T>` to HTTP responses in both MVC co
 ```csharp
 // MVC Controller
 [HttpGet("{id}")]
-public async Task<ActionResult<OrderDto>> GetOrder(string id)
+public async Task<ActionResult<OrderDto>> GetOrder(OrderId id)
 {
-    return await OrderId.TryCreate(id)
-        .BindAsync(orderId => _service.GetOrderAsync(orderId))
-        .MapAsync(order => order.ToDto())
-        .ToActionResultAsync(this);
+    return await _service.GetOrderAsync(id)
+        .ToActionResultAsync(this, OrderDto.From);
 }
 
 [HttpPost]
 public async Task<ActionResult<OrderDto>> CreateOrder(CreateOrderRequest request)
 {
     return await _service.CreateOrderAsync(request)
-        .MapAsync(order => order.ToDto())
-        .ToCreatedAtActionResultAsync(this, nameof(GetOrder), dto => new { id = dto.Id });
+        .ToCreatedAtActionResultAsync(this, nameof(GetOrder), dto => new { id = dto.Id }, OrderDto.From);
 }
 
 // Minimal API
-app.MapGet("/orders/{id}", async (string id, IOrderService service) =>
-    await OrderId.TryCreate(id)
-        .BindAsync(orderId => service.GetOrderAsync(orderId))
+app.MapGet("/orders/{id}", async (OrderId id, IOrderService service) =>
+    await service.GetOrderAsync(id)
         .MapAsync(order => order.ToDto())
         .ToHttpResultAsync());
 ```
@@ -2269,8 +2407,8 @@ public async Task<Result<Order>> GetByIdAsync(OrderId id, CancellationToken canc
     await _dbContext.Orders
         .FirstOrDefaultResultAsync(o => o.Id == id, Error.NotFound($"Order {id} not found"), ct);
 
-public async Task<Result<Maybe<Order>>> FindByIdAsync(OrderId id, CancellationToken cancellationToken) =>
-    Result.Success(await _dbContext.Orders.FirstOrDefaultMaybeAsync(o => o.Id == id, ct));
+public async Task<Maybe<Order>> FindByIdAsync(OrderId id, CancellationToken cancellationToken) =>
+    await _dbContext.Orders.FirstOrDefaultMaybeAsync(o => o.Id == id, ct);
 
 public async Task<Result<Unit>> SaveAsync(Order order, CancellationToken cancellationToken)
 {
@@ -2293,7 +2431,8 @@ In LINQ queries, compare value objects to value objects — the value converter 
 var customer = await _dbContext.Customers
     .FirstOrDefaultResultAsync(c => c.Email == EmailAddress.Create("alice@example.com"), notFoundError, ct);
 
-// ❌ Wrong — .Value won't translate to SQL
+// ✅ Also correct (with ScalarValueQueryInterceptor registered via AddTrellisInterceptors)
+// The interceptor rewrites .Value access to the primitive for SQL translation
 var customer = await _dbContext.Customers
     .FirstOrDefaultResultAsync(c => c.Email.Value == "alice@example.com", notFoundError, ct);
 ```
