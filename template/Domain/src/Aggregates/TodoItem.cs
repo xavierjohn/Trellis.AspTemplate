@@ -22,7 +22,7 @@ public partial class TodoItem : Aggregate<TodoId>
     public DueDate DueDate { get; private set; } = null!;
 
     /// <summary>Current lifecycle status.</summary>
-    public TodoStatus Status { get; private set; }
+    public TodoStatus Status { get; private set; } = null!;
 
     /// <summary>When the todo was completed, if applicable.</summary>
     public partial Maybe<DateTime> CompletedAt { get; private set; }

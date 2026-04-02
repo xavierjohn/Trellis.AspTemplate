@@ -37,7 +37,7 @@ public record TodoResponse
         Id = todo.Id.Value,
         Title = todo.Title.Value,
         DueDate = todo.DueDate.Value,
-        Status = todo.Status.ToString(),
+        Status = todo.Status.Value,
         CompletedAt = todo.CompletedAt.AsNullable(),
         Tag = todo.Tag.Match<string?>(t => t.Value, () => null),
         CreatedByActorId = todo.CreatedByActorId,

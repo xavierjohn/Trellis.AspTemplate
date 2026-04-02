@@ -1,8 +1,8 @@
-# Copilot Instructions — Building with Trellis
+﻿# Copilot Instructions — Building with Trellis
 
 This project uses the **Trellis** framework (.NET 10). Trellis combines Railway-Oriented Programming (ROP) with Domain-Driven Design (DDD). Follow these patterns exactly.
 
-**API Reference:** See `.github/trellis-api-reference.md` for all Trellis types, method signatures, and usage patterns. Use it as the authoritative source for Trellis API surface. See `.github/trellis-api-testing-reference.md` for testing APIs (FluentAssertions extensions, FakeRepository, TestActorProvider, test patterns).
+**API Reference:** See the `.github/trellis-api-*.md` files for all Trellis types, method signatures, and usage patterns. Key files: `trellis-api-results.md` (Result, Maybe, Error types), `trellis-api-asp.md` (response mappers, ETag helpers), `trellis-api-efcore.md` (EF Core conventions), `trellis-api-ddd.md` (aggregates, entities, value objects), `trellis-api-primitives.md` (built-in value objects). See `trellis-api-testing-reference.md` for testing APIs (FluentAssertions extensions, FakeRepository, TestActorProvider, test patterns).
 
 ## Todo Sample — Study Before Replacing
 
@@ -10,6 +10,7 @@ This project uses the **Trellis** framework (.NET 10). Trellis combines Railway-
 
 Key patterns demonstrated in the sample:
 - **Value objects** with `RequiredGuid`, `RequiredString`, `RequiredDateTime`, `ValidateAdditional` — see `Domain/src/ValueObjects/`
+- **`RequiredEnum` smart enum** replacing C# `enum` — see `Domain/src/TodoStatus.cs`
 - **Aggregate** with `LazyStateMachine` and `Maybe<T>` partial properties — see `Domain/src/Aggregates/TodoItem.cs`
 - **Specification** with `.And()` composition — see `Domain/src/Specifications/OverdueTodoSpecification.cs`
 - **Always-valid commands** with private constructor + `TryCreate` — see `Application/src/Todos/UpdateTodoCommand.cs`
@@ -26,10 +27,53 @@ Key patterns demonstrated in the sample:
 1. 🔴 **Errors are values, not exceptions.** Use `Result<T>` for expected failures. Never throw for business logic. Never use try/catch in Domain or Application layers.
 2. 🔴 **Make illegal states unrepresentable.** Every domain concept is a value object with `TryCreate`. If it exists, it's valid.
 3. 🔴 **No primitive obsession on domain surfaces.** No raw `Guid`, `string`, `int`, or `decimal` in aggregate/entity properties or public domain method signatures. Every property on an Aggregate or Entity must be a typed value object. If the same concept appears in two contexts (e.g., line item quantity vs. stock quantity), create separate types for each. 🟢 Private helpers and internal implementation details may use primitives when the value object adds no safety benefit.
-4. 🟡 **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>`, `[Range]` on `RequiredInt<T>`, and `ValidateAdditional` for custom validation (regex, format checks) — see `trellis-api-reference.md` §5. Do NOT hand-roll `ScalarValueObject<T, string>` when `RequiredString<T>` + `ValidateAdditional` can express the same validation.
+4. 🟡 **Use built-in `Trellis.Primitives` before creating custom value objects.** `EmailAddress`, `PhoneNumber`, `Url`, `Hostname`, `IpAddress`, `Slug`, `CountryCode`, `CurrencyCode`, `LanguageCode`, `Age`, `Percentage`, and `Money` are already provided with full validation, JSON converters, and EF Core support. Only create custom value objects for domain concepts not covered by these. Use `[StringLength]` on `RequiredString<T>`, `[Range]` on `RequiredInt<T>`, and `ValidateAdditional` for custom validation (regex, format checks) — see `trellis-api-primitives.md`. Do NOT hand-roll `ScalarValueObject<T, string>` when `RequiredString<T>` + `ValidateAdditional` can express the same validation.
    > ⚠️ **`[StringLength]` and `[Range]` are Trellis attributes** (`Trellis.StringLengthAttribute`, `Trellis.RangeAttribute`), not `System.ComponentModel.DataAnnotations`. The global `using Trellis;` directive resolves them automatically. Do NOT add `using System.ComponentModel.DataAnnotations;` — the wrong attribute will silently compile but the source generator won't recognize it.
-5. 🔴 **Optional values use `Maybe<T>`, never null.** `Maybe<PhoneNumber>`, not `PhoneNumber?`. When using EF Core, declare `Maybe<T>` properties as `partial` so the source generator can emit the backing field for persistence.
-6. 🟡 **Composite value objects** (e.g., `ShippingAddress`) — use `Result.Combine` to validate all fields and return all errors at once, not just the first:
+5. 🔴 **When the spec says "enum", use `RequiredEnum<T>` — not C# `enum`.** In the domain assembly, all enum-like concepts must be modeled as `RequiredEnum<T>` (smart enums). C# `enum` types are forbidden in domain aggregates, entities, and value objects. `RequiredEnum<T>` provides type-safe validation, string-based serialization, auto-wired JSON converters, auto-wired EF Core conventions (via `ApplyTrellisConventions` — no `HasConversion` needed), and the ability to attach behavior (properties, methods, state transitions). Declare them as `partial class` so the source generator emits `TryCreate`, `Create`, `Parse`, and `TryParse`:
+```csharp
+// ✅ Correct — RequiredEnum smart enum
+public partial class OrderStatus : RequiredEnum<OrderStatus>
+{
+    public static readonly OrderStatus Draft = new();
+    public static readonly OrderStatus Confirmed = new();
+    public static readonly OrderStatus Shipped = new();
+    public static readonly OrderStatus Cancelled = new();
+}
+
+// ✅ With custom wire/storage names (when external name differs from field name)
+public partial class PaymentMethod : RequiredEnum<PaymentMethod>
+{
+    [EnumValue("credit-card")]
+    public static readonly PaymentMethod CreditCard = new();
+    [EnumValue("bank-transfer")]
+    public static readonly PaymentMethod BankTransfer = new();
+    public static readonly PaymentMethod Cash = new();   // wire name = "Cash"
+}
+
+// ✅ With behavior — attach domain logic to enum values
+public partial class OrderStatus : RequiredEnum<OrderStatus>
+{
+    public static readonly OrderStatus Draft = new(canModify: true, isTerminal: false);
+    public static readonly OrderStatus Confirmed = new(canModify: false, isTerminal: false);
+    public static readonly OrderStatus Cancelled = new(canModify: false, isTerminal: true);
+
+    public bool CanModify { get; }
+    public bool IsTerminal { get; }
+
+    private OrderStatus(bool canModify, bool isTerminal)
+    {
+        CanModify = canModify;
+        IsTerminal = isTerminal;
+    }
+}
+
+// ❌ Never do this in domain — no validation, no type safety, no auto-converters
+public enum OrderStatus { Draft, Confirmed, Shipped, Cancelled }
+```
+   > **Usage:** `RequiredEnum<T>` values are compared with `==`, used in EF Core LINQ queries (`Where(o => o.Status == OrderStatus.Draft)`), serialized as strings in JSON, and work with `LazyStateMachine<TState, TTrigger>` as the state type. Access the string value via `.Value`. Use `GetAll()` to enumerate all members, `TryFromName("Draft")` for string-to-enum lookup.
+   > **EF Core:** `RequiredEnum<T>` is stored as a `string` column. `ApplyTrellisConventions` auto-registers the converter — do NOT add `HasConversion<string>()`. Properties on aggregates should use `= null!` initializer (reference type) and `private set`.
+6. 🔴 **Optional values use `Maybe<T>`, never null.** `Maybe<PhoneNumber>`, not `PhoneNumber?`. When using EF Core, declare `Maybe<T>` properties as `partial` so the source generator can emit the backing field for persistence.
+7. 🟡 **Composite value objects** (e.g., `ShippingAddress`) — use `Result.Combine` to validate all fields and return all errors at once, not just the first:
 ```csharp
 public static Result<ShippingAddress> TryCreate(
     string? street, string? city, string? state, string? postalCode, string? country) =>
@@ -41,7 +85,7 @@ public static Result<ShippingAddress> TryCreate(
         Country.TryCreate(country))
     .Map((s, c, st, p, co) => new ShippingAddress { Street = s, City = c, State = st, PostalCode = p, Country = co });
 ```
-This returns a `ValidationError` containing all field errors when multiple fields are invalid — not just the first one. See `trellis-api-reference.md` §Combine and §ValidationError.
+This returns a `ValidationError` containing all field errors when multiple fields are invalid — not just the first one. See `trellis-api-results.md` §Combine and §ValidationError.
 
 ## Architecture
 
@@ -81,8 +125,19 @@ The template provides the complete project structure. Do NOT modify or recreate 
 │   └── test.props                 ← DO NOT MODIFY
 ├── .github/
 │   ├── copilot-instructions.md    ← this file
-│   ├── trellis-api-reference.md   ← Trellis API surface
-│   └── trellis-api-testing-reference.md ← Trellis.Testing API surface
+│   ├── trellis-api-results.md     ← Result, Maybe, Error types
+│   ├── trellis-api-asp.md         ← Response mappers, ETag helpers
+│   ├── trellis-api-ddd.md         ← Aggregates, entities, value objects
+│   ├── trellis-api-primitives.md  ← Built-in value objects
+│   ├── trellis-api-efcore.md      ← EF Core conventions
+│   ├── trellis-api-mediator.md    ← Pipeline behaviors
+│   ├── trellis-api-authorization.md ← Actor, permissions
+│   ├── trellis-api-http.md        ← HttpClient → Result extensions
+│   ├── trellis-api-stateless.md   ← State machine integration
+│   ├── trellis-api-fluentvalidation.md ← FluentValidation bridge
+│   ├── trellis-api-analyzers.md   ← TRLS/TRLSGEN diagnostics
+│   ├── trellis-api-patterns.md    ← Usage patterns, workarounds
+│   └── trellis-api-testing-reference.md ← Testing API surface
 ├── Domain/
 │   ├── src/
 │   │   └── Domain.csproj
@@ -285,7 +340,7 @@ foreach (var product in products)
 }
 ```
 
-`TraverseAsync` supports `CancellationToken`, `Task`, and `ValueTask` overloads. See `trellis-api-reference.md` §Traverse for the full API.
+`TraverseAsync` supports `CancellationToken`, `Task`, and `ValueTask` overloads. See `trellis-api-results.md` §Traverse for the full API.
 
 ### Parallel Async Operations
 
@@ -362,7 +417,7 @@ public class Customer : Aggregate<CustomerId>
 ```
 
 - 🔴 **Always call `ApplyTrellisConventions`** in `ConfigureConventions` — it handles all scalar Trellis value objects automatically, including `RequiredString<T>`, `RequiredGuid<T>`, `RequiredInt<T>`, `RequiredDecimal<T>`, `RequiredDateTime<T>`, `RequiredBool<T>`, `RequiredLong<T>`, `RequiredEnum<T>`, and all built-in primitives (`EmailAddress`, `PhoneNumber`, etc.). 🔴 Do NOT write `HasConversion()` for types handled by Trellis conventions — it silently overrides the convention and causes runtime failures. 🟢 If a custom type is not handled by `ApplyTrellisConventions`, use explicit EF mapping (`HasConversion`, `OwnsOne`, etc.) for that type only.
-- 🟡 **`Money` properties** are auto-mapped by `ApplyTrellisConventions` — no `OwnsOne` needed. See §12 in `trellis-api-reference.md` for column naming.
+- 🟡 **`Money` properties** are auto-mapped by `ApplyTrellisConventions` — no `OwnsOne` needed. See `trellis-api-efcore.md` for column naming.
 - 🟢 **Custom composite `ValueObject` types** (e.g., `ShippingAddress` with multiple fields) are NOT auto-mapped. Map them using standard EF Core owned entities (`OwnsOne`, `OwnsMany`) — refer to [EF Core Owned Entity Types documentation](https://learn.microsoft.com/en-us/ef/core/modeling/owned-entities).
 - 🟡 **Owned collection property types** — use `IReadOnlyList<T>` (not `ReadOnlyCollection<T>`) for `OwnsMany` navigation properties. EF Core cannot populate `ReadOnlyCollection<T>` from a backing `List<T>` field during materialization.
 - 🔴 Use `SaveChangesResultUnitAsync` in repositories (returns `Result<Unit>`). Never use bare `SaveChangesAsync`.
@@ -377,9 +432,9 @@ public override Expression<Func<Order, bool>> ToExpression() =>
           && order.SubmittedAt.Value < _cutoff;
 #pragma warning restore TRLS006
 ```
-- 🔴 **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See §12 in `trellis-api-reference.md`. The `_camelCase` backing field is emitted by the source generator during `dotnet build` (see **Implementation Order and Build Checkpoints** above). 🔴 **If using EF Core**, add `Trellis.EntityFrameworkCore.Generator` to the **Domain project** (as an Analyzer, with `ReferenceOutputAssembly="false"`). The generator must be in the project that declares entities with `partial Maybe<T>` properties — without it, backing fields will not be emitted and EF Core persistence will silently fail.
-- 🔴 **`Maybe<T>` in indexes** — Use `HasTrellisIndex` (not `HasIndex`) for indexes that include `Maybe<T>` properties. `HasTrellisIndex` accepts lambda expressions and automatically resolves `Maybe<T>` properties to their backing field names: `builder.HasTrellisIndex(o => new { o.Status, o.SubmittedAt })` resolves to `HasIndex("Status", "_submittedAt")`. Plain `HasIndex` with lambdas will silently fail for `Maybe<T>` properties. See §12 in `trellis-api-reference.md`.
-- 🟡 **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. For comparisons on `Maybe<T>` properties (e.g., date thresholds), use `WhereLessThan`, `WhereLessThanOrEqual`, `WhereGreaterThan`, `WhereGreaterThanOrEqual`. These rewrite the expression tree to target the backing storage field. See §12 in `trellis-api-reference.md`.
+- 🔴 **`Maybe<T>` properties** — declare as `partial`. The source generator and `MaybeConvention` handle everything automatically — no manual backing fields or EF configuration needed. See `trellis-api-efcore.md`. The `_camelCase` backing field is emitted by the source generator during `dotnet build` (see **Implementation Order and Build Checkpoints** above). 🔴 **If using EF Core**, add `Trellis.EntityFrameworkCore.Generator` to the **Domain project** (as an Analyzer, with `ReferenceOutputAssembly="false"`). The generator must be in the project that declares entities with `partial Maybe<T>` properties — without it, backing fields will not be emitted and EF Core persistence will silently fail.
+- 🔴 **`Maybe<T>` in indexes** — Use `HasTrellisIndex` (not `HasIndex`) for indexes that include `Maybe<T>` properties. `HasTrellisIndex` accepts lambda expressions and automatically resolves `Maybe<T>` properties to their backing field names: `builder.HasTrellisIndex(o => new { o.Status, o.SubmittedAt })` resolves to `HasIndex("Status", "_submittedAt")`. Plain `HasIndex` with lambdas will silently fail for `Maybe<T>` properties. See `trellis-api-efcore.md`.
+- 🟡 **`Maybe<T>` LINQ queries** — use `WhereNone`, `WhereHasValue`, `WhereEquals` extension methods. For comparisons on `Maybe<T>` properties (e.g., date thresholds), use `WhereLessThan`, `WhereLessThanOrEqual`, `WhereGreaterThan`, `WhereGreaterThanOrEqual`. These rewrite the expression tree to target the backing storage field. See `trellis-api-efcore.md`.
 ```csharp
 // ✅ Overdue orders: SubmittedAt < 7 days ago
 var cutoff = _timeProvider.GetUtcNow().UtcDateTime.AddDays(-7);
@@ -388,8 +443,12 @@ context.Orders
     .WhereLessThan(o => o.SubmittedAt, cutoff);
 ```
 - 🟡 **Entity configurations:** Use `IEntityTypeConfiguration<T>` per entity in the Acl layer — one file per aggregate/entity (e.g., `OrderConfiguration.cs`, `CustomerConfiguration.cs`). Register them with `ApplyConfigurationsFromAssembly` in `OnModelCreating`. Do NOT inline configuration in `DbContext.OnModelCreating`.
-- 🟡 **`MaybeQueryInterceptor`** — enables natural LINQ with `Maybe<T>` properties. Register via `optionsBuilder.AddTrellisInterceptors()` (uses a singleton internally). See §12 in `trellis-api-reference.md`.
+- 🟡 **`MaybeQueryInterceptor`** — enables natural LINQ with `Maybe<T>` properties. Register via `optionsBuilder.AddTrellisInterceptors()` (uses a singleton internally). See `trellis-api-efcore.md`.
 - 🟡 **Migrations:** After implementing all entities and configurations, run `dotnet ef migrations add InitialCreate -p Acl/src -s Api/src` to generate the initial migration. Do not rely on `EnsureCreated()` for anything beyond a quick prototype.
+- 🟢 **Optimistic concurrency (RFC 9110)** is automatic. `Aggregate<TId>.ETag` is configured as a concurrency token by `ApplyTrellisConventions` and auto-generated on save by `AddTrellisInterceptors()`. Use RFC 9110 conditional requests:
+  - **GET** responses: use `ToETagActionResultAsync(this, etagSelector, map)` to set the `ETag` response header
+  - **PUT/PATCH/DELETE** requests: read `If-Match` header via `ETagHelper.ParseIfMatch(Request)`, pass to command as `EntityTagValue[]? IfMatchETags`. Handler calls `.OptionalETag(command.IfMatchETags)` (skips if absent) or `.RequireETag(command.IfMatchETags)` (428 if absent) → returns 412 Precondition Failed if stale
+  - **GET** with `If-None-Match`: automatically returns 304 Not Modified when ETag matches (handled by `ToETagActionResult`)
 
 ### MVC Controllers
 
