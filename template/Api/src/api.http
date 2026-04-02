@@ -97,3 +97,48 @@ X-Test-Actor: {{userActor}}
 ### Throw (error handling middleware test)
 GET {{host}}/api/Todos/throw?api-version={{apiVersion}}
 Accept: application/json
+
+###############################################
+# RFC 9110 — Conditional Request Examples
+###############################################
+
+### GET with If-None-Match — 304 Not Modified when ETag matches
+# Copy the ETag from the "Get todo by ID" response above
+GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+If-None-Match: {{createTodo.response.headers.ETag}}
+
+### PUT with If-Match — conditional update (succeeds if ETag matches)
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+If-Match: {{createTodo.response.headers.ETag}}
+
+{
+  "title": "Buy organic groceries",
+  "dueDate": "2026-04-15T12:00:00Z",
+  "tag": "health"
+}
+
+### PUT with stale If-Match — 412 Precondition Failed
+# Using the old ETag after the update above — should fail
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+If-Match: "stale-etag-value"
+
+{
+  "title": "This should fail",
+  "dueDate": "2026-04-15T12:00:00Z"
+}
+
+### PUT without If-Match — unconditional update (OptionalETag is a no-op)
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+
+{
+  "title": "Unconditional update",
+  "dueDate": "2026-04-20T12:00:00Z"
+}
