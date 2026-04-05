@@ -1,5 +1,4 @@
 ﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Sdk Name="DotNet.ReproducibleBuilds.Isolated" Version="1.1.1" />
   <PropertyGroup Label="General">
     <Authors>Xavier John</Authors>
     <Company>$(Authors)</Company>
@@ -27,6 +26,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="$(MSBuildProjectName).Tests" />
     <Using Include="Trellis" />
+    <PackageReference Include="DotNet.ReproducibleBuilds" PrivateAssets="All" />
     <PackageReference Include="Trellis.Analyzers" />
   </ItemGroup>
 

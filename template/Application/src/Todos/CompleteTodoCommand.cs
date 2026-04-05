@@ -24,15 +24,20 @@ public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoIt
 public sealed class CompleteTodoCommandHandler : ICommandHandler<CompleteTodoCommand, Result<TodoItem>>
 {
     private readonly ITodoRepository _repository;
+    private readonly TimeProvider _timeProvider;
 
-    public CompleteTodoCommandHandler(ITodoRepository repository) => _repository = repository;
+    public CompleteTodoCommandHandler(ITodoRepository repository, TimeProvider timeProvider)
+    {
+        _repository = repository;
+        _timeProvider = timeProvider;
+    }
 
     public async ValueTask<Result<TodoItem>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken)
     {
         var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
         return await maybe
             .ToResult(Error.NotFound($"Todo {command.TodoId} not found."))
-            .Bind(todo => todo.Complete().Map(_ => todo))
+            .Bind(todo => todo.Complete(_timeProvider).Map(_ => todo))
             .CheckAsync(todo => _repository.SaveAsync(todo, cancellationToken));
     }
 }

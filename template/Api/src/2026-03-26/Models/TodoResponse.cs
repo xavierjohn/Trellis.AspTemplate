@@ -29,7 +29,10 @@ public record TodoResponse
     public string CreatedByActorId { get; init; } = null!;
 
     /// <summary>When the todo was created.</summary>
-    public DateTime CreatedAt { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+
+    /// <summary>When the todo was last modified.</summary>
+    public DateTimeOffset LastModified { get; init; }
 
     /// <summary>Maps from domain aggregate to API response.</summary>
     public static TodoResponse From(TodoItem todo) => new()
@@ -41,6 +44,7 @@ public record TodoResponse
         CompletedAt = todo.CompletedAt.AsNullable(),
         Tag = todo.Tag.Match<string?>(t => t.Value, () => null),
         CreatedByActorId = todo.CreatedByActorId,
-        CreatedAt = todo.CreatedAt
+        CreatedAt = todo.CreatedAt,
+        LastModified = todo.LastModified
     };
 }

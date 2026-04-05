@@ -248,9 +248,29 @@ UnsupportedMediaTypeError Error.UnsupportedMediaType(string detail, string? inst
 ContentTooLargeError Error.ContentTooLarge(string detail, RetryAfterValue? retryAfter = null, string? instance = null)
 RangeNotSatisfiableError Error.RangeNotSatisfiable(string detail, long completeLength, string? instance = null)
 
+// IFormattable instance overloads — accept scalar value objects, Guid, int, DateTime, etc.
+// Formats the instance to an invariant-culture string automatically.
+BadRequestError Error.BadRequest<TInstance>(string detail, TInstance instance) where TInstance : IFormattable
+ConflictError Error.Conflict<TInstance>(string detail, TInstance instance) where TInstance : IFormattable
+NotFoundError Error.NotFound<TInstance>(string detail, TInstance instance) where TInstance : IFormattable
+// ... same pattern for all non-Validation types that accept instance
+
 // Custom code factories (same types with additional code parameter)
 BadRequestError Error.BadRequest(string detail, string code, string? instance = null)
 // ... same pattern for all non-Validation types
+```
+
+**IFormattable instance usage** — pass scalar value object IDs directly without `.ToString()`:
+```csharp
+// Before — manual formatting required:
+Error.NotFound("Order not found.", orderId.ToString(CultureInfo.InvariantCulture))
+
+// After — just pass the value object:
+Error.NotFound("Order not found.", orderId)
+
+// Also works with primitives:
+Error.NotFound("Item not found.", 42)
+Error.Conflict("Duplicate key.", someGuid)
 ```
 
 ### Concrete Error Types
@@ -331,10 +351,12 @@ Error Combine(this Error? thisError, Error otherError)
 
 All extension methods follow a consistent async pattern:
 - **Sync**: `Method(this Result<T>, ...)` → `Result<TOut>`
-- **Task Left-only**: `MethodAsync(this Task<Result<T>>, sync_predicate)` → `Task<Result<TOut>>`
-- **Task Right-only**: `MethodAsync(this Result<T>, async_predicate)` → `Task<Result<TOut>>`
-- **Task Both**: `MethodAsync(this Task<Result<T>>, async_predicate)` → `Task<Result<TOut>>`
+- **Task Left-only**: `MethodAsync(this Task<Result<T>>, sync_func)` → `Task<Result<TOut>>` — sync function on async input (mix sync+async in chains)
+- **Task Right-only**: `MethodAsync(this Result<T>, async_func)` → `Task<Result<TOut>>`
+- **Task Both**: `MethodAsync(this Task<Result<T>>, async_func)` → `Task<Result<TOut>>`
 - **ValueTask**: Same three patterns with `ValueTask<Result<T>>`
+
+The "Task Left-only" variant is key for mixed chains — it lets you call sync domain methods (e.g., `order.Confirm()`) in an async pipeline without `Task.FromResult()` wrappers.
 
 ### Bind — FlatMap / Chain
 
@@ -351,6 +373,14 @@ Task<Result<TOut>> BindAsync<TIn, TOut>(this Result<TIn>, Func<TIn, Task<Result<
 ValueTask<Result<TOut>> BindAsync<TIn, TOut>(this ValueTask<Result<TIn>>, Func<TIn, ValueTask<Result<TOut>>>)
 ValueTask<Result<TOut>> BindAsync<TIn, TOut>(this ValueTask<Result<TIn>>, Func<TIn, Result<TOut>>)
 ValueTask<Result<TOut>> BindAsync<TIn, TOut>(this Result<TIn>, Func<TIn, ValueTask<Result<TOut>>>)
+```
+
+**Mixing sync and async in chains:** The "Task Left-only" overload (line 2 above) accepts a sync `Func<TIn, Result<TOut>>` on `Task<Result<TIn>>`, so sync and async operations chain naturally — no `Task.FromResult()` wrapper needed:
+
+```csharp
+var result = await GetOrderAsync(orderId)      // Task<Result<Order>>
+    .BindAsync(order => order.Confirm())       // sync — uses Task Left-only overload
+    .BindAsync(order => ChargeAsync(order));   // async — uses Task Both overload
 ```
 
 ### Map — Transform Value
@@ -433,6 +463,27 @@ Runs a validation function that returns a Result, but discards the inner value a
 Result<T> Check<T, TK>(this Result<T>, Func<T, Result<TK>>)
 Result<T> Check<T>(this Result<T>, Func<T, Result<Unit>>)
 // Async: CheckAsync with Task/ValueTask Left/Right/Both variants
+```
+
+### CheckIf — Conditional Validation
+
+Combines conditional behavior with Check semantics. The validation function is only invoked when the condition (bool or predicate) is true; otherwise the original result passes through unchanged. Supports both a static `bool condition` and a `Func<T, bool> predicate` that inspects the success value.
+
+```csharp
+Result<T> CheckIf<T, TK>(this Result<T>, bool condition, Func<T, Result<TK>>)
+Result<T> CheckIf<T, TK>(this Result<T>, Func<T, bool> predicate, Func<T, Result<TK>>)
+Result<T> CheckIf<T>(this Result<T>, bool condition, Func<T, Result<Unit>>)
+Result<T> CheckIf<T>(this Result<T>, Func<T, bool> predicate, Func<T, Result<Unit>>)
+// Async: CheckIfAsync with Task/ValueTask Left/Right/Both variants
+```
+
+**Usage:**
+```csharp
+// Bool condition — skip expensive validation when feature flag is off
+result.CheckIf(featureFlags.StrictMode, order => ValidateInventory(order))
+
+// Predicate condition — only validate high-value orders
+result.CheckIf(order => order.Total > 1000m, order => RunFraudCheck(order))
 ```
 
 ### BindZip — Sequential Tuple Accumulation
@@ -687,15 +738,21 @@ Each has sync + Task (3 variants) + ValueTask (3 variants) async overloads.
 
 ### Debug — Pipeline Inspection
 
-Pipeline inspection extensions that emit values and errors to OpenTelemetry activity spans. Use during development to trace intermediate values in ROP chains. Guarded by `#if DEBUG`.
+Pipeline inspection extensions that emit values and errors to OpenTelemetry activity spans. Use during development to trace intermediate values in ROP chains. Guarded by `#if DEBUG` at compile time and `ResultDebugSettings.EnableDebugTracing` at runtime.
 
 ```csharp
-Result<T> Debug<T>(this Result<T>, string? label = null)
-Result<T> DebugDetailed<T>(this Result<T>, string? label = null)
-Result<T> DebugWithStack<T>(this Result<T>, string? label = null, bool includeStack = true)
+Result<T> Debug<T>(this Result<T>, string message = "")
+Result<T> DebugDetailed<T>(this Result<T>, string message = "")
+Result<T> DebugWithStack<T>(this Result<T>, string message = "", bool includeStackTrace = true)
 Result<T> DebugOnSuccess<T>(this Result<T>, Action<T>)
 Result<T> DebugOnFailure<T>(this Result<T>, Action<Error>)
 // + async variants
+```
+
+**Runtime guard** — `ResultDebugSettings.EnableDebugTracing` (default `true` in DEBUG, `false` in RELEASE):
+```csharp
+// Disable debug tracing at runtime (e.g., in integration tests or staging)
+ResultDebugSettings.EnableDebugTracing = false;
 ```
 
 ### GetValueOrDefault — Terminal Extraction
@@ -706,6 +763,27 @@ Extracts the value from a successful Result or returns a default/fallback. Termi
 TValue GetValueOrDefault<TValue>(this Result<TValue>, TValue defaultValue)
 TValue GetValueOrDefault<TValue>(this Result<TValue>, Func<TValue> defaultFactory)
 TValue GetValueOrDefault<TValue>(this Result<TValue>, Func<Error, TValue> defaultFactory)
+```
+
+### Discard — Intentional Result Ignoring
+
+Explicitly discards a Result, signaling the caller intentionally ignores the outcome. Returns `void`, so it suppresses TRLS001 without pragma directives. Use for best-effort or fire-and-forget operations.
+
+```csharp
+void Discard<T>(this Result<T>)
+Task DiscardAsync<T>(this Task<Result<T>>)
+ValueTask DiscardAsync<T>(this ValueTask<Result<T>>)
+```
+
+**Usage:**
+```csharp
+// Best-effort stock release — failure is acceptable
+releaseStock(item, quantity).Discard();
+
+// Async pipeline with intentional discard
+await GetCustomerAsync(id)
+    .BindAsync(c => c.SendWelcomeEmail())
+    .DiscardAsync();
 ```
 
 ## OpenTelemetry Tracing
