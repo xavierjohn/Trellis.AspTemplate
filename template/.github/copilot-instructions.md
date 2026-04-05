@@ -400,13 +400,22 @@ public async ValueTask<Result<OrderDto>> Handle(SubmitOrderCommand command, Canc
 
 When a handler modifies multiple aggregates (e.g., reserving stock on products then saving the order), use `TraverseAsync` to stay in the ROP pipeline. `TraverseAsync` applies a Result-returning function to each element, short-circuiting on the first failure.
 
-🔴 **All aggregates share the same `DbContext`.** EF Core tracks all changes in a single unit of work — calling `SaveChangesResultUnitAsync` once at the end commits everything atomically. Do NOT call `SaveAsync` per aggregate (which commits each individually); instead, stage all changes and save once:
+🔴 **All aggregates share the same `DbContext`.** EF Core tracks all changes in a single unit of work — calling `SaveChangesResultUnitAsync` once at the end commits everything atomically. Do NOT call `SaveAsync` per aggregate in a loop; instead, mutate all tracked entities in the domain, then save once:
 
 ```csharp
-// ✅ Preferred — stage all changes, single SaveChanges at the end
+// ✅ Preferred — mutate tracked entities, single SaveChanges commits all
+// Submit order: reserve stock on each product (domain logic), then save everything
 public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
     await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken)
-        .BindAsync(order => order.Submit(products, _timeProvider))
+        .BindAsync(order =>
+        {
+            // Fetch products (already tracked by DbContext)
+            var products = await _productRepository.GetByIdsAsync(
+                order.LineItems.Select(li => li.ProductId).ToList(), cancellationToken);
+
+            // Domain logic: order.Submit() reserves stock on each Product in memory
+            return order.Submit(products, _timeProvider);
+        })
         .CheckAsync(_ => _orderRepository.SaveAsync(order, cancellationToken));
         // Products are tracked by the same DbContext — saved atomically with the order
 
@@ -416,13 +425,15 @@ await products.TraverseAsync(
         (p, ct) => _productRepository.SaveAsync(p, ct), cancellationToken)
     .CheckAsync(_ => _orderRepository.SaveAsync(order, cancellationToken));
 
-// ❌ Avoid — imperative foreach breaks the ROP chain
+// ❌ Avoid — imperative foreach with per-aggregate save breaks atomicity and ROP chain
 foreach (var product in products)
 {
     var saveResult = await _productRepository.SaveAsync(product, cancellationToken);
     if (saveResult.IsFailure) return saveResult.Error;
 }
 ```
+
+🟡 **Cancel/Return with stock release follows the same pattern:** load order + products, call the domain method that releases stock in memory, then save once. The domain aggregate handles compensation (rollback reserved stock) — the handler just orchestrates load → mutate → save.
 
 `TraverseAsync` supports `CancellationToken`, `Task`, and `ValueTask` overloads. See `trellis-api-results.md` §Traverse for the full API.
 
@@ -443,10 +454,10 @@ foreach (var product in products)
 
 ### Parallel Async Operations
 
-When a handler needs multiple independent async results (e.g., fetching a customer AND products), use `Result.ParallelAsync` + `.WhenAllAsync()` instead of sequential `await`:
+🔴 **When a handler needs multiple independent async results** (e.g., fetching a customer AND products for a draft order), **use `Result.ParallelAsync` + `.WhenAllAsync()`** instead of sequential `await`. This is the required pattern for CreateDraftOrder and any handler that fetches multiple aggregates independently:
 
 ```csharp
-// ✅ Preferred — parallel fetches with ParallelAsync
+// ✅ Required — parallel fetches with ParallelAsync
 public async ValueTask<Result<Order>> Handle(CreateDraftOrderCommand command, CancellationToken cancellationToken)
 {
     var productIds = command.LineItems.Select(li => li.ProductId).ToList();
@@ -455,14 +466,16 @@ public async ValueTask<Result<Order>> Handle(CreateDraftOrderCommand command, Ca
         () => _customerRepository.GetByIdAsync(command.CustomerId, cancellationToken),
         () => _productRepository.GetByIdsAsync(productIds, cancellationToken))
         .WhenAllAsync()
-        .BindAsync((Customer customer, List<Product> products) =>
-            Order.TryCreate(customer, products, command.LineItems));
+        .BindAsync((Customer customer, IReadOnlyList<Product> products) =>
+            Order.TryCreate(customer, products, command.LineItems, actor.Id, _timeProvider));
 }
 
-// 🟡 Avoid — sequential fetches lose parallelism
+// ❌ Avoid — sequential fetches lose parallelism
 var customer = await _customerRepository.GetByIdAsync(command.CustomerId, cancellationToken);
 var products = await _productRepository.GetByIdsAsync(command.ProductIds, cancellationToken);
 ```
+
+**When to use ParallelAsync:** Any time a handler makes 2+ independent repository calls that don't depend on each other. The result is a typed tuple that destructures naturally into `BindAsync`.
 
 ### State Machines (Trellis.Stateless)
 
@@ -722,7 +735,7 @@ The Scalar UI is available at `/scalar/{version}` (e.g., `/scalar/2026-11-12`).
 
 ## Testing Strategy
 
-**Testing API Reference:** See `.github/trellis-api-testing-reference.md` for all Trellis.Testing types, assertion methods, FakeRepository, TestActorProvider, and testing patterns including TRLS003 workarounds.
+🔴 **Testing API Reference:** Read `.github/trellis-api-testing-reference.md` before writing tests. It contains the complete Trellis.Testing API: FluentAssertions extensions (`BeSuccess`, `BeFailure`, `HaveValue`, `BeNone`), `Unwrap()` for safe value extraction, `FakeRepository`, `TestActorProvider`, and all testing patterns.
 
 **Domain tests:** Pure unit tests, no external dependencies. Test value object TryCreate, aggregate rules, state machine transitions, specifications.
 
