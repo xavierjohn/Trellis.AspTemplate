@@ -38,6 +38,8 @@ jobs:
           nbgv cloud
 
       - name: Restore dependencies
+        env:
+          NuGetPackageSourceCredentials_TrellisAlpha: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
         run: dotnet restore
 
       - name: Build

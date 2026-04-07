@@ -14,6 +14,7 @@ jobs:
     permissions:
       contents: read
       checks: write
+      packages: read
       pull-requests: write
 
     steps:
@@ -41,6 +42,8 @@ jobs:
           ${{ runner.os }}-nuget-
 
     - name: Restore dependencies
+      env:
+        NuGetPackageSourceCredentials_TrellisAlpha: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }}
       run: dotnet restore template/TrellisAspTemplate.slnx
 
     - name: Build
