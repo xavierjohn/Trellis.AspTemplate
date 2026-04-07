@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc;
 using Trellis.Testing;
+using Trellis.Testing.AspNetCore;
 
 [Collection(TestWebApplicationFactoryCollectionFixture.Id)]
 public class TodosControllerTests

@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using TodoSample.AntiCorruptionLayer;
 using Trellis.EntityFrameworkCore;
 using Trellis.Testing;
+using Trellis.Testing.AspNetCore;
 using Xunit.v3;
 
 public class TestWebApplicationFactoryFixture : WebApplicationFactory<Program>, ITestOutputHelperAccessor

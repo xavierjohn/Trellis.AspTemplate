@@ -3,7 +3,7 @@
 using Mediator;
 using TodoSample.Application.Todos;
 using TodoSample.Domain;
-using Trellis.Testing.Fakes;
+using Trellis.Testing;
 
 public class CompleteTodoCommandTests
 {

@@ -6,7 +6,7 @@ using TodoSample.Application.Todos;
 using TodoSample.Domain;
 using Trellis.Authorization;
 using Trellis.Mediator;
-using Trellis.Testing.Fakes;
+using Trellis.Testing;
 
 public static class DependencyInjection
 {

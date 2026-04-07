@@ -3,7 +3,7 @@
 using TodoSample.Application.Todos;
 using TodoSample.Domain;
 using Trellis.Authorization;
-using Trellis.Testing.Fakes;
+using Trellis.Testing;
 
 /// <summary>
 /// Resource loader for CompleteTodoCommand — loads TodoItem by ID from the fake repository.
