@@ -3,9 +3,7 @@
 using Mediator;
 using TodoSample.Application.Todos;
 using TodoSample.Domain;
-using Trellis.Testing.Fakes;
-
-#pragma warning disable TRLS003 // Tests assert success before accessing .Value
+using Trellis.Testing;
 
 public class CreateTodoCommandTests
 {
@@ -29,8 +27,9 @@ public class CreateTodoCommandTests
         var result = await _sender.Send(command, TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();
-        result.Value.Title.Value.Should().Be("Buy groceries");
-        result.Value.Status.Should().Be(TodoStatus.Active);
+        var todo = result.Unwrap();
+        todo.Title.Value.Should().Be("Buy groceries");
+        todo.Status.Should().Be(TodoStatus.Active);
     }
 
     [Fact]
@@ -45,7 +44,7 @@ public class CreateTodoCommandTests
         var result = await _sender.Send(command, TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();
-        result.Value.Tag.Should().HaveValueEqualTo(tag);
+        result.Unwrap().Tag.Should().HaveValueEqualTo(tag);
     }
 
     [Fact]
@@ -59,7 +58,7 @@ public class CreateTodoCommandTests
         var result = await _sender.Send(command, TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();
-        var stored = await _repo.GetByIdAsync(result.Value.Id, TestContext.Current.CancellationToken);
+        var stored = await _repo.GetByIdAsync(result.Unwrap().Id, TestContext.Current.CancellationToken);
         stored.Should().BeSuccess();
     }
 }

@@ -1,0 +1,483 @@
+﻿# Trellis.EntityFrameworkCore
+
+**Package:** `Trellis.EntityFrameworkCore`  
+**Namespace:** `Trellis.EntityFrameworkCore`  
+**Purpose:** EF Core conventions, interceptors, converters, and query/update helpers for Trellis aggregates, value objects, and `Maybe<T>`.
+
+## Types
+
+### `DbContextOptionsBuilderExtensions`
+
+```csharp
+public static class DbContextOptionsBuilderExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static DbContextOptionsBuilder<TContext> AddTrellisInterceptors<TContext>(this DbContextOptionsBuilder<TContext> optionsBuilder) where TContext : DbContext` | `DbContextOptionsBuilder<TContext>` | Registers singleton `MaybeQueryInterceptor`, `ScalarValueQueryInterceptor`, internal `AggregateETagInterceptor`, and singleton `EntityTimestampInterceptor`. |
+| `public static DbContextOptionsBuilder AddTrellisInterceptors(this DbContextOptionsBuilder optionsBuilder)` | `DbContextOptionsBuilder` | Non-generic overload for the same singleton interceptor set. |
+| `public static DbContextOptionsBuilder<TContext> AddTrellisInterceptors<TContext>(this DbContextOptionsBuilder<TContext> optionsBuilder, TimeProvider? timeProvider) where TContext : DbContext` | `DbContextOptionsBuilder<TContext>` | Registers the same interceptor set, but creates a **new** `EntityTimestampInterceptor(timeProvider)` for this call. |
+| `public static DbContextOptionsBuilder AddTrellisInterceptors(this DbContextOptionsBuilder optionsBuilder, TimeProvider? timeProvider)` | `DbContextOptionsBuilder` | Non-generic overload that creates a new `EntityTimestampInterceptor(timeProvider)` for this call. |
+
+### `ModelConfigurationBuilderExtensions`
+
+```csharp
+public static class ModelConfigurationBuilderExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static ModelConfigurationBuilder ApplyTrellisConventions(this ModelConfigurationBuilder configurationBuilder, params Assembly[] assemblies)` | `ModelConfigurationBuilder` | Scans the supplied assemblies plus `Trellis.Primitives`, registers scalar converters, collects composite value objects from those assemblies only, and adds internal conventions for `Maybe<T>`, composite value objects, `Money`, aggregate ETags, and transient aggregate properties. |
+
+### `DbContextExtensions`
+
+```csharp
+public static class DbContextExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, CancellationToken cancellationToken = default)` | `Task<Result<int>>` | Convenience overload for `SaveChangesResultAsync(context, true, cancellationToken)`. |
+| `public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<int>>` | Wraps `SaveChangesAsync`; maps `DbUpdateConcurrencyException` to `Conflict`, duplicate-key `DbUpdateException` to `Conflict`, and foreign-key `DbUpdateException` to `Domain`. |
+| `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes and maps a successful row count to `Unit`. |
+| `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes with explicit `acceptAllChangesOnSuccess` and maps success to `Unit`. |
+
+### `QueryableExtensions`
+
+```csharp
+public static class QueryableExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static Task<Maybe<T>> FirstOrDefaultMaybeAsync<T>(this IQueryable<T> query, CancellationToken cancellationToken = default) where T : class` | `Task<Maybe<T>>` | Returns the first match or `Maybe<T>.None`. |
+| `public static Task<Maybe<T>> FirstOrDefaultMaybeAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default) where T : class` | `Task<Maybe<T>>` | Returns the first predicate match or `Maybe<T>.None`. |
+| `public static Task<Maybe<T>> SingleOrDefaultMaybeAsync<T>(this IQueryable<T> query, CancellationToken cancellationToken = default) where T : class` | `Task<Maybe<T>>` | Returns the single match or `Maybe<T>.None`; throws if more than one element matches. |
+| `public static Task<Maybe<T>> SingleOrDefaultMaybeAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default) where T : class` | `Task<Maybe<T>>` | Returns the single predicate match or `Maybe<T>.None`; throws if more than one element matches. |
+| `public static Task<Result<T>> FirstOrDefaultResultAsync<T>(this IQueryable<T> query, Error notFoundError, CancellationToken cancellationToken = default) where T : class` | `Task<Result<T>>` | Returns the first match or **the exact `notFoundError` supplied by the caller**. |
+| `public static Task<Result<T>> FirstOrDefaultResultAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, Error notFoundError, CancellationToken cancellationToken = default) where T : class` | `Task<Result<T>>` | Returns the first predicate match or **the exact `notFoundError` supplied by the caller**. |
+| `public static IQueryable<T> Where<T>(this IQueryable<T> query, Specification<T> specification) where T : class` | `IQueryable<T>` | Applies a Trellis specification expression to the query. |
+
+### `EntityTimestampInterceptor`
+
+```csharp
+public sealed class EntityTimestampInterceptor : SaveChangesInterceptor
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public EntityTimestampInterceptor(TimeProvider? timeProvider = null)` | — | Uses the supplied `TimeProvider`, or `TimeProvider.System` when `null`. |
+| `public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)` | `InterceptionResult<int>` | Sets `CreatedAt` and `LastModified` for added entities, sets `LastModified` for modified entities, and also updates `LastModified` on unchanged aggregate roots when loaded dependents are added, modified, or deleted. |
+| `public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)` | `ValueTask<InterceptionResult<int>>` | Async equivalent of `SavingChanges`; includes unchanged aggregate-root promotion when loaded dependents change. |
+
+### `MaybeQueryableExtensions`
+
+```csharp
+public static class MaybeQueryableExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static IQueryable<TEntity> WhereNone<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull` | `IQueryable<TEntity>` | Filters to rows whose mapped `Maybe<TInner>` storage member is `NULL`. |
+| `public static IQueryable<TEntity> WhereHasValue<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull` | `IQueryable<TEntity>` | Filters to rows whose mapped `Maybe<TInner>` storage member is not `NULL`. |
+| `public static IQueryable<TEntity> WhereEquals<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull` | `IQueryable<TEntity>` | Filters to rows whose mapped `Maybe<TInner>` storage member equals `value`. |
+| `public static IQueryable<TEntity> WhereLessThan<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull, IComparable<TInner>` | `IQueryable<TEntity>` | Filters to rows whose mapped `Maybe<TInner>` storage member is less than `value`. |
+| `public static IQueryable<TEntity> WhereLessThanOrEqual<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull, IComparable<TInner>` | `IQueryable<TEntity>` | Filters to rows whose mapped `Maybe<TInner>` storage member is less than or equal to `value`. |
+| `public static IQueryable<TEntity> WhereGreaterThan<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull, IComparable<TInner>` | `IQueryable<TEntity>` | Filters to rows whose mapped `Maybe<TInner>` storage member is greater than `value`. |
+| `public static IQueryable<TEntity> WhereGreaterThanOrEqual<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull, IComparable<TInner>` | `IQueryable<TEntity>` | Filters to rows whose mapped `Maybe<TInner>` storage member is greater than or equal to `value`. |
+| `public static IOrderedQueryable<TEntity> OrderByMaybe<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull` | `IOrderedQueryable<TEntity>` | Orders by the mapped `Maybe<TInner>` storage member ascending. |
+| `public static IOrderedQueryable<TEntity> OrderByMaybeDescending<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull` | `IOrderedQueryable<TEntity>` | Orders by the mapped `Maybe<TInner>` storage member descending. |
+| `public static IOrderedQueryable<TEntity> ThenByMaybe<TEntity, TInner>(this IOrderedQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull` | `IOrderedQueryable<TEntity>` | Adds a secondary ascending ordering for the mapped `Maybe<TInner>` storage member. |
+| `public static IOrderedQueryable<TEntity> ThenByMaybeDescending<TEntity, TInner>(this IOrderedQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull` | `IOrderedQueryable<TEntity>` | Adds a secondary descending ordering for the mapped `Maybe<TInner>` storage member. |
+
+### `MaybeUpdateExtensions`
+
+```csharp
+public static class MaybeUpdateExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static UpdateSettersBuilder<TEntity> SetMaybeValue<TEntity, TInner>(this UpdateSettersBuilder<TEntity> updateSettersBuilder, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull` | `UpdateSettersBuilder<TEntity>` | Sets a mapped scalar `Maybe<TInner>` property inside `ExecuteUpdate`; throws for composite owned types. |
+| `public static UpdateSettersBuilder<TEntity> SetMaybeNone<TEntity, TInner>(this UpdateSettersBuilder<TEntity> updateSettersBuilder, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull` | `UpdateSettersBuilder<TEntity>` | Clears a mapped scalar `Maybe<TInner>` property inside `ExecuteUpdate`; throws for composite owned types. |
+
+### `MaybeEntityTypeBuilderExtensions`
+
+```csharp
+public static class MaybeEntityTypeBuilderExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static IndexBuilder<TEntity> HasTrellisIndex<TEntity>(this EntityTypeBuilder<TEntity> entityTypeBuilder, Expression<Func<TEntity, object?>> propertySelector) where TEntity : class` | `IndexBuilder<TEntity>` | Creates an index using CLR selectors and resolves any `Maybe<T>` selectors to the actual generated storage-member mapping. |
+
+### `MaybeModelExtensions`
+
+```csharp
+public static class MaybeModelExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static IReadOnlyList<MaybePropertyMapping> GetMaybePropertyMappings(this IModel model)` | `IReadOnlyList<MaybePropertyMapping>` | Returns all discovered `Maybe<T>` mappings from an EF Core model. |
+| `public static IReadOnlyList<MaybePropertyMapping> GetMaybePropertyMappings(this DbContext dbContext)` | `IReadOnlyList<MaybePropertyMapping>` | Convenience overload for `dbContext.Model`. |
+| `public static string ToMaybeMappingDebugString(this IModel model)` | `string` | Produces a multi-line debug summary of `Maybe<T>` mappings. |
+| `public static string ToMaybeMappingDebugString(this DbContext dbContext)` | `string` | Convenience overload for `dbContext.Model`. |
+
+### `MaybePropertyMapping`
+
+```csharp
+public sealed record MaybePropertyMapping(
+    string EntityTypeName,
+    Type EntityClrType,
+    string PropertyName,
+    string MappedBackingFieldName,
+    Type InnerType,
+    Type StoreType,
+    bool IsMapped,
+    bool IsNullable,
+    string? ColumnName,
+    Type? ProviderClrType);
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `EntityTypeName` | `string` | EF Core entity type name. |
+| `EntityClrType` | `Type` | CLR type for the entity. |
+| `PropertyName` | `string` | Original `Maybe<T>` CLR property name. |
+| `MappedBackingFieldName` | `string` | Generated or configured storage-member name used by EF Core. |
+| `InnerType` | `Type` | `T` from `Maybe<T>`. |
+| `StoreType` | `Type` | CLR type EF Core persists for the storage member. |
+| `IsMapped` | `bool` | `true` when a backing field or owned navigation mapping exists. |
+| `IsNullable` | `bool` | `true` when the EF mapping is nullable/optional. |
+| `ColumnName` | `string?` | Representative relational column name, if available. |
+| `ProviderClrType` | `Type?` | Provider CLR type after conversion, if available. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| — | — | No additional public methods beyond record-generated members. |
+
+### `DbExceptionClassifier`
+
+```csharp
+public static class DbExceptionClassifier
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static bool IsDuplicateKey(DbUpdateException ex)` | `bool` | Detects duplicate-key violations across SQL Server, PostgreSQL, SQLite, and generic message-based fallbacks. |
+| `public static bool IsForeignKeyViolation(DbUpdateException ex)` | `bool` | Detects foreign-key violations across SQL Server, PostgreSQL, SQLite, and generic message-based fallbacks. |
+| `public static string? ExtractConstraintDetail(DbUpdateException ex)` | `string?` | Returns a logging-oriented detail string such as the PostgreSQL constraint name or the provider message. |
+
+### `TrellisPersistenceMappingException`
+
+```csharp
+public sealed class TrellisPersistenceMappingException : InvalidOperationException
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `ValueObjectType` | `Type` | Value object type that failed materialization. |
+| `PersistedValue` | `object?` | Database value that could not be materialized. |
+| `FactoryMethod` | `string` | Factory method name used during materialization. |
+| `Detail` | `string` | Validation or mapping detail that explains the failure. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public TrellisPersistenceMappingException()` | — | Initializes an empty exception. |
+| `public TrellisPersistenceMappingException(string message)` | — | Initializes the exception with a message. |
+| `public TrellisPersistenceMappingException(string message, Exception innerException)` | — | Initializes the exception with a message and inner exception. |
+| `public TrellisPersistenceMappingException(Type valueObjectType, object? persistedValue, string factoryMethod, string detail, Exception? innerException = null)` | — | Initializes the exception with full materialization context. |
+
+### `TrellisScalarConverter<TModel, TProvider>`
+
+```csharp
+public class TrellisScalarConverter<TModel, TProvider> : ValueConverter<TModel, TProvider>
+where TModel : class
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public TrellisScalarConverter()` | — | Builds expressions that persist `Value` and materialize via `TryCreate` or `TryFromName`; invalid persisted data throws `TrellisPersistenceMappingException`. |
+
+### `OwnedEntityAttribute`
+
+```csharp
+[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+public sealed class OwnedEntityAttribute : Attribute;
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| — | — | No methods. |
+
+### `MaybeQueryInterceptor`
+
+```csharp
+public sealed class MaybeQueryInterceptor : IQueryExpressionInterceptor
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData)` | `Expression` | Rewrites query expressions so natural `Maybe<T>` access translates to mapped storage members. |
+
+### `ScalarValueQueryInterceptor`
+
+```csharp
+public sealed class ScalarValueQueryInterceptor : IQueryExpressionInterceptor
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData)` | `Expression` | Rewrites scalar value object expressions so comparisons, ordering, and string/property access translate without explicit `.Value`. |
+
+## Extension methods
+
+### `DbContextOptionsBuilderExtensions`
+
+```csharp
+public static DbContextOptionsBuilder<TContext> AddTrellisInterceptors<TContext>(this DbContextOptionsBuilder<TContext> optionsBuilder) where TContext : DbContext
+public static DbContextOptionsBuilder AddTrellisInterceptors(this DbContextOptionsBuilder optionsBuilder)
+public static DbContextOptionsBuilder<TContext> AddTrellisInterceptors<TContext>(this DbContextOptionsBuilder<TContext> optionsBuilder, TimeProvider? timeProvider) where TContext : DbContext
+public static DbContextOptionsBuilder AddTrellisInterceptors(this DbContextOptionsBuilder optionsBuilder, TimeProvider? timeProvider)
+```
+
+### `ModelConfigurationBuilderExtensions`
+
+```csharp
+public static ModelConfigurationBuilder ApplyTrellisConventions(this ModelConfigurationBuilder configurationBuilder, params Assembly[] assemblies)
+```
+
+### `DbContextExtensions`
+
+```csharp
+public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, CancellationToken cancellationToken = default)
+public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)
+public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+```
+
+### `QueryableExtensions`
+
+```csharp
+public static Task<Maybe<T>> FirstOrDefaultMaybeAsync<T>(this IQueryable<T> query, CancellationToken cancellationToken = default) where T : class
+public static Task<Maybe<T>> FirstOrDefaultMaybeAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default) where T : class
+public static Task<Maybe<T>> SingleOrDefaultMaybeAsync<T>(this IQueryable<T> query, CancellationToken cancellationToken = default) where T : class
+public static Task<Maybe<T>> SingleOrDefaultMaybeAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default) where T : class
+public static Task<Result<T>> FirstOrDefaultResultAsync<T>(this IQueryable<T> query, Error notFoundError, CancellationToken cancellationToken = default) where T : class
+public static Task<Result<T>> FirstOrDefaultResultAsync<T>(this IQueryable<T> query, Expression<Func<T, bool>> predicate, Error notFoundError, CancellationToken cancellationToken = default) where T : class
+public static IQueryable<T> Where<T>(this IQueryable<T> query, Specification<T> specification) where T : class
+```
+
+### `MaybeQueryableExtensions`
+
+```csharp
+public static IQueryable<TEntity> WhereNone<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull
+public static IQueryable<TEntity> WhereHasValue<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull
+public static IQueryable<TEntity> WhereEquals<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull
+public static IQueryable<TEntity> WhereLessThan<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull, IComparable<TInner>
+public static IQueryable<TEntity> WhereLessThanOrEqual<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull, IComparable<TInner>
+public static IQueryable<TEntity> WhereGreaterThan<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull, IComparable<TInner>
+public static IQueryable<TEntity> WhereGreaterThanOrEqual<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull, IComparable<TInner>
+public static IOrderedQueryable<TEntity> OrderByMaybe<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull
+public static IOrderedQueryable<TEntity> OrderByMaybeDescending<TEntity, TInner>(this IQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull
+public static IOrderedQueryable<TEntity> ThenByMaybe<TEntity, TInner>(this IOrderedQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull
+public static IOrderedQueryable<TEntity> ThenByMaybeDescending<TEntity, TInner>(this IOrderedQueryable<TEntity> source, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull
+```
+
+### `MaybeUpdateExtensions`
+
+```csharp
+public static UpdateSettersBuilder<TEntity> SetMaybeValue<TEntity, TInner>(this UpdateSettersBuilder<TEntity> updateSettersBuilder, Expression<Func<TEntity, Maybe<TInner>>> propertySelector, TInner value) where TEntity : class where TInner : notnull
+public static UpdateSettersBuilder<TEntity> SetMaybeNone<TEntity, TInner>(this UpdateSettersBuilder<TEntity> updateSettersBuilder, Expression<Func<TEntity, Maybe<TInner>>> propertySelector) where TEntity : class where TInner : notnull
+```
+
+### `MaybeEntityTypeBuilderExtensions`
+
+```csharp
+public static IndexBuilder<TEntity> HasTrellisIndex<TEntity>(this EntityTypeBuilder<TEntity> entityTypeBuilder, Expression<Func<TEntity, object?>> propertySelector) where TEntity : class
+```
+
+### `MaybeModelExtensions`
+
+```csharp
+public static IReadOnlyList<MaybePropertyMapping> GetMaybePropertyMappings(this IModel model)
+public static IReadOnlyList<MaybePropertyMapping> GetMaybePropertyMappings(this DbContext dbContext)
+public static string ToMaybeMappingDebugString(this IModel model)
+public static string ToMaybeMappingDebugString(this DbContext dbContext)
+```
+
+## Internal types
+
+- `AggregateETagConvention` is internal. `ApplyTrellisConventions` uses it to mark `IAggregate.ETag` as a concurrency token and set `HasMaxLength(50)`.
+- `AggregateETagInterceptor` is internal. `AddTrellisInterceptors()` uses it to generate new `Guid.NewGuid().ToString("N")` ETags for `Added` and `Modified` aggregates, promote `Unchanged` aggregate roots when loaded dependents are `Added`, `Modified`, or `Deleted`, and sync `OriginalValue` after save when `acceptAllChangesOnSuccess` is `false`.
+- `AggregateTransientPropertyConvention` is internal. It explicitly ignores `IAggregate.IsChanged`.
+- `MaybeConvention` is internal. It ignores the `Maybe<T>` CLR property, requires the generated `_camelCase` storage member, maps scalar `Maybe<T>` properties to nullable backing-field columns, and maps `Maybe<T>` where `T` is already owned as an optional ownership navigation.
+- `CompositeValueObjectConvention` is internal. It only registers composite value objects discovered in the assemblies passed to `ApplyTrellisConventions` (plus built-in Trellis primitives scanning for scalar value objects). For `Maybe<T>` composite owned types, it uses nullable owned columns only when table-splitting is valid; it switches to a separate table named `{OwnerTypeName}_{PropertyName}` when nested owned navigations exist **or** when the owned type contains non-nullable value-type properties.
+- `MoneyConvention` is internal. It registers `Money` as an owned type, names the amount column `{PropertyName}`, names the currency column `{PropertyName}Currency`, sets `decimal(18,3)` precision/scale for `Amount`, and handles optional `Maybe<Money>` columns through the annotation written by `MaybeConvention`.
+- `MaybePartialPropertyGenerator` and `OwnedEntityGenerator` are compiler-time helpers from `Trellis.EntityFrameworkCore.Generator`, not runtime APIs. `TRLSGEN100` is reported only for non-partial auto-properties of type `Maybe<T>` whose containing type is partial. `TRLSGEN101`, `TRLSGEN102`, and `TRLSGEN103` come from `[OwnedEntity]` validation and generation.
+
+## Code examples
+
+### Configure conventions, interceptors, and `Maybe<T>` querying
+
+```csharp
+using System;
+using System.Collections.Generic;
+using Microsoft.EntityFrameworkCore;
+using Trellis;
+using Trellis.EntityFrameworkCore;
+
+[OwnedEntity]
+public partial class Address : ValueObject
+{
+    public string Street { get; private set; }
+    public string City { get; private set; }
+
+    public Address(string street, string city)
+    {
+        Street = street;
+        City = city;
+    }
+
+    protected override IEnumerable<IComparable?> GetEqualityComponents()
+    {
+        yield return Street;
+        yield return City;
+    }
+}
+
+public sealed class CustomerId : ScalarValueObject<CustomerId, Guid>, IScalarValue<CustomerId, Guid>
+{
+    private CustomerId(Guid value) : base(value) { }
+
+    public static Result<CustomerId> TryCreate(Guid value, string? fieldName = null) =>
+        value == Guid.Empty
+            ? Result.Failure<CustomerId>(Error.Validation("Customer ID is required.", fieldName ?? "customerId"))
+            : Result.Success(new CustomerId(value));
+
+    public static Result<CustomerId> TryCreate(string? value, string? fieldName = null) =>
+        Guid.TryParse(value, out var guid)
+            ? TryCreate(guid, fieldName)
+            : Result.Failure<CustomerId>(Error.Validation("Customer ID must be a GUID.", fieldName ?? "customerId"));
+}
+
+public partial class Customer : Aggregate<CustomerId>
+{
+    public string Name { get; private set; }
+    public Address ShippingAddress { get; private set; }
+    public partial Maybe<DateTimeOffset> SubmittedAt { get; set; }
+
+    private Customer(CustomerId id, string name, Address shippingAddress) : base(id)
+    {
+        Name = name;
+        ShippingAddress = shippingAddress;
+    }
+
+    public static Customer Create(string name, Address shippingAddress) =>
+        new(CustomerId.Create(Guid.NewGuid()), name, shippingAddress);
+}
+
+public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+{
+    public DbSet<Customer> Customers => Set<Customer>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) =>
+        configurationBuilder.ApplyTrellisConventions(typeof(Customer).Assembly);
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+        modelBuilder.Entity<Customer>(builder =>
+        {
+            builder.HasKey(x => x.Id);
+            builder.HasTrellisIndex(x => new { x.Name, x.SubmittedAt });
+        });
+}
+
+var options = new DbContextOptionsBuilder<AppDbContext>()
+    .UseSqlite("Data Source=customers.db")
+    .AddTrellisInterceptors()
+    .Options;
+
+await using var db = new AppDbContext(options);
+
+var result = await db.Customers.FirstOrDefaultResultAsync(
+    x => x.Name == "missing",
+    Error.NotFound("Customer not found."));
+
+var submittedCustomers = await db.Customers
+    .WhereHasValue(x => x.SubmittedAt)
+    .OrderByMaybe(x => x.SubmittedAt)
+    .ToListAsync();
+```
+
+### Inspect `Maybe<T>` mappings
+
+```csharp
+using Microsoft.EntityFrameworkCore;
+using Trellis.EntityFrameworkCore;
+
+IReadOnlyList<MaybePropertyMapping> mappings = db.GetMaybePropertyMappings();
+string debug = db.ToMaybeMappingDebugString();
+```
+
+## Cross-references
+
+- [Trellis.DomainDrivenDesign API reference](trellis-api-ddd.md) — `IEntity`, `IAggregate`, `Aggregate<TId>`, `Entity<TId>`, `ValueObject`, `ScalarValueObject<TSelf, T>`, and `Specification<T>`
+- [Trellis.Results API reference](trellis-api-results.md) — `Result<T>`, `Maybe<T>`, `Error`, `Unit`, `IScalarValue<TSelf, TPrimitive>`, and `EntityTagValue`
+- [Trellis.Primitives API reference](trellis-api-primitives.md) — `Money`, `RequiredEnum<T>`, and built-in value objects commonly scanned by `ApplyTrellisConventions`

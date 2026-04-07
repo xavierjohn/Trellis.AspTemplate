@@ -2,8 +2,6 @@
 
 using TodoSample.Domain;
 
-#pragma warning disable TRLS003 // Tests assert success before accessing .Value
-
 public class TodoItemTests
 {
     private static Title TestTitle => Title.Create("Buy groceries");
@@ -14,7 +12,7 @@ public class TodoItemTests
     {
         var result = TodoItem.TryCreate(TestTitle, dueDate ?? FutureDueDate, tag ?? Maybe<Tag>.None, actorId);
         result.Should().BeSuccess();
-        var todo = result.Value;
+        var todo = result.Unwrap();
         todo.Start().Should().BeSuccess();
         return todo;
     }
@@ -26,7 +24,7 @@ public class TodoItemTests
         var result = TodoItem.TryCreate(TestTitle, dueDate, Maybe<Tag>.None, "actor-1");
 
         result.Should().BeSuccess();
-        var todo = result.Value;
+        var todo = result.Unwrap();
         todo.Title.Should().Be(TestTitle);
         todo.DueDate.Should().Be(dueDate);
         todo.Status.Should().Be(TodoStatus.Pending);
@@ -51,7 +49,7 @@ public class TodoItemTests
         var result = TodoItem.TryCreate(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1");
 
         result.Should().BeSuccess();
-        result.Value.UncommittedEvents().Should().ContainSingle()
+        result.Unwrap().UncommittedEvents().Should().ContainSingle()
             .Which.Should().BeOfType<TodoCreated>();
     }
 
@@ -60,12 +58,13 @@ public class TodoItemTests
     {
         var createResult = TodoItem.TryCreate(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1");
         createResult.Should().BeSuccess();
+        var todo = createResult.Unwrap();
 
-        var startResult = createResult.Value.Start();
+        var startResult = todo.Start();
 
         startResult.Should().BeSuccess()
             .Which.Should().Be(TodoStatus.Active);
-        createResult.Value.Status.Should().Be(TodoStatus.Active);
+        todo.Status.Should().Be(TodoStatus.Active);
     }
 
     [Fact]
@@ -99,7 +98,7 @@ public class TodoItemTests
         var result = TodoItem.TryCreate(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1");
         result.Should().BeSuccess();
 
-        result.Value.Complete().Should().BeFailure();
+        result.Unwrap().Complete().Should().BeFailure();
     }
 
     [Fact]
@@ -132,7 +131,7 @@ public class TodoItemTests
         var result = TodoItem.TryCreate(TestTitle, PastDueDate, Maybe<Tag>.None, "actor-1");
         result.Should().BeSuccess();
 
-        result.Value.IsOverdue(DateTime.UtcNow).Should().BeFalse();
+        result.Unwrap().IsOverdue(DateTime.UtcNow).Should().BeFalse();
     }
 
     [Fact]

@@ -16,9 +16,8 @@ internal class TodoItemConfiguration : IEntityTypeConfiguration<TodoItem>
 
         builder.Property(t => t.Title).IsRequired();
         builder.Property(t => t.DueDate).IsRequired();
-        builder.Property(t => t.Status).IsRequired().HasConversion<string>();
+        builder.Property(t => t.Status).IsRequired();
         builder.Property(t => t.CreatedByActorId).IsRequired().HasMaxLength(200);
-        builder.Property(t => t.CreatedAt).IsRequired();
 
         builder.HasTrellisIndex(t => new { t.Status, t.DueDate });
     }

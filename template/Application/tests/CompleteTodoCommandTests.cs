@@ -3,9 +3,7 @@
 using Mediator;
 using TodoSample.Application.Todos;
 using TodoSample.Domain;
-using Trellis.Testing.Fakes;
-
-#pragma warning disable TRLS003 // Tests assert success before accessing .Value
+using Trellis.Testing;
 
 public class CompleteTodoCommandTests
 {
@@ -23,33 +21,32 @@ public class CompleteTodoCommandTests
     [Fact]
     public async Task Complete_own_todo_succeeds()
     {
-        // Create a todo as the current actor
         var createResult = await _sender.Send(
             new CreateTodoCommand(Title.Create("My todo"), DueDate.Create(DateTime.UtcNow.AddDays(1)), Maybe<Tag>.None),
             TestContext.Current.CancellationToken);
         createResult.Should().BeSuccess();
+        var created = createResult.Unwrap();
 
-        // Complete it
-        var result = await _sender.Send(new CompleteTodoCommand(createResult.Value.Id), TestContext.Current.CancellationToken);
+        var result = await _sender.Send(new CompleteTodoCommand(created.Id), TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();
-        result.Value.Status.Should().Be(TodoStatus.Completed);
-        result.Value.CompletedAt.Should().HaveValue();
+        var todo = result.Unwrap();
+        todo.Status.Should().Be(TodoStatus.Completed);
+        todo.CompletedAt.Should().HaveValue();
     }
 
     [Fact]
     public async Task Complete_another_users_todo_returns_forbidden()
     {
-        // Create a todo as user-1
         await using var _ = _actorProvider.WithActor("user-1", Permissions.TodosCreate, Permissions.TodosComplete);
         var createResult = await _sender.Send(
             new CreateTodoCommand(Title.Create("User1 todo"), DueDate.Create(DateTime.UtcNow.AddDays(1)), Maybe<Tag>.None),
             TestContext.Current.CancellationToken);
         createResult.Should().BeSuccess();
+        var created = createResult.Unwrap();
 
-        // Switch to user-2 and try to complete
         await using var scope = _actorProvider.WithActor("user-2", Permissions.TodosComplete);
-        var result = await _sender.Send(new CompleteTodoCommand(createResult.Value.Id), TestContext.Current.CancellationToken);
+        var result = await _sender.Send(new CompleteTodoCommand(created.Id), TestContext.Current.CancellationToken);
 
         result.Should().BeFailureOfType<ForbiddenError>();
     }

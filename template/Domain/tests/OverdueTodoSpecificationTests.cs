@@ -2,8 +2,6 @@
 
 using TodoSample.Domain;
 
-#pragma warning disable TRLS003 // Tests assert success before accessing .Value
-
 public class OverdueTodoSpecificationTests
 {
     private static Title TestTitle => Title.Create("Test todo");
@@ -14,10 +12,11 @@ public class OverdueTodoSpecificationTests
         var pastDue = DueDate.Create(DateTime.UtcNow.AddDays(-3));
         var result = TodoItem.TryCreate(TestTitle, pastDue, Maybe<Tag>.None, "actor-1");
         result.Should().BeSuccess();
-        result.Value.Start().Should().BeSuccess();
+        var todo = result.Unwrap();
+        todo.Start().Should().BeSuccess();
         var spec = new OverdueTodoSpecification(DateTime.UtcNow);
 
-        spec.IsSatisfiedBy(result.Value).Should().BeTrue();
+        spec.IsSatisfiedBy(todo).Should().BeTrue();
     }
 
     [Fact]
@@ -26,10 +25,11 @@ public class OverdueTodoSpecificationTests
         var futureDue = DueDate.Create(DateTime.UtcNow.AddDays(7));
         var result = TodoItem.TryCreate(TestTitle, futureDue, Maybe<Tag>.None, "actor-1");
         result.Should().BeSuccess();
-        result.Value.Start().Should().BeSuccess();
+        var todo = result.Unwrap();
+        todo.Start().Should().BeSuccess();
         var spec = new OverdueTodoSpecification(DateTime.UtcNow);
 
-        spec.IsSatisfiedBy(result.Value).Should().BeFalse();
+        spec.IsSatisfiedBy(todo).Should().BeFalse();
     }
 
     [Fact]
@@ -40,7 +40,7 @@ public class OverdueTodoSpecificationTests
         result.Should().BeSuccess();
         var spec = new OverdueTodoSpecification(DateTime.UtcNow);
 
-        spec.IsSatisfiedBy(result.Value).Should().BeFalse();
+        spec.IsSatisfiedBy(result.Unwrap()).Should().BeFalse();
     }
 
     [Fact]
@@ -50,13 +50,14 @@ public class OverdueTodoSpecificationTests
         var tag = Tag.Create("work");
         var result = TodoItem.TryCreate(TestTitle, pastDue, Maybe.From(tag), "actor-1");
         result.Should().BeSuccess();
-        result.Value.Start().Should().BeSuccess();
+        var todo = result.Unwrap();
+        todo.Start().Should().BeSuccess();
 
         var overdueSpec = new OverdueTodoSpecification(DateTime.UtcNow);
         var hasTagSpec = new HasTagSpecification();
         var combined = overdueSpec.And(hasTagSpec);
 
-        combined.IsSatisfiedBy(result.Value).Should().BeTrue();
+        combined.IsSatisfiedBy(todo).Should().BeTrue();
     }
 
     [Fact]
@@ -65,13 +66,14 @@ public class OverdueTodoSpecificationTests
         var pastDue = DueDate.Create(DateTime.UtcNow.AddDays(-3));
         var result = TodoItem.TryCreate(TestTitle, pastDue, Maybe<Tag>.None, "actor-1");
         result.Should().BeSuccess();
-        result.Value.Start().Should().BeSuccess();
+        var todo = result.Unwrap();
+        todo.Start().Should().BeSuccess();
 
         var overdueSpec = new OverdueTodoSpecification(DateTime.UtcNow);
         var hasTagSpec = new HasTagSpecification();
         var combined = overdueSpec.And(hasTagSpec);
 
-        combined.IsSatisfiedBy(result.Value).Should().BeFalse();
+        combined.IsSatisfiedBy(todo).Should().BeFalse();
     }
 }
 

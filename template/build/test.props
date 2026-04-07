@@ -5,7 +5,7 @@
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
     
-    <NoWarn>$(NoWarn),CA1707</NoWarn>
+    <NoWarn>$(NoWarn),CA1707,TRLS003</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

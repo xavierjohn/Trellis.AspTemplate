@@ -22,7 +22,7 @@ public partial class TodoItem : Aggregate<TodoId>
     public DueDate DueDate { get; private set; } = null!;
 
     /// <summary>Current lifecycle status.</summary>
-    public TodoStatus Status { get; private set; }
+    public TodoStatus Status { get; private set; } = null!;
 
     /// <summary>When the todo was completed, if applicable.</summary>
     public partial Maybe<DateTime> CompletedAt { get; private set; }
@@ -33,9 +33,6 @@ public partial class TodoItem : Aggregate<TodoId>
     /// <summary>The actor who created this todo.</summary>
     public string CreatedByActorId { get; private set; } = null!;
 
-    /// <summary>When the todo was created.</summary>
-    public DateTime CreatedAt { get; private set; }
-
     /// <summary>EF Core constructor.</summary>
     private TodoItem() : base(default!)
     {
@@ -45,7 +42,7 @@ public partial class TodoItem : Aggregate<TodoId>
             ConfigureStateMachine);
     }
 
-    private TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId)
+    private TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider timeProvider)
         : base(TodoId.NewUniqueV7())
     {
         Title = title;
@@ -53,21 +50,20 @@ public partial class TodoItem : Aggregate<TodoId>
         Tag = tag;
         Status = TodoStatus.Pending;
         CreatedByActorId = createdByActorId;
-        CreatedAt = DateTime.UtcNow;
 
         _machine = new LazyStateMachine<TodoStatus, string>(
             () => Status,
             s => Status = s,
             ConfigureStateMachine);
 
-        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, CreatedAt));
+        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, timeProvider.GetUtcNow().UtcDateTime));
     }
 
     /// <summary>
     /// Creates a new todo item in Pending state.
     /// </summary>
-    public static Result<TodoItem> TryCreate(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId) =>
-        new TodoItem(title, dueDate, tag, createdByActorId);
+    public static Result<TodoItem> TryCreate(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider? timeProvider = null) =>
+        new TodoItem(title, dueDate, tag, createdByActorId, timeProvider ?? TimeProvider.System);
 
     /// <summary>
     /// Starts the todo, transitioning from Pending to Active.
@@ -78,14 +74,17 @@ public partial class TodoItem : Aggregate<TodoId>
     /// <summary>
     /// Completes the todo, transitioning from Active to Completed.
     /// </summary>
-    public Result<TodoStatus> Complete() =>
-        _machine.FireResult(Triggers.Complete)
+    public Result<TodoStatus> Complete(TimeProvider? timeProvider = null)
+    {
+        var tp = timeProvider ?? TimeProvider.System;
+        return _machine.FireResult(Triggers.Complete)
             .Tap(_ =>
             {
-                var completedAt = DateTime.UtcNow;
+                var completedAt = tp.GetUtcNow().UtcDateTime;
                 CompletedAt = completedAt;
                 DomainEvents.Add(new TodoCompleted(Id, completedAt));
             });
+    }
 
     /// <summary>
     /// Returns true if this todo is overdue (active and past its due date).

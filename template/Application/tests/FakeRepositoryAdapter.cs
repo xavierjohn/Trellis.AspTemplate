@@ -2,7 +2,7 @@
 
 using TodoSample.Application;
 using TodoSample.Domain;
-using Trellis.Testing.Fakes;
+using Trellis.Testing;
 
 /// <summary>
 /// Adapts FakeRepository to the ITodoRepository interface.

@@ -23,17 +23,19 @@ public sealed class CreateTodoCommandHandler : ICommandHandler<CreateTodoCommand
 {
     private readonly ITodoRepository _repository;
     private readonly IActorProvider _actorProvider;
+    private readonly TimeProvider _timeProvider;
 
-    public CreateTodoCommandHandler(ITodoRepository repository, IActorProvider actorProvider)
+    public CreateTodoCommandHandler(ITodoRepository repository, IActorProvider actorProvider, TimeProvider timeProvider)
     {
         _repository = repository;
         _actorProvider = actorProvider;
+        _timeProvider = timeProvider;
     }
 
     public async ValueTask<Result<TodoItem>> Handle(CreateTodoCommand command, CancellationToken cancellationToken)
     {
         var actor = await _actorProvider.GetCurrentActorAsync(cancellationToken);
-        return await TodoItem.TryCreate(command.Title, command.DueDate, command.Tag, actor.Id)
+        return await TodoItem.TryCreate(command.Title, command.DueDate, command.Tag, actor.Id, _timeProvider)
             .Bind(todo => todo.Start().Map(_ => todo))
             .CheckAsync(todo => _repository.SaveAsync(todo, cancellationToken));
     }

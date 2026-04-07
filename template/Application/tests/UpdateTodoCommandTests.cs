@@ -16,7 +16,7 @@ public class UpdateTodoCommandTests
             Title.Create("Test"),
             DueDate.Create(new DateTime(2026, 4, 1, 0, 0, 0, DateTimeKind.Utc)),
             Maybe<Tag>.None,
-            timeProvider);
+            timeProvider: timeProvider);
 
         result.Should().BeSuccess();
     }
@@ -31,7 +31,7 @@ public class UpdateTodoCommandTests
             Title.Create("Test"),
             DueDate.Create(new DateTime(2026, 3, 25, 0, 0, 0, DateTimeKind.Utc)),
             Maybe<Tag>.None,
-            timeProvider);
+            timeProvider: timeProvider);
 
         result.Should().BeFailure()
             .Which.Should().BeOfType<ValidationError>();

@@ -1,79 +1,66 @@
 # Trellis ASP.NET Service Template
 
-A `dotnet new` template for creating ASP.NET services using the [Trellis](https://github.com/xavierjohn/Trellis) framework with Railway-Oriented Programming (ROP) and Domain-Driven Design (DDD).
+Create a production-ready ASP.NET service with Trellis, layered architecture, testing, and observability already wired in.
 
-## Getting Started
-
-### Install the template
+## Quick Start
 
 ```powershell
 dotnet new install Trellis.AspTemplate
-```
-
-### Create a new service
-
-```powershell
 dotnet new trellis-asp -n MyService --authorName "Your Name"
+cd MyService; dotnet run --project Api\src
 ```
 
-This creates a `MyService/` directory with the full solution structure ready to build and run.
-
-### Build and test
-
-```powershell
-cd MyService
-dotnet build
-dotnet test
-```
-
-### Run the API
-
-```powershell
-dotnet run --project Api/src
-```
+The template restores packages after creation. Once the app is running, use the API endpoint or OpenAPI UI from the `Api` project output.
 
 ## What's Included
 
-### Architecture
+Trellis organizes your service into clear layers so business logic stays isolated from HTTP and infrastructure concerns.
 
-The template provides a layered architecture following DDD and CQRS principles:
+```text
+Api -> Application -> Domain
+  \-> Acl -----------^
+```
 
-| Layer | Project | Purpose |
-|-------|---------|---------|
-| **Domain** | `Domain/` | Aggregates, entities, value objects — pure business logic with zero external dependencies |
-| **Application** | `Application/` | Commands, queries, handlers — orchestrates domain logic via CQRS (Mediator) |
-| **Anti-Corruption Layer** | `Acl/` | Repository implementations, external service adapters, EF Core — shields the domain from infrastructure |
-| **API** | `Api/` | Controllers, DTOs, middleware, composition root — thin HTTP layer |
+| Folder | Purpose |
+|--------|---------|
+| `Api\src` | ASP.NET entry point, middleware, configuration, HTTP endpoints |
+| `Api\tests` | API and middleware tests |
+| `Application\src` | Commands, queries, handlers, and application orchestration |
+| `Application\tests` | Application-layer tests |
+| `Domain\src` | Aggregates, value objects, specifications, and core business rules |
+| `Domain\tests` | Domain tests |
+| `Acl\src` | EF Core, repositories, environment/resource naming, external adapters |
+| `Acl\tests` | Infrastructure tests |
+| `.devcontainer` | Codespaces / Dev Container setup for a ready-to-code environment |
+| `DockerOpenTelemetry` | Local observability helper for viewing traces, metrics, and logs |
+| `build` | Build and automation scripts |
 
-Each layer has `src/` and `tests/` projects.
+## Features
 
-### Key Features
+- Trellis-based service structure for clean, layered ASP.NET applications
+- Railway-Oriented Programming patterns for explicit success and failure flows
+- Domain-Driven Design friendly layout with domain, application, API, and ACL projects
+- CQRS-style application layer with handlers and request separation
+- Test projects for every layer
+- EF Core-ready infrastructure setup
+- OpenTelemetry support for local observability
+- API starter files, HTTP samples, and local app settings
+- Dev Container support for Codespaces and VS Code
+- AI guidance files included in `.github` for Trellis-friendly code generation
 
-- **Railway-Oriented Programming** — Errors are values (`Result<T>`), not exceptions. Business logic flows through composable pipelines using `Bind`, `Map`, `Ensure`, and `Tap`.
-- **Domain-Driven Design** — Value objects with `TryCreate` validation, aggregates with domain events, specifications for composable queries.
-- **CQRS** — Commands and queries separated via [Mediator](https://github.com/martinothamar/Mediator) source generator.
-- **Service Level Indicators** — All API methods emit duration and status code metrics via [ServiceLevelIndicators](https://github.com/xavierjohn/ServiceLevelIndicators).
-- **OpenTelemetry** — Traces and metrics configured out of the box. Use the included [Aspire Dashboard](DockerOpenTelemetry/README.md) for local observability.
-- **API Versioning** — Date-based versioning with `Asp.Versioning`.
-- **Copilot Instructions** — `template/.github/copilot-instructions.md` and `template/.github/trellis-api-reference.md` ship with the template to guide AI assistants toward Trellis patterns.
-
-### Template Parameters
+## Template Parameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `-n` / `--name` | Service name (used for solution file, namespaces, assembly names) | `MyService` |
-| `--authorName` | Author name in `Directory.Build.props` | `Your Name` |
+| `-n`, `--name` | Service name. Also drives solution, directory, and namespace naming. | `MyService` |
+| `--authorName` | Author value written into `Directory.Build.props`. | `Your Name` |
 
-## Convention over Configuration for Resource Names
+## Documentation
 
-When deploying across multiple regions and environments, set `RegionShortName` and `Environment` to derive resource names automatically via `EnvironmentOptions`:
+- Trellis docs: https://xavierjohn.github.io/Trellis/
+- Dev Container guide: https://github.com/xavierjohn/Trellis/blob/main/TrellisAspTemplate/template/.devcontainer/README.md
+- OpenTelemetry guide: https://github.com/xavierjohn/Trellis/blob/main/TrellisAspTemplate/template/DockerOpenTelemetry/README.md
 
-```json
-{
-  "EnvironmentOptions": {
-    "Environment": "test",
-    "Region": "westus2",
-    "RegionShortName": "usw2"
-  }
-}
-```
+## Requirements
+
+- .NET 10 SDK

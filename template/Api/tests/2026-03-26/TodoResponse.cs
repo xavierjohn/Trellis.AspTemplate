@@ -12,5 +12,6 @@ public class TodoResponse
     public DateTime? CompletedAt { get; set; }
     public string? Tag { get; set; }
     public string CreatedByActorId { get; set; } = null!;
-    public DateTime CreatedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset LastModified { get; set; }
 }

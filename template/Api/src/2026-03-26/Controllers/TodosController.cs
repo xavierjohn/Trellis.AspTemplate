@@ -33,23 +33,39 @@ public class TodosController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async ValueTask<ActionResult<TodoResponse>> Create(
         [FromBody] CreateTodoRequest request,
-        CancellationToken cancellationToken) =>
-        await _sender.Send(
+        CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(
             new CreateTodoCommand(request.Title, request.DueDate, request.Tag),
-            cancellationToken)
-            .ToCreatedAtActionResultAsync(this, nameof(GetById), r => new { id = (Guid)r.Id }, TodoResponse.From);
+            cancellationToken);
+
+        if (result.IsFailure)
+            return result.Error.ToActionResult<TodoResponse>(this);
+
+        var todo = result.Value;
+        Response.Headers.ETag = EntityTagValue.Strong(todo.ETag).ToHeaderValue();
+        return CreatedAtAction(nameof(GetById), new { id = (Guid)todo.Id }, TodoResponse.From(todo));
+    }
 
     /// <summary>
     /// Get a todo item by ID.
     /// </summary>
     [HttpGet("{id}")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status304NotModified)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async ValueTask<ActionResult<TodoResponse>> GetById(
         [CustomerResourceId] TodoId id,
-        CancellationToken cancellationToken) =>
-        await _sender.Send(new GetTodoByIdQuery(id), cancellationToken)
-            .ToActionResultAsync(this, TodoResponse.From);
+        CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(new GetTodoByIdQuery(id), cancellationToken);
+
+        if (result.IsFailure)
+            return result.Error.ToActionResult<TodoResponse>(this);
+
+        var metadata = RepresentationMetadata.WithStrongETag(result.Value.ETag);
+        return result.ToActionResult(this, metadata, TodoResponse.From);
+    }
 
     /// <summary>
     /// Get all overdue todo items.
@@ -63,18 +79,28 @@ public class TodosController : ControllerBase
 
     /// <summary>
     /// Update a todo item's title, due date, and tag.
+    /// Supports RFC 9110 conditional requests via If-Match header.
     /// </summary>
     [HttpPut("{id}")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status412PreconditionFailed)]
     public async ValueTask<ActionResult<TodoResponse>> Update(
         [CustomerResourceId] TodoId id,
         [FromBody] UpdateTodoRequest request,
-        CancellationToken cancellationToken) =>
-        await UpdateTodoCommand.TryCreate(id, request.Title, request.DueDate, request.Tag)
-            .BindAsync(command => _sender.Send(command, cancellationToken))
-            .ToActionResultAsync(this, TodoResponse.From);
+        CancellationToken cancellationToken)
+    {
+        var ifMatchETags = ETagHelper.ParseIfMatch(Request);
+        var result = await UpdateTodoCommand.TryCreate(id, request.Title, request.DueDate, request.Tag, ifMatchETags)
+            .BindAsync(command => _sender.Send(command, cancellationToken));
+
+        if (result.IsFailure)
+            return result.Error.ToActionResult<TodoResponse>(this);
+
+        var metadata = RepresentationMetadata.WithStrongETag(result.Value.ETag);
+        return result.ToActionResult(this, metadata, TodoResponse.From);
+    }
 
     /// <summary>
     /// Complete a todo item. Only the creator can complete their own todo.
@@ -85,9 +111,16 @@ public class TodosController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async ValueTask<ActionResult<TodoResponse>> Complete(
         [CustomerResourceId] TodoId id,
-        CancellationToken cancellationToken) =>
-        await _sender.Send(new CompleteTodoCommand(id), cancellationToken)
-            .ToActionResultAsync(this, TodoResponse.From);
+        CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(new CompleteTodoCommand(id), cancellationToken);
+
+        if (result.IsFailure)
+            return result.Error.ToActionResult<TodoResponse>(this);
+
+        var metadata = RepresentationMetadata.WithStrongETag(result.Value.ETag);
+        return result.ToActionResult(this, metadata, TodoResponse.From);
+    }
 
     /// <summary>
     /// This method throws to show the error handling middleware handles it.
