@@ -606,6 +606,8 @@ services.AddScoped<IActorProvider, HttpActorProvider>();
 
 > **NuGet packages:** Add `<PackageVersion>` to `Directory.Packages.props`, then add `<PackageReference>` without a version in the relevant `.csproj`.
 
+> **Upgrading Trellis packages:** After changing `TrellisVersion` in `Directory.Packages.props`, run `dotnet build ./{ServiceName}.slnx /t:TrellisSyncApiReference` from the service repository root to update the `.github/trellis-api-*.md` reference files from the new package versions.
+
 ### HTTP request documentation files
 
 - **Rule:** 🟡 SHOULD replace `Api/src/api.http` with end-to-end requests for every endpoint and keep complex header values in `Api/src/http-client.env.json` as escaped JSON strings.
