@@ -15,15 +15,20 @@ using Xunit.v3;
 
 public class TestWebApplicationFactoryFixture : WebApplicationFactory<Program>, ITestOutputHelperAccessor
 {
-    private readonly SqliteConnection _connection;
+    private readonly SqliteConnection? _connection;
+    private static bool UseRealServices =>
+        string.Equals(Environment.GetEnvironmentVariable("USE_REAL_SERVICES"), "true", StringComparison.OrdinalIgnoreCase);
 
     public TestWebApplicationFactoryFixture()
     {
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
 
-        // Keep a persistent connection for in-memory SQLite
-        _connection = new SqliteConnection("Data Source=:memory:");
-        _connection.Open();
+        if (!UseRealServices)
+        {
+            // Keep a persistent connection for in-memory SQLite
+            _connection = new SqliteConnection("Data Source=:memory:");
+            _connection.Open();
+        }
     }
 
     public ITestOutputHelper? OutputHelper { get; set; }
@@ -32,9 +37,12 @@ public class TestWebApplicationFactoryFixture : WebApplicationFactory<Program>, 
     {
         builder.ConfigureLogging(p => p.AddXUnit(this));
 
+        if (UseRealServices)
+            return;
+
         builder.ConfigureServices(services =>
             services.ReplaceDbProvider<AppDbContext>(options =>
-                options.UseSqlite(_connection)
+                options.UseSqlite(_connection!)
                        .AddTrellisInterceptors()));
     }
 
@@ -42,7 +50,7 @@ public class TestWebApplicationFactoryFixture : WebApplicationFactory<Program>, 
     {
         base.Dispose(disposing);
         if (disposing)
-            _connection.Dispose();
+            _connection?.Dispose();
     }
 }
 

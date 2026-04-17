@@ -69,6 +69,16 @@ dotnet new trellis-asp -n MyService
 dotnet new uninstall Trellis.AspTemplate
 ```
 
+## Upgrading Trellis Packages
+
+After upgrading `TrellisVersion` in `template/Directory.Packages.props`, sync the API reference files:
+
+```powershell
+dotnet build template/Domain/src/Domain.csproj /t:TrellisSyncApiReference
+```
+
+This copies the updated `trellis-api-*.md` files from the NuGet packages into `template/.github/`. Verify the diff and commit the updated reference files alongside the version bump.
+
 ## Updating Trellis Conventions
 
 When updating how AI should build services with Trellis:
