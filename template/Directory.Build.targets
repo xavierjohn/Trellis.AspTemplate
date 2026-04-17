@@ -1,0 +1,17 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!--
+    Copies Trellis API reference files from NuGet packages to the .github/ folder.
+    These files are declared as TrellisApiReference items by each Trellis package's
+    build/buildTransitive .targets. After upgrading Trellis packages, run dotnet build
+    to refresh the API references.
+  -->
+  <Target Name="CopyTrellisApiReferences"
+          BeforeTargets="Build"
+          Condition="'@(TrellisApiReference)' != ''">
+    <Copy SourceFiles="@(TrellisApiReference)"
+          DestinationFolder="$(MSBuildThisFileDirectory).github\"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

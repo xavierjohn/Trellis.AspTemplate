@@ -6,6 +6,15 @@ This template builds ASP.NET Core services on the Trellis framework for .NET 10.
 
 **STOP. Do not write or generate any code until you have read the API reference files listed below.** These files document the exact method signatures, overloads, conventions, and EF Core mapping rules. Guessing based on type names will produce code that compiles but fails at runtime (e.g., adding explicit EF `Property()` configuration on types that Trellis conventions already handle).
 
+### API reference delivery
+
+The `trellis-api-*.md` files in `.github/` are delivered by each Trellis NuGet package and copied here on build.
+
+- **After upgrading Trellis package versions** in `Directory.Packages.props`, run `dotnet build` to refresh the API references, then re-read every file relevant to your implementation.
+- **Per-package API references take precedence** over `trellis-api-patterns.md` if there is any conflict.
+
+### Required reading
+
 Read **every** file relevant to your implementation. For a typical service using aggregates, EF Core, and authorization, that means reading at least: `trellis-api-results.md`, `trellis-api-ddd.md`, `trellis-api-primitives.md`, `trellis-api-efcore.md`, `trellis-api-asp.md`, `trellis-api-authorization.md`, `trellis-api-stateless.md`, and `trellis-api-testing-reference.md`.
 
 | When working on... | Read first |
@@ -22,8 +31,8 @@ Read **every** file relevant to your implementation. For a typical service using
 | `LazyStateMachine<TState, TTrigger>` and `FireResult()` | `.github/trellis-api-stateless.md` |
 | Testing helpers, `FakeRepository`, `TestActorProvider`, assertions, `Unwrap()` | `.github/trellis-api-testing-reference.md` |
 | Analyzer diagnostics `TRLS001`–`TRLS022` and generator diagnostics | `.github/trellis-api-analyzers.md` |
-| Supported cross-package patterns and known sample-app-only APIs | `.github/trellis-api-patterns.md` |
-| Scalar vs composite value-object classification | `.github/trellis-value-object-taxonomy.md` |
+| Supported cross-package patterns and known sample-app-only APIs | `.github/trellis-api-patterns.md` *(static, shipped with template)* |
+| Scalar vs composite value-object classification | `.github/trellis-value-object-taxonomy.md` *(static, shipped with template)* |
 
 ## Critical Rules
 
