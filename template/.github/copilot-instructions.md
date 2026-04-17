@@ -606,7 +606,7 @@ services.AddScoped<IActorProvider, HttpActorProvider>();
 
 > **NuGet packages:** Add `<PackageVersion>` to `Directory.Packages.props`, then add `<PackageReference>` without a version in the relevant `.csproj`.
 
-> **Upgrading Trellis packages:** After changing `TrellisVersion` in `Directory.Packages.props`, run `dotnet build /t:TrellisSyncApiReference` to update the `.github/trellis-api-*.md` reference files from the new package versions.
+> **Upgrading Trellis packages:** After changing `TrellisVersion` in `Directory.Packages.props`, run `dotnet build ./{ServiceName}.slnx /t:TrellisSyncApiReference` from the service repository root to update the `.github/trellis-api-*.md` reference files from the new package versions.
 
 ### HTTP request documentation files
 
