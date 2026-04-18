@@ -368,7 +368,7 @@ public async ValueTask<Result<Unit>> Handle(
     await _matchRepository.FindByIdAsync(command.MatchId, cancellationToken)
         .ToResultAsync(Error.NotFound("Match not found.", command.MatchId))
         .BindAsync(match => match.RecordScorecard(command.Scorecard))
-        .TapAsync(_ => _scorecardRepository.Add(
+        .TapAsync(_ => _context.Scorecards.Add(
             Scorecard.Create(command.MatchId, command.Scorecard)))
         .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
 ```
@@ -384,11 +384,11 @@ public async ValueTask<Result<Unit>> Handle(
         .ToResultAsync(Error.NotFound("Match not found.", command.MatchId))
         .BindAsync(match => match.RecordScorecard(command.Scorecard))
         .CheckAsync(match => _matchRepository.SaveAsync(match, cancellationToken))  // ← committed!
-        .TapAsync(_ => _scorecardRepository.Add(
+        .TapAsync(_ => _context.Scorecards.Add(
             Scorecard.Create(command.MatchId, command.Scorecard)))
-        .CheckAsync(_ => _scorecardRepository.SaveAsync(                            // ← fails here
-            Scorecard.Create(command.MatchId, command.Scorecard),                    //   but match is
-            cancellationToken));                                                      //   already saved
+        .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));   // ← fails here
+                                                                                     //   but match is
+                                                                                     //   already saved
 ```
 - **Exceptions:** If you need a store-generated value mid-flow (e.g., identity PK), prefer client-generated IDs (Trellis typed IDs are GUIDs). When that is not possible, wrap multiple saves in an explicit EF Core transaction — see the unit-of-work pattern in `.github/trellis-api-patterns.md`.
 - **Reference:** See `.github/trellis-api-patterns.md §Unit of work with shared DbContext`, `.github/trellis-api-efcore.md §DbContextExtensions`.

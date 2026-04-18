@@ -310,7 +310,7 @@ public async ValueTask<Result<Unit>> Handle(
     await _matchRepository.FindByIdAsync(command.MatchId, cancellationToken)
         .ToResultAsync(Error.NotFound("Match not found.", command.MatchId))
         .BindAsync(match => match.RecordScorecard(command.Scorecard))
-        .TapAsync(_ => _scorecardRepository.Add(
+        .TapAsync(_ => _context.Scorecards.Add(
             Scorecard.Create(command.MatchId, command.Scorecard)))
         .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
 ```
@@ -327,9 +327,9 @@ public async ValueTask<Result<Unit>> Handle(
         .BindAsync(match => match.RecordScorecard(command.Scorecard))
         .CheckAsync(match => _matchRepository.SaveAsync(match, cancellationToken))
         // ↑ Match changes are now committed to the database.
-        .TapAsync(_ => _scorecardRepository.Add(
+        .TapAsync(_ => _context.Scorecards.Add(
             Scorecard.Create(command.MatchId, command.Scorecard)))
-        .CheckAsync(_ => _scorecardRepository.SaveAsync(/* ... */));
+        .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
         // ↑ If this fails, the match update is already committed but the
         //   scorecard is not — the database is in an inconsistent state.
 ```
