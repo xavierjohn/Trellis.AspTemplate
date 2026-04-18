@@ -266,6 +266,111 @@ public sealed class Product
 
 ---
 
+## Pattern: Unit of work with shared DbContext
+
+### Why DbContext is already a unit of work
+
+EF Core's `DbContext` tracks all entity changes in memory and writes them atomically in a single `SaveChanges` call. When repositories are registered as scoped services and share the same `DbContext`, **one `SaveChangesResultUnitAsync` at the end of a handler persists all changes across all repositories in a single database transaction.**
+
+This means Trellis does not need an explicit unit-of-work abstraction or transaction-scoped result pipeline. The DbContext itself is the unit of work.
+
+### Applicable APIs
+
+| API | Exact Signature | Notes |
+| --- | --- | --- |
+| Save unit | `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)` | Single atomic commit |
+
+### Single-aggregate handlers (common case)
+
+When a handler mutates only one aggregate, calling `RepositoryBase.SaveAsync` (which internally calls `SaveChangesResultUnitAsync`) is the correct pattern:
+
+```csharp
+using Trellis;
+
+public async ValueTask<Result<Order>> Handle(
+    SubmitOrderCommand command,
+    CancellationToken cancellationToken) =>
+    await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken)
+        .BindAsync(order => order.Submit())
+        .BindAsync(order => _orderRepository.SaveAsync(order, cancellationToken)
+            .MapAsync(_ => order));
+```
+
+### Multi-aggregate handlers (stage all changes, save once)
+
+When a handler mutates multiple aggregates or repositories, **stage all changes first, then call `SaveChangesResultUnitAsync` once at the end**. Do not call `SaveAsync` on individual repositories:
+
+```csharp
+using Trellis;
+using Trellis.EntityFrameworkCore;
+
+public async ValueTask<Result<Unit>> Handle(
+    UploadScorecardCommand command,
+    CancellationToken cancellationToken) =>
+    await _matchRepository.FindByIdAsync(command.MatchId, cancellationToken)
+        .ToResultAsync(Error.NotFound("Match not found.", command.MatchId))
+        .BindAsync(match => match.RecordScorecard(command.Scorecard))
+        .TapAsync(_ => _scorecardRepository.Add(
+            Scorecard.Create(command.MatchId, command.Scorecard)))
+        .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
+```
+
+### Anti-pattern: per-repository saves cause partial state
+
+```csharp
+// ⚠️ PARTIAL-STATE RISK
+public async ValueTask<Result<Unit>> Handle(
+    UploadScorecardCommand command,
+    CancellationToken cancellationToken) =>
+    await _matchRepository.FindByIdAsync(command.MatchId, cancellationToken)
+        .ToResultAsync(Error.NotFound("Match not found.", command.MatchId))
+        .BindAsync(match => match.RecordScorecard(command.Scorecard))
+        .CheckAsync(match => _matchRepository.SaveAsync(match, cancellationToken))
+        // ↑ Match changes are now committed to the database.
+        .TapAsync(_ => _scorecardRepository.Add(
+            Scorecard.Create(command.MatchId, command.Scorecard)))
+        .CheckAsync(_ => _scorecardRepository.SaveAsync(/* ... */));
+        // ↑ If this fails, the match update is already committed but the
+        //   scorecard is not — the database is in an inconsistent state.
+```
+
+**What goes wrong:** `_matchRepository.SaveAsync` commits the match changes immediately. If the scorecard save subsequently fails (constraint violation, timeout, etc.), the handler returns a failure, but the match update is already persisted. The caller sees an error, retries, and may double-apply the match mutation.
+
+### Exception: store-generated values needed mid-flow
+
+Trellis typed IDs (`RequiredGuid<T>`) are client-generated, so this is rare. If you must obtain a store-generated value (identity PK, computed column) before a later step, wrap multiple saves in an explicit EF Core transaction:
+
+```csharp
+using Microsoft.EntityFrameworkCore;
+using Trellis;
+using Trellis.EntityFrameworkCore;
+
+await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+var result = await CreateLegacyRecord(command, cancellationToken)          // needs identity PK
+    .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken)) // intermediate save
+    .BindAsync(record => CreateDependentRecord(record.Id, cancellationToken))
+    .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken)); // final save
+
+if (result.IsSuccess)
+    await transaction.CommitAsync(cancellationToken);
+// On failure, transaction is rolled back when disposed — both saves are undone.
+```
+
+### Out of scope: external side effects
+
+`SaveChangesResultUnitAsync` makes database writes atomic, but it does **not** coordinate with external systems (file storage, message queues, HTTP calls). If a handler writes to the database and publishes to a queue, a `SaveChanges` failure after the publish leaves the message in flight with no corresponding data. For cross-system consistency, use the outbox pattern or compensating actions — these are application-level concerns outside the scope of Trellis.
+
+### Preconditions
+
+| Precondition | Why it matters |
+| --- | --- |
+| All mutating repositories share one scoped `DbContext` | One `SaveChanges` must reach all tracked entities |
+| Repositories do not call `SaveChanges` internally (except `RepositoryBase.SaveAsync`) | Hidden saves break atomicity in multi-repo handlers |
+| DI scope covers the entire handler | Scoped `DbContext` must not be disposed mid-pipeline |
+
+---
+
 ## Pattern: HTTP client result pipelines
 
 ### Applicable APIs

@@ -292,6 +292,47 @@ public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, Cancell
 ```
 - **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-patterns.md`, `.github/trellis-api-mediator.md`.
 
+### Prefer a single final save in multi-aggregate handlers
+
+- **Rule:** 🔴 MUST prefer a single final `SaveChangesResultUnitAsync` call when a handler mutates multiple aggregates or repositories. Do not call `SaveAsync` on each repository independently.
+- **Rationale:** EF Core's `DbContext` is already a unit of work. All repositories share the same scoped `DbContext`, so a single `SaveChanges` at the end atomically persists all tracked changes. Calling `SaveAsync` per-repository risks committing partial state if a later operation fails. Single-aggregate handlers using `RepositoryBase.SaveAsync` are fine — this rule applies when orchestrating multiple repositories.
+- **Correct:**
+```csharp
+using Trellis;
+using Trellis.EntityFrameworkCore;
+
+// Stage mutations across repositories, then save once at the end.
+public async ValueTask<Result<Unit>> Handle(
+    UploadScorecardCommand command,
+    CancellationToken cancellationToken) =>
+    await _matchRepository.FindByIdAsync(command.MatchId, cancellationToken)
+        .ToResultAsync(Error.NotFound("Match not found.", command.MatchId))
+        .BindAsync(match => match.RecordScorecard(command.Scorecard))
+        .TapAsync(_ => _scorecardRepository.Add(
+            Scorecard.Create(command.MatchId, command.Scorecard)))
+        .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
+```
+- **Incorrect:**
+```csharp
+using Trellis;
+
+// ⚠️ PARTIAL-STATE RISK: If the second save fails, the first is already committed.
+public async ValueTask<Result<Unit>> Handle(
+    UploadScorecardCommand command,
+    CancellationToken cancellationToken) =>
+    await _matchRepository.FindByIdAsync(command.MatchId, cancellationToken)
+        .ToResultAsync(Error.NotFound("Match not found.", command.MatchId))
+        .BindAsync(match => match.RecordScorecard(command.Scorecard))
+        .CheckAsync(match => _matchRepository.SaveAsync(match, cancellationToken))  // ← committed!
+        .TapAsync(_ => _scorecardRepository.Add(
+            Scorecard.Create(command.MatchId, command.Scorecard)))
+        .CheckAsync(_ => _scorecardRepository.SaveAsync(                            // ← fails here
+            Scorecard.Create(command.MatchId, command.Scorecard),                    //   but match is
+            cancellationToken));                                                      //   already saved
+```
+- **Exceptions:** If you need a store-generated value mid-flow (e.g., identity PK), prefer client-generated IDs (Trellis typed IDs are GUIDs). When that is not possible, wrap multiple saves in an explicit EF Core transaction — see the unit-of-work pattern in `.github/trellis-api-patterns.md`.
+- **Reference:** See `.github/trellis-api-patterns.md §Unit of work with shared DbContext`, `.github/trellis-api-efcore.md §DbContextExtensions`.
+
 ### Use `LazyStateMachine<TState, TTrigger>` in aggregates
 
 - **Rule:** 🔴 MUST use `LazyStateMachine<TState, TTrigger>` instead of constructing `StateMachine<TState, TTrigger>` eagerly inside persisted aggregates.
@@ -484,6 +525,8 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 | Complex branching where chaining harms readability | Short explicit branching that still returns `Result<T>` | Deep nested `if` blocks everywhere |
 | Two or more independent async fetches | `Result.ParallelAsync(...).WhenAllAsync()` | Sequential awaits |
 | Save that returns `Result<Unit>` | `BindAsync` or `CheckAsync` | `TapAsync` when the save can fail |
+| Single-aggregate handler save | `RepositoryBase.SaveAsync` | Direct `SaveChangesAsync()` |
+| Multi-aggregate handler save | One final `_context.SaveChangesResultUnitAsync()` | Per-repository `SaveAsync` calls |
 | DTO mapping | Controller result mappers | Handler returns DTOs |
 | POST create response | `ToCreatedAtActionResult(...)` / `ToCreatedAtActionResultAsync(...)` | `Ok(...)` |
 | PUT/PATCH response with `Prefer` and ETag | `ToUpdatedActionResultAsync(...)` | Manual status-code branching |
