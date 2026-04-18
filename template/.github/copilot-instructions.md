@@ -215,6 +215,66 @@ public Result<Order> Approve() =>
 ```
 - **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-ddd.md`, `.github/trellis-api-patterns.md`.
 
+### Prefer shared resource loaders over per-command loaders
+
+- **Rule:** 🟡 SHOULD use `SharedResourceLoaderById<TResource, TId>` + `IIdentifyResource<TResource, TId>` as the default resource authorization pattern. Use per-command `ResourceLoaderById<TMessage, TResource, TId>` only when the command requires custom load logic (composite keys, non-ID lookups, message-specific projections).
+- **Rationale:** `SharedResourceLoaderById` eliminates per-command loader classes — one loader per aggregate type serves all commands that authorize against that aggregate. `AddResourceAuthorization(assemblies)` auto-bridges commands implementing `IIdentifyResource` to the shared loader. Per-command loaders are boilerplate when the loading logic is identical (find by ID).
+- **Correct:**
+```csharp
+using Mediator;
+using Trellis;
+using Trellis.Authorization;
+
+// Command declares which ID to extract — no per-command loader needed
+public sealed record CompleteTodoCommand(TodoId TodoId)
+    : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>,
+      IIdentifyResource<TodoItem, TodoId>
+{
+    public TodoId GetResourceId() => TodoId;
+    public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosComplete];
+    public IResult Authorize(Actor actor, TodoItem resource) =>
+        Result.Ensure(actor.IsOwner(resource.CreatedByActorId),
+            Error.Forbidden("Only the creator can complete this todo."));
+}
+
+// ONE shared loader for ALL commands that authorize against TodoItem
+internal sealed class TodoItemResourceLoader(AppDbContext context)
+    : SharedResourceLoaderById<TodoItem, TodoId>
+{
+    public override async Task<Result<TodoItem>> GetByIdAsync(
+        TodoId id, CancellationToken cancellationToken) =>
+        await context.TodoItems
+            .FirstOrDefaultResultAsync(
+                t => t.Id == id,
+                Error.NotFound($"Todo item {id.Value} not found."),
+                cancellationToken);
+}
+```
+- **Incorrect:**
+```csharp
+using Mediator;
+using Trellis;
+using Trellis.Authorization;
+
+// Command without IIdentifyResource — requires a per-command loader
+public sealed record CompleteTodoCommand(TodoId TodoId)
+    : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>
+{
+    public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosComplete];
+    public IResult Authorize(Actor actor, TodoItem resource) => /* ... */;
+}
+
+// Per-command loader repeats the same find-by-ID logic for every command
+internal class CompleteTodoResourceLoader
+    : ResourceLoaderById<CompleteTodoCommand, TodoItem, TodoId>
+{
+    protected override TodoId GetId(CompleteTodoCommand msg) => msg.TodoId;
+    protected override Task<Result<TodoItem>> GetByIdAsync(TodoId id, CancellationToken ct)
+        => /* identical DbContext query */;
+}
+```
+- **Reference:** See `.github/trellis-api-authorization.md §SharedResourceLoaderById`, `.github/trellis-api-mediator.md`.
+
 ### Build layer-by-layer and compile between layers
 
 - **Rule:** 🔴 MUST implement Domain → Application → Acl → Api → Tests, running `dotnet build` between layers and `dotnet test` after tests are added.
@@ -557,7 +617,7 @@ Study these files before replacing the Todo sample.
 | Specification with `.And()` composition | `template/Domain/src/Specifications/OverdueTodoSpecification.cs` |
 | Always-valid command with private constructor + `TryCreate` | `template/Application/src/Todos/UpdateTodoCommand.cs` |
 | `Result.Ensure` authorization check | `template/Application/src/Todos/CompleteTodoCommand.cs` |
-| `IAuthorizeResource<T>` with `SharedResourceLoaderById` or `ResourceLoaderById` | `template/Application/src/Todos/CompleteTodoCommand.cs`, `template/Acl/src/CompleteTodoResourceLoader.cs` |
+| `IAuthorizeResource<T>` with `SharedResourceLoaderById` and `IIdentifyResource` | `template/Application/src/Todos/CompleteTodoCommand.cs`, `template/Acl/src/TodoItemResourceLoader.cs` |
 | Repository returning `Maybe<T>` | `template/Application/src/Todos/ITodoRepository.cs` |
 | Handlers returning domain types and controller DTO mapping | `template/Application/src/Todos/`, `template/Api/src/2026-03-26/Models/TodoResponse.cs` |
 | `TimeProvider` for testable time validation | `template/Application/src/Todos/UpdateTodoCommand.cs` |

@@ -18,7 +18,7 @@ public static class DependencyInjection
         services.AddSingleton<TimeProvider>(TimeProvider.System);
         services.AddScoped<FakeRepository<TodoItem, TodoId>>();
         services.AddScoped<ITodoRepository, FakeRepositoryAdapter>();
-        services.AddResourceAuthorization(typeof(CompleteTodoCommand).Assembly, typeof(FakeCompleteTodoResourceLoader).Assembly);
+        services.AddResourceAuthorization(typeof(CompleteTodoCommand).Assembly, typeof(FakeTodoItemResourceLoader).Assembly);
         return services;
     }
 }

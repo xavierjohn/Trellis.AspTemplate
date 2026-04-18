@@ -18,7 +18,7 @@ public static class DependencyInjection
         services.AddScoped<ITodoRepository, TodoRepository>();
         services.AddResourceAuthorization(
             typeof(CompleteTodoCommand).Assembly,
-            typeof(CompleteTodoResourceLoader).Assembly);
+            typeof(TodoItemResourceLoader).Assembly);
 
         return services;
     }

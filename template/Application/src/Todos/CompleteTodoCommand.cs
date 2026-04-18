@@ -7,8 +7,11 @@ using Trellis.Authorization;
 /// <summary>
 /// Completes a todo item. Only the creator can complete their own todo.
 /// </summary>
-public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>
+public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>, IIdentifyResource<TodoItem, TodoId>
 {
+    /// <inheritdoc />
+    public TodoId GetResourceId() => TodoId;
+
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosComplete];
 
