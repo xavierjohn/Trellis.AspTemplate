@@ -646,22 +646,33 @@ Study these files before replacing the Todo sample.
 
 ### Composition root and registration rules
 
-- **Rule:** 🔴 MUST keep repository interfaces in Application, implementations in Acl, one `DependencyInjection.cs` per layer, `IActorProvider` as singleton in Api, and `TimeProvider.System` as a singleton in Application.
-- **Rationale:** Trellis pipeline behaviors are singleton-based, and ASP.NET Core does not auto-register `TimeProvider`.
+- **Rule:** 🔴 MUST keep repository interfaces in Application, implementations in Acl, one `DependencyInjection.cs` per layer, `IActorProvider` registered in Api, and `TimeProvider.System` as a singleton in Application.
+- **Rationale:** ASP.NET Core does not auto-register `TimeProvider`. `IActorProvider` must be configured per environment (development vs. production). For custom providers that perform expensive async operations (e.g., database permission lookups), wrap with `AddCachingActorProvider<T>()` to cache the `Task<Actor>` per DI scope and avoid redundant resolution.
 - **Correct:**
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 
 services.AddSingleton(TimeProvider.System);
-services.AddCachingActorProvider<HttpActorProvider>();
+
+// Development — lightweight, no caching needed:
+services.AddDevelopmentActorProvider();
+
+// Production with cheap claim parsing — no caching needed:
+services.AddEntraActorProvider();
+
+// Production with expensive async provider (DB/API lookup) — use caching:
+services.AddCachingActorProvider<DatabaseActorProvider>();
 ```
 - **Incorrect:**
 ```csharp
-services.AddScoped<IActorProvider, HttpActorProvider>();
+// ⚠️ Bypasses caching — if DatabaseActorProvider does expensive work,
+// it will repeat that work every time GetCurrentActorAsync is called
+// within the same request (permission check + resource auth check).
+services.AddScoped<IActorProvider, DatabaseActorProvider>();
 ```
 - **Reference:** See `.github/trellis-api-authorization.md`, `.github/trellis-api-patterns.md`, `.github/trellis-api-asp.md`.
 
-> **`CachingActorProvider`:** When you need synchronous actor access after the async pipeline resolves it, use `AddCachingActorProvider<T>()`. It caches the actor per request in `HttpContext.Items` and prevents a singleton pipeline from depending on a scoped provider.
+> **`CachingActorProvider`:** Wraps any `IActorProvider` and caches the in-flight `Task<Actor>` for the current DI scope. Use `AddCachingActorProvider<T>()` when the inner provider performs expensive async work (database lookups, external API calls). Built-in providers (`AddDevelopmentActorProvider`, `AddEntraActorProvider`, `AddClaimsActorProvider`) are lightweight and do not require caching.
 
 ### Project layout
 
