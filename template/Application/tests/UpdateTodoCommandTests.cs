@@ -1,4 +1,4 @@
-﻿namespace Application.Tests;
+namespace Application.Tests;
 
 using Microsoft.Extensions.Time.Testing;
 using TodoSample.Application.Todos;
@@ -34,7 +34,7 @@ public class UpdateTodoCommandTests
             timeProvider: timeProvider);
 
         result.Should().BeFailure()
-            .Which.Should().BeOfType<ValidationError>();
+            .Which.Should().BeOfType<Error.UnprocessableContent>();
     }
 
     [Fact]

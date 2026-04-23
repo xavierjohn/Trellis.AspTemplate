@@ -46,8 +46,9 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
     /// <param name="timeProvider">Optional time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>
     public static Result<UpdateTodoCommand> TryCreate(TodoId todoId, Title title, DueDate dueDate, Maybe<Tag> tag, EntityTagValue[]? ifMatchETags = null, TimeProvider? timeProvider = null) =>
         Result.Ensure(dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
-                Error.Validation("Due date must be in the future.", "dueDate"))
-            .Map(_ => new UpdateTodoCommand(todoId, title, dueDate, tag, ifMatchETags));
+                new Error.UnprocessableContent(EquatableArray.Create(
+                    new FieldViolation(InputPointer.ForProperty("dueDate"), "due-date.in-future") { Detail = "Due date must be in the future." })))
+            .Map(() => new UpdateTodoCommand(todoId, title, dueDate, tag, ifMatchETags));
 }
 
 /// <summary>
@@ -63,7 +64,7 @@ public sealed class UpdateTodoCommandHandler : ICommandHandler<UpdateTodoCommand
     {
         var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
         return await maybe
-            .ToResult(Error.NotFound($"Todo {command.TodoId} not found."))
+            .ToResult(new Error.NotFound(new ResourceRef("Todo", command.TodoId.Value.ToString())) { Detail = $"Todo {command.TodoId} not found." })
             .OptionalETag(command.IfMatchETags)
             .Bind(todo => todo.Update(command.Title, command.DueDate, command.Tag))
             .CheckAsync(todo => _repository.SaveAsync(todo, cancellationToken));

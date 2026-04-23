@@ -1,8 +1,24 @@
 # Trellis.Asp — API Reference
 
-**Package:** `Trellis.Asp`  
-**Namespaces:** `Trellis.Asp`, `Trellis.Asp.ModelBinding`, `Trellis.Asp.Validation`  
-**Purpose:** ASP.NET Core integration for mapping Trellis results to HTTP responses, evaluating HTTP preconditions/ranges/preferences, and validating scalar value objects in MVC and Minimal APIs.
+**Package:** `Trellis.Asp` (since Phase 2 of the v2 redesign, this single package also bundles the AOT-friendly `Trellis.AspSourceGenerator.dll` at `analyzers/dotnet/cs/` — installing `Trellis.Asp` attaches the generator automatically — and contains the ASP.NET actor providers formerly published as `Trellis.Asp.Authorization`).
+**Namespaces:** `Trellis.Asp`, `Trellis.Asp.ModelBinding`, `Trellis.Asp.Validation`, `Trellis.Asp.Authorization` (actor providers; documented separately in [`trellis-api-authorization.md`](trellis-api-authorization.md))
+**Purpose:** ASP.NET Core integration for mapping Trellis results to HTTP responses, evaluating HTTP preconditions/ranges/preferences, validating scalar value objects in MVC and Minimal APIs, and emitting AOT-friendly `JsonConverter`s for Trellis scalar values.
+
+> **v3 (current): the legacy verbs have been removed.** The single supported
+> verb is `Result<T>.ToHttpResponse(...)` (and its `WriteOutcome`, `Page` and
+> async overloads). It returns `Microsoft.AspNetCore.Http.IResult` for
+> Minimal API and converts to MVC via `.AsActionResult<T>()`. The legacy
+> classes (`ActionResultExtensions`, `ActionResultExtensionsAsync`,
+> `HttpResultExtensions`, `HttpResultExtensionsAsync`,
+> `PageActionResultExtensions`, `PageHttpResultExtensions`,
+> `WriteOutcomeExtensions`) and the legacy verbs (`ToActionResult`,
+> `ToHttpResult`, `ToCreatedAtActionResult`, `ToCreatedAtRouteHttpResult`,
+> `ToCreatedHttpResult`, `ToUpdatedActionResult`, `ToUpdatedHttpResult`,
+> `ToPagedActionResult`, `ToPagedHttpResult`) were deleted after one
+> release cycle under `[Obsolete]`. See
+> [`articles/asp-tohttpresponse.md`](../docfx_project/articles/asp-tohttpresponse.md)
+> for the full reference. The type/method tables below may still mention
+> the removed verbs while the generated API reference is refreshed.
 
 ## Types
 
@@ -363,6 +379,36 @@ public static class ServiceCollectionExtensions
 | --- | --- | --- |
 | See [Extension methods](#extension-methods). | — | Registration helpers for MVC, Minimal APIs, middleware, endpoint filters, and `TrellisAspOptions`. |
 
+### Namespace `Trellis.Asp.Routing`
+
+### `TrellisValueObjectRouteConstraint<T>`
+
+**Declaration**
+
+```csharp
+public sealed class TrellisValueObjectRouteConstraint<T> : IRouteConstraint
+    where T : IParsable<T>
+```
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `bool Match(HttpContext?, IRouter?, string routeKey, RouteValueDictionary values, RouteDirection routeDirection)` | `bool` | Delegates to `T.TryParse(...)` against `CultureInfo.InvariantCulture`. Returns `false` when the route value is missing, null, or fails to parse. |
+
+### `RouteConstraintRegistrationExtensions`
+
+**Declaration**
+
+```csharp
+public static class RouteConstraintRegistrationExtensions
+```
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `IServiceCollection AddTrellisRouteConstraints(this IServiceCollection services, params Assembly[] assemblies)` | `IServiceCollection` | Scans the supplied assemblies (or the calling assembly + the assembly containing `IScalarValue<TSelf, TPrimitive>` — `Trellis.Core` — if none are supplied) for value objects implementing `IScalarValue<TSelf, TPrimitive>` and `IParsable<TSelf>`, then registers a `TrellisValueObjectRouteConstraint<T>` under the type's simple name. Existing entries in `RouteOptions.ConstraintMap` are preserved. Reflection-based; not Native AOT compatible. |
+| `IServiceCollection AddTrellisRouteConstraint<T>(this IServiceCollection services, string? constraintName = null) where T : IParsable<T>` | `IServiceCollection` | Registers a single value object route constraint without reflection. AOT-safe. |
+
+Once registered, route templates such as `"/products/{id:ProductId}"` parse and bind the segment via the value object's `IParsable<T>.TryParse` implementation.
+
 ### `TrellisAspOptions`
 
 **Declaration**
@@ -377,7 +423,7 @@ public sealed class TrellisAspOptions
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public TrellisAspOptions MapError<TError>(int statusCode) where TError : Error` | `TrellisAspOptions` | Overrides or adds an error-type-to-status-code mapping. Default mappings include `ValidationError=400`, `BadRequestError=400`, `UnauthorizedError=401`, `ForbiddenError=403`, `NotFoundError=404`, `MethodNotAllowedError=405`, `NotAcceptableError=406`, `ConflictError=409`, `GoneError=410`, `PreconditionFailedError=412`, `ContentTooLargeError=413`, `UnsupportedMediaTypeError=415`, `RangeNotSatisfiableError=416`, `DomainError=422`, `PreconditionRequiredError=428`, `RateLimitError=429`, `UnexpectedError=500`, `ServiceUnavailableError=503`. |
+| `public TrellisAspOptions MapError<TError>(int statusCode) where TError : Error` | `TrellisAspOptions` | Overrides or adds an error-type-to-status-code mapping. Default mappings (closed-ADT): `Error.BadRequest=400`, `Error.Unauthorized=401`, `Error.Forbidden=403`, `Error.NotFound=404`, `Error.MethodNotAllowed=405`, `Error.NotAcceptable=406`, `Error.Conflict=409`, `Error.Gone=410`, `Error.PreconditionFailed=412`, `Error.ContentTooLarge=413`, `Error.UnsupportedMediaType=415`, `Error.RangeNotSatisfiable=416`, `Error.UnprocessableContent=422`, `Error.PreconditionRequired=428`, `Error.TooManyRequests=429`, `Error.InternalServerError=500`, `Error.NotImplemented=501`, `Error.ServiceUnavailable=503`. |
 
 ### `ValidationErrorsContext`
 
@@ -394,109 +440,9 @@ public static class ValidationErrorsContext
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public static IDisposable BeginScope()` | `IDisposable` | Starts a new async-local validation collection scope; disposing restores the previous scope and property name. |
-| `public static ValidationError? GetValidationError()` | `ValidationError?` | Returns the aggregated `ValidationError` for the current scope, or `null` when no errors were collected. |
+| `public static Error.UnprocessableContent? GetUnprocessableContent()` | `Error.UnprocessableContent?` | Returns the aggregated `Error.UnprocessableContent` for the current scope (with `Fields`/`Rules` populated from collected `FieldViolation`s), or `null` when no errors were collected. |
 
-### `WriteOutcome<T>`
-
-**Declaration**
-
-```csharp
-public abstract record WriteOutcome<T>
-```
-
-| Name | Type | Description |
-| --- | --- | --- |
-| — | — | Base union type for write-operation responses. |
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| — | — | No public methods. |
-
-### `WriteOutcome<T>.Created`
-
-**Declaration**
-
-```csharp
-public sealed record Created(T Value, string Location, RepresentationMetadata? Metadata = null) : WriteOutcome<T>;
-```
-
-| Name | Type | Description |
-| --- | --- | --- |
-| `Value` | `T` | Created resource or response body. |
-| `Location` | `string` | Absolute or relative location URI for the created resource. |
-| `Metadata` | `RepresentationMetadata?` | Optional representation metadata applied to the response. |
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| — | — | No public methods beyond record-generated members. |
-
-### `WriteOutcome<T>.Updated`
-
-**Declaration**
-
-```csharp
-public sealed record Updated(T Value, RepresentationMetadata? Metadata = null) : WriteOutcome<T>;
-```
-
-| Name | Type | Description |
-| --- | --- | --- |
-| `Value` | `T` | Updated resource or response body. |
-| `Metadata` | `RepresentationMetadata?` | Optional representation metadata applied to the response. |
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| — | — | No public methods beyond record-generated members. |
-
-### `WriteOutcome<T>.UpdatedNoContent`
-
-**Declaration**
-
-```csharp
-public sealed record UpdatedNoContent(RepresentationMetadata? Metadata = null) : WriteOutcome<T>;
-```
-
-| Name | Type | Description |
-| --- | --- | --- |
-| `Metadata` | `RepresentationMetadata?` | Optional representation metadata applied to the `204` response. |
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| — | — | No public methods beyond record-generated members. |
-
-### `WriteOutcome<T>.Accepted`
-
-**Declaration**
-
-```csharp
-public sealed record Accepted(T StatusBody, string? MonitorUri = null, RetryAfterValue? RetryAfter = null) : WriteOutcome<T>;
-```
-
-| Name | Type | Description |
-| --- | --- | --- |
-| `StatusBody` | `T` | Accepted-operation status payload. |
-| `MonitorUri` | `string?` | Optional monitor URI written to `Location` / `Accepted(...)`. |
-| `RetryAfter` | `RetryAfterValue?` | Optional `Retry-After` header value. |
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| — | — | No public methods beyond record-generated members. |
-
-### `WriteOutcome<T>.AcceptedNoContent`
-
-**Declaration**
-
-```csharp
-public sealed record AcceptedNoContent(string? MonitorUri = null, RetryAfterValue? RetryAfter = null) : WriteOutcome<T>;
-```
-
-| Name | Type | Description |
-| --- | --- | --- |
-| `MonitorUri` | `string?` | Optional monitor URI written to `Location` / `Accepted(...)`. |
-| `RetryAfter` | `RetryAfterValue?` | Optional `Retry-After` header value. |
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| — | — | No public methods beyond record-generated members. |
+> **Note:** `WriteOutcome<T>` and its case records (`Created`, `Updated`, `UpdatedNoContent`, `Accepted`, `AcceptedNoContent`) live in `Trellis.Core` (namespace `Trellis`) — see [`trellis-api-core.md`](./trellis-api-core.md). They are documented there because Application-layer repositories (which cannot reference `Trellis.Asp`) must declare them as return types. The `WriteOutcomeExtensions` mappers below are the ASP.NET-specific surface that translates each case to `ActionResult` / `IResult`.
 
 ### `WriteOutcomeExtensions`
 
@@ -688,12 +634,11 @@ public sealed class ValidatingJsonConverterFactory : JsonConverterFactory
 public static ActionResult<TValue> ToActionResult<TValue>(this Result<TValue> result, ControllerBase controllerBase)
 public static ActionResult<TValue> ToActionResult<TValue>(this Error error, ControllerBase controllerBase)
 public static ActionResult<TOut> ToActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controllerBase, Func<TIn, ContentRangeHeaderValue> funcRange, Func<TIn, TOut> funcValue)
+public static ActionResult<TValue> ToActionResult<TValue>(this Result<TValue> result, ControllerBase controllerBase, long from, long to, long totalLength)
 public static ActionResult<TOut> ToActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controllerBase, Func<TIn, TOut> map)
 public static ActionResult<TValue> ToCreatedAtActionResult<TValue>(this Result<TValue> result, ControllerBase controllerBase, string actionName, Func<TValue, object?> routeValues, string? controllerName = null)
 public static ActionResult<TOut> ToCreatedAtActionResult<TValue, TOut>(this Result<TValue> result, ControllerBase controllerBase, string actionName, Func<TValue, object?> routeValues, Func<TValue, TOut> map, string? controllerName = null)
-public static ActionResult<TOut> ToActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controller, RepresentationMetadata metadata, Func<TIn, TOut> map)
-public static async Task<ActionResult<TOut>> ToActionResultAsync<TIn, TOut>(this Task<Result<TIn>> resultTask, ControllerBase controller, RepresentationMetadata metadata, Func<TIn, TOut> map)
-public static async ValueTask<ActionResult<TOut>> ToActionResultAsync<TIn, TOut>(this ValueTask<Result<TIn>> resultTask, ControllerBase controller, RepresentationMetadata metadata, Func<TIn, TOut> map)
+public static ActionResult<TOut> ToCreatedAtActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controllerBase, string actionName, Func<TIn, object?> routeValues, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map, string? controllerName = null)
 public static ActionResult<TOut> ToActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controller, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map)
 public static async Task<ActionResult<TOut>> ToActionResultAsync<TIn, TOut>(this Task<Result<TIn>> resultTask, ControllerBase controller, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map)
 public static async ValueTask<ActionResult<TOut>> ToActionResultAsync<TIn, TOut>(this ValueTask<Result<TIn>> resultTask, ControllerBase controller, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map)
@@ -706,12 +651,16 @@ public static async Task<ActionResult<TValue>> ToActionResultAsync<TValue>(this 
 public static async ValueTask<ActionResult<TValue>> ToActionResultAsync<TValue>(this ValueTask<Result<TValue>> resultTask, ControllerBase controllerBase)
 public static async Task<ActionResult<TOut>> ToActionResultAsync<TIn, TOut>(this Task<Result<TIn>> resultTask, ControllerBase controllerBase, Func<TIn, ContentRangeHeaderValue> funcRange, Func<TIn, TOut> funcValue)
 public static async ValueTask<ActionResult<TOut>> ToActionResultAsync<TIn, TOut>(this ValueTask<Result<TIn>> resultTask, ControllerBase controllerBase, Func<TIn, ContentRangeHeaderValue> funcRange, Func<TIn, TOut> funcValue)
+public static async Task<ActionResult<TValue>> ToActionResultAsync<TValue>(this Task<Result<TValue>> resultTask, ControllerBase controllerBase, long from, long to, long totalLength)
+public static async ValueTask<ActionResult<TValue>> ToActionResultAsync<TValue>(this ValueTask<Result<TValue>> resultTask, ControllerBase controllerBase, long from, long to, long totalLength)
 public static async Task<ActionResult<TOut>> ToActionResultAsync<TIn, TOut>(this Task<Result<TIn>> resultTask, ControllerBase controllerBase, Func<TIn, TOut> map)
 public static async ValueTask<ActionResult<TOut>> ToActionResultAsync<TIn, TOut>(this ValueTask<Result<TIn>> resultTask, ControllerBase controllerBase, Func<TIn, TOut> map)
 public static async Task<ActionResult<TValue>> ToCreatedAtActionResultAsync<TValue>(this Task<Result<TValue>> resultTask, ControllerBase controllerBase, string actionName, Func<TValue, object?> routeValues, string? controllerName = null)
 public static async ValueTask<ActionResult<TValue>> ToCreatedAtActionResultAsync<TValue>(this ValueTask<Result<TValue>> resultTask, ControllerBase controllerBase, string actionName, Func<TValue, object?> routeValues, string? controllerName = null)
 public static async Task<ActionResult<TOut>> ToCreatedAtActionResultAsync<TValue, TOut>(this Task<Result<TValue>> resultTask, ControllerBase controllerBase, string actionName, Func<TValue, object?> routeValues, Func<TValue, TOut> map, string? controllerName = null)
 public static async ValueTask<ActionResult<TOut>> ToCreatedAtActionResultAsync<TValue, TOut>(this ValueTask<Result<TValue>> resultTask, ControllerBase controllerBase, string actionName, Func<TValue, object?> routeValues, Func<TValue, TOut> map, string? controllerName = null)
+public static async Task<ActionResult<TOut>> ToCreatedAtActionResultAsync<TIn, TOut>(this Task<Result<TIn>> resultTask, ControllerBase controllerBase, string actionName, Func<TIn, object?> routeValues, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map, string? controllerName = null)
+public static async ValueTask<ActionResult<TOut>> ToCreatedAtActionResultAsync<TIn, TOut>(this ValueTask<Result<TIn>> resultTask, ControllerBase controllerBase, string actionName, Func<TIn, object?> routeValues, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map, string? controllerName = null)
 ```
 
 ### `HttpResultExtensions`
@@ -719,6 +668,7 @@ public static async ValueTask<ActionResult<TOut>> ToCreatedAtActionResultAsync<T
 ```csharp
 public static Microsoft.AspNetCore.Http.IResult ToHttpResult<TValue>(this Result<TValue> result, TrellisAspOptions? options = null)
 public static Microsoft.AspNetCore.Http.IResult ToHttpResult(this Error error, TrellisAspOptions? options = null)
+public static Microsoft.AspNetCore.Http.IResult ToHttpResult<TIn, TOut>(this Result<TIn> result, Func<TIn, TOut> map, TrellisAspOptions? options = null)
 public static Microsoft.AspNetCore.Http.IResult ToCreatedAtRouteHttpResult<TValue>(this Result<TValue> result, string routeName, Func<TValue, RouteValueDictionary> routeValues, TrellisAspOptions? options = null)
 public static Microsoft.AspNetCore.Http.IResult ToCreatedAtRouteHttpResult<TValue, TOut>(this Result<TValue> result, string routeName, Func<TValue, RouteValueDictionary> routeValues, Func<TValue, TOut> map, TrellisAspOptions? options = null)
 public static Microsoft.AspNetCore.Http.IResult ToHttpResult<TIn, TOut>(this Result<TIn> result, HttpContext httpContext, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map, TrellisAspOptions? options = null)
@@ -734,6 +684,8 @@ public static Microsoft.AspNetCore.Http.IResult ToUpdatedHttpResult<TIn, TOut>(t
 ```csharp
 public static async Task<Microsoft.AspNetCore.Http.IResult> ToHttpResultAsync<TValue>(this Task<Result<TValue>> resultTask, TrellisAspOptions? options = null)
 public static async ValueTask<Microsoft.AspNetCore.Http.IResult> ToHttpResultAsync<TValue>(this ValueTask<Result<TValue>> resultTask, TrellisAspOptions? options = null)
+public static async Task<Microsoft.AspNetCore.Http.IResult> ToHttpResultAsync<TIn, TOut>(this Task<Result<TIn>> resultTask, Func<TIn, TOut> map, TrellisAspOptions? options = null)
+public static async ValueTask<Microsoft.AspNetCore.Http.IResult> ToHttpResultAsync<TIn, TOut>(this ValueTask<Result<TIn>> resultTask, Func<TIn, TOut> map, TrellisAspOptions? options = null)
 public static async Task<Microsoft.AspNetCore.Http.IResult> ToCreatedAtRouteHttpResultAsync<TValue>(this Task<Result<TValue>> resultTask, string routeName, Func<TValue, Microsoft.AspNetCore.Routing.RouteValueDictionary> routeValues, TrellisAspOptions? options = null)
 public static async ValueTask<Microsoft.AspNetCore.Http.IResult> ToCreatedAtRouteHttpResultAsync<TValue>(this ValueTask<Result<TValue>> resultTask, string routeName, Func<TValue, Microsoft.AspNetCore.Routing.RouteValueDictionary> routeValues, TrellisAspOptions? options = null)
 public static async Task<Microsoft.AspNetCore.Http.IResult> ToCreatedAtRouteHttpResultAsync<TValue, TOut>(this Task<Result<TValue>> resultTask, string routeName, Func<TValue, Microsoft.AspNetCore.Routing.RouteValueDictionary> routeValues, Func<TValue, TOut> map, TrellisAspOptions? options = null)
@@ -777,6 +729,8 @@ public static IServiceCollection AddTrellisAsp(this IServiceCollection services,
 ```csharp
 public static ActionResult ToActionResult<T, TOut>(this WriteOutcome<T> outcome, ControllerBase controller, Func<T, TOut>? map = null)
 public static ActionResult<TOut> ToUpdatedActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controller, RepresentationMetadata? metadata, Func<TIn, TOut> map)
+public static async Task<ActionResult<TOut>> ToUpdatedActionResultAsync<TIn, TOut>(this Task<Result<TIn>> resultTask, ControllerBase controller, RepresentationMetadata? metadata, Func<TIn, TOut> map)
+public static async ValueTask<ActionResult<TOut>> ToUpdatedActionResultAsync<TIn, TOut>(this ValueTask<Result<TIn>> resultTask, ControllerBase controller, RepresentationMetadata? metadata, Func<TIn, TOut> map)
 public static ActionResult<TOut> ToUpdatedActionResult<TIn, TOut>(this Result<TIn> result, ControllerBase controller, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map)
 public static async Task<ActionResult<TOut>> ToUpdatedActionResultAsync<TIn, TOut>(this Task<Result<TIn>> resultTask, ControllerBase controller, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map)
 public static async ValueTask<ActionResult<TOut>> ToUpdatedActionResultAsync<TIn, TOut>(this ValueTask<Result<TIn>> resultTask, ControllerBase controller, Func<TIn, RepresentationMetadata> metadataSelector, Func<TIn, TOut> map)
@@ -812,7 +766,7 @@ public sealed class WidgetsController : ControllerBase
     [HttpGet("{id}")]
     public ActionResult<WidgetResponse> Get(string id)
     {
-        Result<string> result = Result.Success(id);
+        Result<string> result = Result.Ok(id);
         return result.ToActionResult(this, value => new WidgetResponse(value));
     }
 }
@@ -838,7 +792,7 @@ app.UseScalarValueValidation();
 
 app.MapGet("/widgets/{id}", (string id) =>
 {
-    Result<string> result = Result.Success(id);
+    Result<string> result = Result.Ok(id);
     return result.ToHttpResult();
 }).WithScalarValueValidation();
 
@@ -862,7 +816,7 @@ static IResult UpdateWidget(HttpContext httpContext)
 
 ## Cross-references
 
-- [trellis-api-results.md](trellis-api-results.md)
-- [trellis-api-ddd.md](trellis-api-ddd.md)
+- [trellis-api-core.md](trellis-api-core.md)
+- [trellis-api-core.md](trellis-api-core.md)
 - [trellis-api-primitives.md](trellis-api-primitives.md)
 - [trellis-api-http.md](trellis-api-http.md)

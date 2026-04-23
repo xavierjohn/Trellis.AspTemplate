@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
-    <TrellisVersion>3.0.0-alpha.161</TrellisVersion>
+    <TrellisVersion>3.0.0-alpha.217.gc8442cf713</TrellisVersion>
+    <TrellisSliVersion>10.0.0-preview.15.gee5f48b431</TrellisSliVersion>
   </PropertyGroup>
   <!-- Runtime -->
   <ItemGroup>
@@ -24,23 +25,22 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.1" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.13.20" />
     <PackageVersion Include="Scalar.AspNetCore.Microsoft" Version="2.13.20" />
-    <PackageVersion Include="ServiceLevelIndicators.Asp.ApiVersioning" Version="10.0.0-preview.6" />
     <PackageVersion Include="System.Text.Json" Version="10.0.5" />
     <PackageVersion Include="Trellis.Analyzers" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Asp" Version="$(TrellisVersion)" />
-    <PackageVersion Include="Trellis.Asp.Authorization" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Authorization" Version="$(TrellisVersion)" />
-    <PackageVersion Include="Trellis.DomainDrivenDesign" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.Core" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.EntityFrameworkCore" Version="$(TrellisVersion)" />
-    <PackageVersion Include="Trellis.EntityFrameworkCore.Generator" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.FluentValidation" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.Http" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Mediator" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Primitives" Version="$(TrellisVersion)" />
-    <PackageVersion Include="Trellis.Primitives.Generator" Version="$(TrellisVersion)" />
-    <PackageVersion Include="Trellis.Results" Version="$(TrellisVersion)" />
-    <PackageVersion Include="Trellis.Stateless" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.StateMachine" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Testing" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Testing.AspNetCore" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.ServiceLevelIndicators" Version="$(TrellisSliVersion)" />
+    <PackageVersion Include="Trellis.ServiceLevelIndicators.Asp" Version="$(TrellisSliVersion)" />
+    <PackageVersion Include="Trellis.ServiceLevelIndicators.Asp.ApiVersioning" Version="$(TrellisSliVersion)" />
   </ItemGroup>
   <!-- Test -->
   <ItemGroup>

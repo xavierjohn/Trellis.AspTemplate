@@ -2,7 +2,7 @@
 
 using Mediator;
 using Microsoft.AspNetCore.Mvc;
-using ServiceLevelIndicators;
+using Trellis.ServiceLevelIndicators;
 using TodoSample.Api.v2026_03_26.Models;
 using TodoSample.Application.Todos;
 using TodoSample.Domain;
@@ -31,21 +31,16 @@ public class TodosController : ControllerBase
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async ValueTask<ActionResult<TodoResponse>> Create(
+    public ValueTask<ActionResult<TodoResponse>> Create(
         [FromBody] CreateTodoRequest request,
-        CancellationToken cancellationToken)
-    {
-        var result = await _sender.Send(
-            new CreateTodoCommand(request.Title, request.DueDate, request.Tag),
-            cancellationToken);
-
-        if (result.IsFailure)
-            return result.Error.ToActionResult<TodoResponse>(this);
-
-        var todo = result.Value;
-        Response.Headers.ETag = EntityTagValue.Strong(todo.ETag).ToHeaderValue();
-        return CreatedAtAction(nameof(GetById), new { id = (Guid)todo.Id }, TodoResponse.From(todo));
-    }
+        CancellationToken cancellationToken) =>
+        _sender.Send(new CreateTodoCommand(request.Title, request.DueDate, request.Tag), cancellationToken)
+            .ToHttpResponseAsync(
+                TodoResponse.From,
+                opts => opts
+                    .WithETag(t => t.ETag)
+                    .CreatedAtAction(nameof(GetById), t => new Microsoft.AspNetCore.Routing.RouteValueDictionary { ["id"] = (Guid)t.Id }))
+            .AsActionResultAsync<TodoResponse>();
 
     /// <summary>
     /// Get a todo item by ID.
@@ -54,28 +49,24 @@ public class TodosController : ControllerBase
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status304NotModified)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async ValueTask<ActionResult<TodoResponse>> GetById(
+    public ValueTask<ActionResult<TodoResponse>> GetById(
         [CustomerResourceId] TodoId id,
-        CancellationToken cancellationToken)
-    {
-        var result = await _sender.Send(new GetTodoByIdQuery(id), cancellationToken);
-
-        if (result.IsFailure)
-            return result.Error.ToActionResult<TodoResponse>(this);
-
-        var metadata = RepresentationMetadata.WithStrongETag(result.Value.ETag);
-        return result.ToActionResult(this, metadata, TodoResponse.From);
-    }
+        CancellationToken cancellationToken) =>
+        _sender.Send(new GetTodoByIdQuery(id), cancellationToken)
+            .ToHttpResponseAsync(TodoResponse.From, opts => opts.WithETag(t => t.ETag))
+            .AsActionResultAsync<TodoResponse>();
 
     /// <summary>
     /// Get all overdue todo items.
     /// </summary>
     [HttpGet("overdue")]
     [ProducesResponseType(typeof(IReadOnlyList<TodoResponse>), StatusCodes.Status200OK)]
-    public async ValueTask<ActionResult<IReadOnlyList<TodoResponse>>> GetOverdue(
+    public ValueTask<ActionResult<IReadOnlyList<TodoResponse>>> GetOverdue(
         CancellationToken cancellationToken) =>
-        await _sender.Send(new GetOverdueTodosQuery(), cancellationToken)
-            .ToActionResultAsync(this, todos => (IReadOnlyList<TodoResponse>)todos.Select(TodoResponse.From).ToList());
+        _sender.Send(new GetOverdueTodosQuery(), cancellationToken)
+            .ToHttpResponseAsync<IReadOnlyList<TodoItem>, IReadOnlyList<TodoResponse>>(
+                todos => todos.Select(TodoResponse.From).ToList())
+            .AsActionResultAsync<IReadOnlyList<TodoResponse>>();
 
     /// <summary>
     /// Update a todo item's title, due date, and tag.
@@ -92,14 +83,10 @@ public class TodosController : ControllerBase
         CancellationToken cancellationToken)
     {
         var ifMatchETags = ETagHelper.ParseIfMatch(Request);
-        var result = await UpdateTodoCommand.TryCreate(id, request.Title, request.DueDate, request.Tag, ifMatchETags)
-            .BindAsync(command => _sender.Send(command, cancellationToken));
-
-        if (result.IsFailure)
-            return result.Error.ToActionResult<TodoResponse>(this);
-
-        var metadata = RepresentationMetadata.WithStrongETag(result.Value.ETag);
-        return result.ToActionResult(this, metadata, TodoResponse.From);
+        return await UpdateTodoCommand.TryCreate(id, request.Title, request.DueDate, request.Tag, ifMatchETags)
+            .BindAsync(command => _sender.Send(command, cancellationToken))
+            .ToHttpResponseAsync(TodoResponse.From, opts => opts.WithETag(t => t.ETag))
+            .AsActionResultAsync<TodoResponse>();
     }
 
     /// <summary>
@@ -109,18 +96,12 @@ public class TodosController : ControllerBase
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async ValueTask<ActionResult<TodoResponse>> Complete(
+    public ValueTask<ActionResult<TodoResponse>> Complete(
         [CustomerResourceId] TodoId id,
-        CancellationToken cancellationToken)
-    {
-        var result = await _sender.Send(new CompleteTodoCommand(id), cancellationToken);
-
-        if (result.IsFailure)
-            return result.Error.ToActionResult<TodoResponse>(this);
-
-        var metadata = RepresentationMetadata.WithStrongETag(result.Value.ETag);
-        return result.ToActionResult(this, metadata, TodoResponse.From);
-    }
+        CancellationToken cancellationToken) =>
+        _sender.Send(new CompleteTodoCommand(id), cancellationToken)
+            .ToHttpResponseAsync(TodoResponse.From, opts => opts.WithETag(t => t.ETag))
+            .AsActionResultAsync<TodoResponse>();
 
     /// <summary>
     /// This method throws to show the error handling middleware handles it.
@@ -138,9 +119,9 @@ public class TodosController : ControllerBase
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async ValueTask<ActionResult<Trellis.Unit>> Delete(
+    public ValueTask<Microsoft.AspNetCore.Http.IResult> Delete(
         [CustomerResourceId] TodoId id,
         CancellationToken cancellationToken) =>
-        await _sender.Send(new DeleteTodoCommand(id), cancellationToken)
-            .ToActionResultAsync(this);
+        _sender.Send(new DeleteTodoCommand(id), cancellationToken)
+            .ToHttpResponseAsync();
 }

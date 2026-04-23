@@ -1,4 +1,4 @@
-﻿namespace Domain.Tests;
+namespace Domain.Tests;
 
 using TodoSample.Domain;
 
@@ -13,7 +13,7 @@ public class TitleTests
         var result = Title.TryCreate(value);
 
         result.Should().BeFailure()
-            .Which.Should().BeOfType<ValidationError>();
+            .Which.Should().BeOfType<Error.UnprocessableContent>();
     }
 
     [Fact]
@@ -32,7 +32,7 @@ public class TitleTests
         var result = Title.TryCreate(longTitle);
 
         result.Should().BeFailure()
-            .Which.Should().BeOfType<ValidationError>();
+            .Which.Should().BeOfType<Error.UnprocessableContent>();
     }
 
     [Fact]

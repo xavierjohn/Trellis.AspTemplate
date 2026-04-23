@@ -16,6 +16,6 @@ internal sealed class TodoItemResourceLoader(AppDbContext context)
         await context.TodoItems
             .FirstOrDefaultResultAsync(
                 t => t.Id == id,
-                Error.NotFound($"Todo item {id.Value} not found."),
+                new Error.NotFound(new ResourceRef("Todo", id.Value.ToString())) { Detail = $"Todo item {id.Value} not found." },
                 cancellationToken);
 }

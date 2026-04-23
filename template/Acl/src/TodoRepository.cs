@@ -22,7 +22,7 @@ internal class TodoRepository : ITodoRepository
             .Where(specification)
             .ToListAsync(cancellationToken);
 
-    public async Task<Result<Unit>> SaveAsync(TodoItem todo, CancellationToken cancellationToken)
+    public async Task<Result> SaveAsync(TodoItem todo, CancellationToken cancellationToken)
     {
         var entry = _context.Entry(todo);
         if (entry.State == EntityState.Detached)
@@ -31,11 +31,11 @@ internal class TodoRepository : ITodoRepository
         return await _context.SaveChangesResultUnitAsync(cancellationToken);
     }
 
-    public async Task<Result<Unit>> DeleteAsync(TodoId id, CancellationToken cancellationToken)
+    public async Task<Result> DeleteAsync(TodoId id, CancellationToken cancellationToken)
     {
         var maybe = await FindByIdAsync(id, cancellationToken);
         return await maybe
-            .ToResult(Error.NotFound($"Todo {id} not found."))
+            .ToResult(new Error.NotFound(new ResourceRef("Todo", id.Value.ToString())) { Detail = $"Todo {id} not found." })
             .Tap(todo => _context.TodoItems.Remove(todo))
             .BindAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
     }

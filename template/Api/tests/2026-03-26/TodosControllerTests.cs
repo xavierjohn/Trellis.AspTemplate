@@ -163,7 +163,7 @@ public class TodosControllerTests
     }
 
     [Fact]
-    public async Task Update_with_past_due_date_returns_400()
+    public async Task Update_with_past_due_date_returns_422()
     {
         var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
         var dueDate = DateTime.UtcNow.AddDays(5);
@@ -174,7 +174,7 @@ public class TodosControllerTests
         var pastDate = DateTime.UtcNow.AddDays(-1);
         var response = await client.PutAsJsonAsync($"api/Todos/{created.Id}?{VersionParam}", new { title = "Updated", dueDate = pastDate }, TestContext.Current.CancellationToken);
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableContent);
     }
 
     [Fact]

@@ -1,6 +1,6 @@
-# Trellis.Authorization / Trellis.Asp.Authorization — API Reference
+# Trellis.Authorization — API Reference
 
-**Packages:** `Trellis.Authorization`, `Trellis.Asp.Authorization`
+**Package:** `Trellis.Authorization` (domain layer). ASP.NET actor providers (`ClaimsActorProvider`, `EntraActorProvider`, `DevelopmentActorProvider`, `CachingActorProvider`) ship inside `Trellis.Asp.nupkg` since Phase 2; their CLR namespace is still `Trellis.Asp.Authorization`.
 **Namespaces:** `Trellis.Authorization`, `Trellis.Asp.Authorization`
 **Purpose:** Defines actor/resource authorization primitives plus ASP.NET Core actor providers and DI registration helpers.
 
@@ -513,8 +513,8 @@ public sealed record CancelOrderCommand(string OrderId) : IAuthorizeResource<Ord
 {
     public IResult Authorize(Actor actor, Order resource) =>
         actor.IsOwner(resource.OwnerId)
-            ? Result.Success()
-            : Result.Failure(Error.Forbidden("Only the owner can cancel the order."));
+            ? Result.Ok()
+            : Result.Fail(new Error.Forbidden("orders.cancel") { Detail = "Only the owner can cancel the order." });
 }
 
 public sealed class CancelOrderLoader : ResourceLoaderById<CancelOrderCommand, Order, string>
@@ -522,7 +522,7 @@ public sealed class CancelOrderLoader : ResourceLoaderById<CancelOrderCommand, O
     protected override string GetId(CancelOrderCommand message) => message.OrderId;
 
     protected override Task<Result<Order>> GetByIdAsync(string id, CancellationToken cancellationToken) =>
-        Task.FromResult(Result.Success(new Order(id, "user-1")));
+        Task.FromResult(Result.Ok(new Order(id, "user-1")));
 }
 ```
 
@@ -562,6 +562,6 @@ services.AddDevelopmentActorProvider(options =>
 ## Cross-references
 
 - [trellis-api-mediator.md](trellis-api-mediator.md)
-- [trellis-api-results.md](trellis-api-results.md)
+- [trellis-api-core.md](trellis-api-core.md)
 - [trellis-api-asp.md](trellis-api-asp.md)
 - [trellis-api-testing-reference.md](trellis-api-testing-reference.md)

@@ -28,6 +28,6 @@ public sealed class GetOverdueTodosQueryHandler : IQueryHandler<GetOverdueTodosQ
     }
 
     public async ValueTask<Result<IReadOnlyList<TodoItem>>> Handle(GetOverdueTodosQuery query, CancellationToken cancellationToken) =>
-        Result.Success<IReadOnlyList<TodoItem>>(
+        Result.Ok<IReadOnlyList<TodoItem>>(
             await _repository.GetAllAsync(new OverdueTodoSpecification(_timeProvider.GetUtcNow().UtcDateTime), cancellationToken));
 }
