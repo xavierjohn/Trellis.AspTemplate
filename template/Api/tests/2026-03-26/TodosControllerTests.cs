@@ -226,6 +226,46 @@ public class TodosControllerTests
         getDeletedResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    #region List endpoint (paginated)
+
+    [Fact]
+    public async Task List_returns_200_with_items_and_link_header_when_more_pages_exist()
+    {
+        var client = CreateClient("user-1", "todos:create", "todos:read");
+        var due = DateTime.UtcNow.AddDays(5);
+        for (var i = 0; i < 3; i++)
+        {
+            var post = await client.PostAsJsonAsync(BaseUrl, new { title = $"List item {i}", dueDate = due }, TestContext.Current.CancellationToken);
+            post.StatusCode.Should().Be(HttpStatusCode.Created);
+        }
+
+        var response = await client.GetAsync($"api/Todos?limit=2&{VersionParam}", TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var page = await response.Content.ReadFromJsonAsync<PagedListPayload>(TestContext.Current.CancellationToken);
+        page.Should().NotBeNull();
+        page!.Items.Should().HaveCount(2);
+        page.Next.Should().NotBeNull();
+        // RFC 8288 Link header announces the next page.
+        response.Headers.TryGetValues("Link", out var link).Should().BeTrue();
+        string.Join(",", link!).Should().Contain("rel=\"next\"");
+    }
+
+    [Fact]
+    public async Task List_with_invalid_cursor_returns_400()
+    {
+        var client = CreateClient("user-1", "todos:read");
+
+        var response = await client.GetAsync($"api/Todos?cursor=not-a-real-cursor&{VersionParam}", TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    private sealed record PagedListPayload(IReadOnlyList<TodoResponse> Items, PageLinkPayload? Next, PageLinkPayload? Previous, int RequestedLimit, int AppliedLimit, int DeliveredCount, bool WasCapped);
+    private sealed record PageLinkPayload(string Cursor, string Url);
+
+    #endregion
+
     #region Overdue endpoint
 
     [Fact]
