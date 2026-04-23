@@ -6,67 +6,53 @@ using Trellis.Authorization;
 
 /// <summary>
 /// Updates a todo item's title, due date, and tag.
-/// Always valid at construction — DueDate must be in the future.
 /// </summary>
-public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
+/// <remarks>
+/// Validation lives in <see cref="UpdateTodoCommandValidator"/> (FluentValidation), which the
+/// Mediator pipeline runs before this command reaches the handler. The handler returns a
+/// <see cref="WriteOutcome{T}"/> so idempotent re-submits short-circuit to
+/// <see cref="WriteOutcome{T}.UpdatedNoContent"/> (HTTP 204) without a redundant write,
+/// while a real change returns <see cref="WriteOutcome{T}.Updated"/> (HTTP 200) with the new
+/// representation in the body.
+/// </remarks>
+public sealed record UpdateTodoCommand(
+    TodoId TodoId,
+    Title Title,
+    DueDate DueDate,
+    Maybe<Tag> Tag,
+    EntityTagValue[]? IfMatchETags = null) : ICommand<Result<WriteOutcome<TodoItem>>>, IAuthorize
 {
-    public TodoId TodoId { get; }
-    public Title Title { get; }
-    public DueDate DueDate { get; }
-    public Maybe<Tag> Tag { get; }
-
-    /// <summary>
-    /// The ETag from the client's <c>If-Match</c> header.
-    /// When provided, the handler validates it against the aggregate's current ETag
-    /// before proceeding, returning 412 Precondition Failed if stale.
-    /// When <c>null</c>, the update is unconditional.
-    /// </summary>
-    public EntityTagValue[]? IfMatchETags { get; }
-
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosUpdate];
-
-    private UpdateTodoCommand(TodoId todoId, Title title, DueDate dueDate, Maybe<Tag> tag, EntityTagValue[]? ifMatchETags)
-    {
-        TodoId = todoId;
-        Title = title;
-        DueDate = dueDate;
-        Tag = tag;
-        IfMatchETags = ifMatchETags;
-    }
-
-    /// <summary>
-    /// Creates a valid UpdateTodoCommand. Validates that DueDate is in the future.
-    /// </summary>
-    /// <param name="todoId">The todo to update.</param>
-    /// <param name="title">New title.</param>
-    /// <param name="dueDate">New due date (must be in the future).</param>
-    /// <param name="tag">New optional tag.</param>
-    /// <param name="ifMatchETags">Optional ETags from the <c>If-Match</c> header for conditional update.</param>
-    /// <param name="timeProvider">Optional time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>
-    public static Result<UpdateTodoCommand> TryCreate(TodoId todoId, Title title, DueDate dueDate, Maybe<Tag> tag, EntityTagValue[]? ifMatchETags = null, TimeProvider? timeProvider = null) =>
-        Result.Ensure(dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
-                new Error.UnprocessableContent(EquatableArray.Create(
-                    new FieldViolation(InputPointer.ForProperty("dueDate"), "due-date.in-future") { Detail = "Due date must be in the future." })))
-            .Map(() => new UpdateTodoCommand(todoId, title, dueDate, tag, ifMatchETags));
 }
 
 /// <summary>
-/// Handler for UpdateTodoCommand.
+/// Handler for <see cref="UpdateTodoCommand"/>.
 /// </summary>
-public sealed class UpdateTodoCommandHandler : ICommandHandler<UpdateTodoCommand, Result<TodoItem>>
+public sealed class UpdateTodoCommandHandler : ICommandHandler<UpdateTodoCommand, Result<WriteOutcome<TodoItem>>>
 {
     private readonly ITodoRepository _repository;
 
     public UpdateTodoCommandHandler(ITodoRepository repository) => _repository = repository;
 
-    public async ValueTask<Result<TodoItem>> Handle(UpdateTodoCommand command, CancellationToken cancellationToken)
+    public async ValueTask<Result<WriteOutcome<TodoItem>>> Handle(UpdateTodoCommand command, CancellationToken cancellationToken)
     {
         var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
         return await maybe
             .ToResult(new Error.NotFound(new ResourceRef("Todo", command.TodoId.Value.ToString())) { Detail = $"Todo {command.TodoId} not found." })
             .OptionalETag(command.IfMatchETags)
-            .Bind(todo => todo.Update(command.Title, command.DueDate, command.Tag))
-            .CheckAsync(todo => _repository.SaveAsync(todo, cancellationToken));
+            .Bind<TodoItem, WriteOutcome<TodoItem>>(todo =>
+                IsUnchanged(todo, command)
+                    ? Result.Ok<WriteOutcome<TodoItem>>(new WriteOutcome<TodoItem>.UpdatedNoContent())
+                    : todo.Update(command.Title, command.DueDate, command.Tag)
+                          .Map(updated => (WriteOutcome<TodoItem>)new WriteOutcome<TodoItem>.Updated(updated)))
+            .CheckAsync(outcome => outcome is WriteOutcome<TodoItem>.Updated updated
+                ? _repository.SaveAsync(updated.Value, cancellationToken)
+                : Task.FromResult(Result.Ok()));
     }
+
+    private static bool IsUnchanged(TodoItem todo, UpdateTodoCommand command) =>
+        todo.Title == command.Title
+        && todo.DueDate == command.DueDate
+        && todo.Tag == command.Tag;
 }

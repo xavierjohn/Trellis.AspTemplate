@@ -71,20 +71,22 @@ public class TodosController : ControllerBase
     /// <summary>
     /// Update a todo item's title, due date, and tag.
     /// Supports RFC 9110 conditional requests via If-Match header.
+    /// Idempotent — when the new values match the current state, returns 204 No Content
+    /// without rewriting; otherwise returns 200 with the updated representation.
     /// </summary>
     [HttpPut("{id}")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status412PreconditionFailed)]
-    public async ValueTask<ActionResult<TodoResponse>> Update(
+    [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
+    public ValueTask<ActionResult<TodoResponse>> Update(
         [CustomerResourceId] TodoId id,
         [FromBody] UpdateTodoRequest request,
         CancellationToken cancellationToken)
     {
         var ifMatchETags = ETagHelper.ParseIfMatch(Request);
-        return await UpdateTodoCommand.TryCreate(id, request.Title, request.DueDate, request.Tag, ifMatchETags)
-            .BindAsync(command => _sender.Send(command, cancellationToken))
+        return _sender.Send(new UpdateTodoCommand(id, request.Title, request.DueDate, request.Tag, ifMatchETags), cancellationToken)
             .ToHttpResponseAsync(TodoResponse.From, opts => opts.WithETag(t => t.ETag))
             .AsActionResultAsync<TodoResponse>();
     }

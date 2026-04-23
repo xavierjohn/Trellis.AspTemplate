@@ -163,6 +163,24 @@ public class TodosControllerTests
     }
 
     [Fact]
+    public async Task Update_with_unchanged_values_returns_204_NoContent()
+    {
+        // Idempotency: re-PUT the same representation -> WriteOutcome.UpdatedNoContent -> 204.
+        var client = CreateClient("user-1", "todos:create", "todos:update");
+        var dueDate = DateTime.UtcNow.AddDays(5);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Idempotent", dueDate, tag = "stable" }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+
+        var response = await client.PutAsJsonAsync(
+            $"api/Todos/{created.Id}?{VersionParam}",
+            new { title = created.Title, dueDate = created.DueDate, tag = created.Tag },
+            TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
     public async Task Update_with_past_due_date_returns_422()
     {
         var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
