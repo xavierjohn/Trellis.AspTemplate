@@ -82,6 +82,67 @@ public class TodosControllerTests
         todo.Title.Should().Be("Fetch me");
     }
 
+    #region Conditional requests (RFC 9110 preconditions)
+
+    [Fact]
+    public async Task GetById_with_matching_If_None_Match_returns_304_NotModified()
+    {
+        var client = CreateClient("user-1", "todos:create", "todos:read");
+        var dueDate = DateTime.UtcNow.AddDays(5);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Cacheable", dueDate }, TestContext.Current.CancellationToken);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+        var fresh = await client.GetAsync($"api/Todos/{created.Id}?{VersionParam}", TestContext.Current.CancellationToken);
+        var etag = fresh.Headers.ETag;
+        etag.Should().NotBeNull();
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"api/Todos/{created.Id}?{VersionParam}");
+        request.Headers.IfNoneMatch.Add(etag!);
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotModified);
+    }
+
+    [Fact]
+    public async Task Update_with_matching_If_Match_returns_200()
+    {
+        var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
+        var due = DateTime.UtcNow.AddDays(5);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Original", dueDate = due }, TestContext.Current.CancellationToken);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+        var get = await client.GetAsync($"api/Todos/{created.Id}?{VersionParam}", TestContext.Current.CancellationToken);
+        var etag = get.Headers.ETag!;
+
+        var request = new HttpRequestMessage(HttpMethod.Put, $"api/Todos/{created.Id}?{VersionParam}")
+        {
+            Content = JsonContent.Create(new { title = "Renamed", dueDate = DateTime.UtcNow.AddDays(10) }),
+        };
+        request.Headers.IfMatch.Add(etag);
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Update_with_stale_If_Match_returns_412_PreconditionFailed()
+    {
+        var client = CreateClient("user-1", "todos:create", "todos:update");
+        var due = DateTime.UtcNow.AddDays(5);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Stale-victim", dueDate = due }, TestContext.Current.CancellationToken);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+        var staleEtag = new System.Net.Http.Headers.EntityTagHeaderValue("\"definitely-not-the-current-etag\"");
+
+        var request = new HttpRequestMessage(HttpMethod.Put, $"api/Todos/{created.Id}?{VersionParam}")
+        {
+            Content = JsonContent.Create(new { title = "Renamed", dueDate = DateTime.UtcNow.AddDays(10) }),
+        };
+        request.Headers.IfMatch.Add(staleEtag);
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    #endregion
+
     [Fact]
     public async Task GetById_nonexistent_returns_404()
     {

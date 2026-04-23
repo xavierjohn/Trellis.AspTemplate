@@ -71,7 +71,8 @@ public class TodosController : ControllerBase
             .AsActionResultAsync<PagedResponse<TodoResponse>>();
 
     /// <summary>
-    /// Get a todo item by ID.
+    /// Get a todo item by ID. Honors RFC 9110 conditional GETs: if the client sends
+    /// <c>If-None-Match: &lt;current ETag&gt;</c> the response is 304 Not Modified with no body.
     /// </summary>
     [HttpGet("{id}")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
@@ -81,7 +82,7 @@ public class TodosController : ControllerBase
         [CustomerResourceId] TodoId id,
         CancellationToken cancellationToken) =>
         _sender.Send(new GetTodoByIdQuery(id), cancellationToken)
-            .ToHttpResponseAsync(TodoResponse.From, opts => opts.WithETag(t => t.ETag))
+            .ToHttpResponseAsync(TodoResponse.From, opts => opts.WithETag(t => t.ETag).EvaluatePreconditions())
             .AsActionResultAsync<TodoResponse>();
 
     /// <summary>
