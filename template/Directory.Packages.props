@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <TrellisVersion>3.0.0-alpha.217.gc8442cf713</TrellisVersion>
-    <TrellisSliVersion>10.0.0-preview.15.gee5f48b431</TrellisSliVersion>
+    <TrellisSliVersion>10.0.0-preview.9</TrellisSliVersion>
   </PropertyGroup>
   <!-- Runtime -->
   <ItemGroup>
