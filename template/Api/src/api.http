@@ -1,4 +1,4 @@
-﻿### Create a todo (admin)
+### Create a todo (admin)
 # @name createTodo
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
@@ -6,7 +6,7 @@ X-Test-Actor: {{adminActor}}
 
 {
   "title": "Buy groceries",
-  "dueDate": "2026-04-01T12:00:00Z",
+  "dueDate": "2099-04-01T12:00:00Z",
   "tag": "shopping"
 }
 
@@ -17,10 +17,11 @@ X-Test-Actor: {{adminActor}}
 
 {
   "title": "Finish quarterly report",
-  "dueDate": "2026-03-31T17:00:00Z"
+  "dueDate": "2099-03-31T17:00:00Z"
 }
 
 ### Get todo by ID
+# @name getTodo
 GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Accept: application/json
 X-Test-Actor: {{userActor}}
@@ -30,18 +31,30 @@ GET {{host}}/api/Todos/overdue?api-version={{apiVersion}}
 Accept: application/json
 X-Test-Actor: {{userActor}}
 
-### Update todo
+### Update todo (changes title + dueDate + tag → 200 with body)
+# @name updateTodo
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
 
 {
   "title": "Buy organic groceries",
-  "dueDate": "2026-04-15T12:00:00Z",
+  "dueDate": "2099-04-15T12:00:00Z",
   "tag": "health"
 }
 
-### Update todo with past due date (→ 400)
+### Idempotent re-PUT (same values → 204 No Content via WriteOutcome.UpdatedNoContent)
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+
+{
+  "title": "Buy organic groceries",
+  "dueDate": "2099-04-15T12:00:00Z",
+  "tag": "health"
+}
+
+### Update todo with past due date (→ 422 Unprocessable Content via FluentValidation)
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
@@ -51,12 +64,30 @@ X-Test-Actor: {{adminActor}}
   "dueDate": "2020-01-01T12:00:00Z"
 }
 
-### Complete todo (by creator)
+### Complete todo (by creator) — Content-Type required by [Consumes("application/json")]
 POST {{host}}/api/Todos/{{createTodo.response.body.id}}/complete?api-version={{apiVersion}}
+Content-Type: application/json
 X-Test-Actor: {{adminActor}}
 
 ### Complete todo (by non-creator → 403)
 POST {{host}}/api/Todos/{{createTodo.response.body.id}}/complete?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{userActor}}
+
+### List todos (paginated, default limit 10)
+# @name listTodos
+GET {{host}}/api/Todos?api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+
+### List todos with explicit limit
+GET {{host}}/api/Todos?limit=5&api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+
+### List todos with invalid cursor (→ 400)
+GET {{host}}/api/Todos?cursor=not-base64&api-version={{apiVersion}}
+Accept: application/json
 X-Test-Actor: {{userActor}}
 
 ### Delete todo
@@ -68,24 +99,24 @@ GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}
 Accept: application/json
 X-Test-Actor: {{userActor}}
 
-### Bad Request — empty title
+### Bad Request — empty title (model-binding 400)
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
 
 {
   "title": "",
-  "dueDate": "2026-04-01T12:00:00Z"
+  "dueDate": "2099-04-01T12:00:00Z"
 }
 
-### Bad Request — invalid tag
+### Bad Request — invalid tag (model-binding 400)
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
 
 {
   "title": "Test invalid tag",
-  "dueDate": "2026-04-01T12:00:00Z",
+  "dueDate": "2099-04-01T12:00:00Z",
   "tag": "INVALID TAG"
 }
 
@@ -100,45 +131,76 @@ Accept: application/json
 
 ###############################################
 # RFC 9110 — Conditional Request Examples
+#
+# Each example is self-contained: it creates a fresh todo, captures the
+# server-issued ETag, and uses it in the conditional header. This avoids
+# the brittle "copy the ETag from a previous response" pattern that breaks
+# as soon as any intervening request mutates the resource.
 ###############################################
 
-### GET with If-None-Match — 304 Not Modified when ETag matches
-# Copy the ETag from the "Get todo by ID" response above
-GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
-Accept: application/json
-X-Test-Actor: {{userActor}}
-If-None-Match: {{createTodo.response.headers.ETag}}
-
-### PUT with If-Match — conditional update (succeeds if ETag matches)
-PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+### [Conditional GET] Create a fresh todo for the conditional GET demo
+# @name condGetCreate
+POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
-If-Match: {{createTodo.response.headers.ETag}}
 
 {
-  "title": "Buy organic groceries",
-  "dueDate": "2026-04-15T12:00:00Z",
+  "title": "Conditional GET probe",
+  "dueDate": "2099-05-01T12:00:00Z"
+}
+
+### [Conditional GET] First read — captures the ETag
+# @name condGetFirst
+GET {{host}}/api/Todos/{{condGetCreate.response.body.id}}?api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+
+### [Conditional GET] Re-read with If-None-Match — expect 304 Not Modified
+GET {{host}}/api/Todos/{{condGetCreate.response.body.id}}?api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+If-None-Match: {{condGetFirst.response.headers.ETag}}
+
+### [Conditional PUT] Create a fresh todo for the conditional PUT demo
+# @name condPutCreate
+POST {{host}}/api/Todos?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+
+{
+  "title": "Conditional PUT probe",
+  "dueDate": "2099-05-01T12:00:00Z"
+}
+
+### [Conditional PUT] If-Match with current ETag — expect 200 OK
+PUT {{host}}/api/Todos/{{condPutCreate.response.body.id}}?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+If-Match: {{condPutCreate.response.headers.ETag}}
+
+{
+  "title": "Conditionally updated",
+  "dueDate": "2099-05-15T12:00:00Z",
   "tag": "health"
 }
 
-### PUT with stale If-Match — 412 Precondition Failed
-# Using the old ETag after the update above — should fail
-PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+### [Conditional PUT] If-Match with stale ETag — expect 412 Precondition Failed
+PUT {{host}}/api/Todos/{{condPutCreate.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
 If-Match: "stale-etag-value"
 
 {
   "title": "This should fail",
-  "dueDate": "2026-04-15T12:00:00Z"
+  "dueDate": "2099-05-15T12:00:00Z"
 }
 
-### PUT without If-Match — unconditional update (OptionalETag is a no-op)
-PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+### [Unconditional PUT] No If-Match — OptionalETag is a no-op, request succeeds
+PUT {{host}}/api/Todos/{{condPutCreate.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
 
 {
   "title": "Unconditional update",
-  "dueDate": "2026-04-20T12:00:00Z"
+  "dueDate": "2099-05-20T12:00:00Z"
 }
