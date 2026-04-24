@@ -1,561 +1,136 @@
-﻿# Copilot Instructions — Building with Trellis
+# Copilot Instructions — Building with Trellis
 
-This template builds ASP.NET Core services on the Trellis framework for .NET 10.
+This file contains **service-architecture rules** for the scaffolded service. It deliberately does **not** restate framework API. For framework knowledge — types, methods, factories, generics, conventions, error shapes — read the API reference files listed below. They ship inside each Trellis NuGet package and are kept in sync with the package version on every build.
 
 ## 🔴 Before Writing Code — Read the API References
 
-**STOP. Do not write or generate any code until you have read the API reference files listed below.** These files document the exact method signatures, overloads, conventions, and EF Core mapping rules. Guessing based on type names will produce code that compiles but fails at runtime (e.g., adding explicit EF `Property()` configuration on types that Trellis conventions already handle).
-
 ### API reference delivery
 
-The `trellis-api-*.md` files in `.github/` are delivered by each Trellis NuGet package and copied here on build.
+The `.github/trellis-api-*.md` files are auto-copied from the Trellis NuGet packages on every restore/build by the `_CopyTrellisApiReference` MSBuild target (shipped as `buildTransitive` in each Trellis package). Treat them as authoritative — they describe the **exact** API surface of the version pinned in `Directory.Packages.props`.
 
-- **After upgrading Trellis package versions** in `Directory.Packages.props`, run `dotnet build` to refresh the API references, then re-read every file relevant to your implementation.
-- **Per-package API references take precedence** over `trellis-api-patterns.md` if there is any conflict.
+To force-refresh after bumping `TrellisVersion`:
+```
+dotnet build ./{ServiceName}.slnx /t:TrellisSyncApiReference
+```
 
 ### Required reading
 
-Read **every** file relevant to your implementation. For a typical service using aggregates, EF Core, and authorization, that means reading at least: `trellis-api-results.md`, `trellis-api-ddd.md`, `trellis-api-primitives.md`, `trellis-api-efcore.md`, `trellis-api-asp.md`, `trellis-api-authorization.md`, `trellis-api-stateless.md`, and `trellis-api-testing-reference.md`.
+Before writing any code, read these in order. They are the source of truth for every Trellis idiom — do not pattern-match from memory.
 
-| When working on... | Read first |
-|---|---|
-| `Result<T>`, `Maybe<T>`, `Error`, `Bind`, `Map`, `Tap`, `Ensure`, `Combine`, `ParallelAsync` | `.github/trellis-api-results.md` |
-| Aggregates, entities, value objects, specifications, ETag checks | `.github/trellis-api-ddd.md` |
-| `RequiredString<T>`, `RequiredGuid<T>`, `RequiredEnum<T>`, built-in primitives | `.github/trellis-api-primitives.md` |
-| MVC/Minimal API result mappers, `ETagHelper`, scalar binding, validation middleware | `.github/trellis-api-asp.md` |
-| EF Core conventions, interceptors, `HasTrellisIndex`, `FirstOrDefaultMaybeAsync` | `.github/trellis-api-efcore.md` |
-| Actor-based authorization, `IAuthorize`, resource authorization | `.github/trellis-api-authorization.md` |
-| FluentValidation bridge | `.github/trellis-api-fluentvalidation.md` |
-| `HttpClient` result extensions | `.github/trellis-api-http.md` |
-| Mediator pipeline behaviors | `.github/trellis-api-mediator.md` |
-| `LazyStateMachine<TState, TTrigger>` and `FireResult()` | `.github/trellis-api-stateless.md` |
-| Testing helpers, `FakeRepository`, `TestActorProvider`, assertions, `Unwrap()` | `.github/trellis-api-testing-reference.md` |
-| Analyzer diagnostics `TRLS001`–`TRLS022` and generator diagnostics | `.github/trellis-api-analyzers.md` |
-| Supported cross-package patterns and known sample-app-only APIs | `.github/trellis-api-patterns.md` *(static, shipped with template)* |
-| Scalar vs composite value-object classification | `.github/trellis-value-object-taxonomy.md` *(static, shipped with template)* |
+| Order | File | Why |
+|---|---|---|
+| 1 | `.github/trellis-api-cookbook.md` | **Start here.** 14 ready-to-copy recipes covering the most common patterns: CRUD aggregate, command/query handlers, paginated queries, minimal-API and MVC wiring, conditional GET, authorization, EF Core mappings, state machines, tests, anti-patterns, DI wiring, owned value objects, optional DTO fields. |
+| 2 | `.github/trellis-api-core.md` | `Result<T>`, `Maybe<T>`, `Error` (closed ADT), `WriteOutcome<T>`, value-object base types, DDD primitives, `EquatableArray`, `FieldViolation`, `InputPointer`. |
+| 3 | `.github/trellis-api-primitives.md` | `RequiredString<T>`, `RequiredGuid<T>`, `RequiredInt<T>`, `RequiredDecimal<T>`, `RequiredDateTime<T>`, `RequiredEnum<T>`, `Money`, `MonetaryAmount`, `EmailAddress`, `PhoneNumber`, `CurrencyCode`, etc. |
+| 4 | `.github/trellis-api-mediator.md` | `ICommand<T>`, `IQuery<T>`, `IMessageHandler<,>`, pipeline behaviors, `AddTrellis*` registration. |
+| 5 | `.github/trellis-api-efcore.md` | `ApplyTrellisConventions`, `AddTrellisInterceptors`, `SaveChangesResultUnitAsync`, `MaybeConvention`, `CompositeValueObjectConvention`, `[OwnedEntity]`, `HasTrellisIndex`, `FirstOrDefaultMaybeAsync`, `FirstOrDefaultResultAsync`, `MaybePropertyMapping`. |
+| 6 | `.github/trellis-api-asp.md` | `AddTrellisAsp`, scalar-VO model binding, `Maybe<T>` JSON converters, `ToHttpResponse`, `ToActionResult`, `HttpResponseOptionsBuilder`, ETag/range/preference helpers, ProblemDetails wiring. |
+| 7 | `.github/trellis-api-authorization.md` | `IAuthorize`, `IAuthorizeResource<T>`, `IIdentifyResource<T,TId>`, `SharedResourceLoaderById<T,TId>`, `IActorProvider`, `AddResourceAuthorization`, caching providers. |
+| 8 | `.github/trellis-api-statemachine.md` | `LazyStateMachine<TState, TTrigger>`, `FireResult`, `StateMachineExtensions`, transition guards. |
+| 9 | `.github/trellis-api-fluentvalidation.md` | Trellis ↔ FluentValidation bridge, validators as pipeline behaviors, `Result`-shaped failures. |
+| 10 | `.github/trellis-api-http.md` | `EntityTagValue`, `RangeOutcome`, conditional-request helpers, content negotiation. |
+| 11 | `.github/trellis-api-testing-reference.md` | `Trellis.Testing` and `Trellis.Testing.AspNetCore`: `Should().BeSuccess()`, `UnwrapError()`, `Unwrap()` (test-only), `FakeRepository`, `TestWebApplicationFactoryFixture`, `CreateClientWithActor`. |
+| 12 | `.github/trellis-api-analyzers.md` | All `TRLS###` analyzer diagnostics with rationale and code-fix behavior. |
+
+> **Hard rule:** when an example, factory, or method shape would be useful, look it up in the file above instead of guessing. Stale knowledge of v1 (e.g., `Result.Success(...)`, `Result.Failure(...)`, `Error.Validation("msg", "field")`, `result.Value`) will silently produce wrong code that compiles only by accident.
 
 ## Critical Rules
 
+Each rule is normative for **this service**. The "Reference" pointer is where to find the supporting framework API. Do not duplicate API teaching here.
+
 ### Study the template reference implementation first
 
-- **Rule:** 🔴 MUST read the Todo sample before replacing it.
-- **Rationale:** The shipped sample demonstrates the exact Trellis patterns this template expects.
-- **Correct:** Use the reference implementation table below and inspect the listed files before generating your own service.
-- **Incorrect:** Recreate the solution structure and patterns from scratch without checking the working sample.
-- **Reference:** See `template/Domain/src/`, `template/Application/src/`, `template/Acl/src/`, `template/Api/src/`.
+- **Rule:** 🔴 MUST read the `TodoSample.*` reference implementation before replacing it.
+- **Rationale:** The template is a complete worked example covering every layer (Domain, Application, Acl, Api, Tests). Replacing it cold loses the wiring proof points it demonstrates.
+- **Reference:** See the *Reference Implementation* table below for the exact files to study.
 
 ### Treat errors and optional values as explicit types
 
 - **Rule:** 🔴 MUST use `Result<T>` for expected failures and `Maybe<T>` for optional values. Never throw for business logic. Never use `try/catch` in Domain or Application layers for expected outcomes.
-- **Rationale:** Trellis relies on Railway Oriented Programming; exceptions for expected paths break the pipeline and reduce testability.
-- **Correct:**
-```csharp
-using Trellis;
-
-public static Result<Order> TryCreate(OrderName name) =>
-    string.IsNullOrWhiteSpace(name.Value)
-        ? Result.Fail<Order>(new Error.UnprocessableContent(EquatableArray.Create(
-            new FieldViolation(InputPointer.ForProperty("name"), "required") { Detail = "Name is required." })))
-        : Result.Ok(new Order(name));
-
-public partial class Customer : Aggregate<CustomerId>
-{
-    public partial Maybe<PhoneNumber> PhoneNumber { get; private set; }
-}
-```
-- **Incorrect:**
-```csharp
-using Trellis;
-
-public static Order Create(string name)
-{
-    if (string.IsNullOrWhiteSpace(name))
-        throw new InvalidOperationException("Name is required.");
-
-    return new Order(name);
-}
-
-public sealed class Customer
-{
-    public PhoneNumber? PhoneNumber { get; private set; }
-}
-```
-- **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-ddd.md`, `.github/trellis-api-efcore.md`.
+- **Rationale:** Trellis relies on Railway Oriented Programming; exceptions for expected paths break the pipeline and reduce testability. The `TRLS00x` analyzers enforce this.
+- **Reference:** See `trellis-api-core.md` (Result, Maybe, Error ADT) and `trellis-api-cookbook.md` Recipes 1, 2, 11.
 
 ### Eliminate primitive obsession on domain surfaces
 
-- **Rule:** 🔴 MUST expose value objects on aggregates, entities, commands, and public domain methods. Do not expose raw `Guid`, `string`, `int`, or `decimal` for domain concepts.
-- **Rationale:** Trellis models validity at the type level; primitive-based domain APIs reintroduce invalid states.
-- **Correct:**
-```csharp
-using Trellis;
-
-public sealed record UpdateTodoCommand(TodoId TodoId, Title Title, DueDate DueDate);
-
-public partial class Order : Aggregate<OrderId>
-{
-    public OrderStatus Status { get; private set; } = null!;
-    public CustomerId CustomerId { get; private set; } = null!;
-}
-```
-- **Incorrect:**
-```csharp
-public sealed record UpdateTodoCommand(Guid TodoId, string Title, DateTime DueDate);
-
-public sealed class Order
-{
-    public string Status { get; private set; } = string.Empty;
-    public Guid CustomerId { get; private set; }
-}
-```
-- **Reference:** See `.github/trellis-api-primitives.md`, `.github/trellis-value-object-taxonomy.md`.
+- **Rule:** 🔴 MUST expose value objects on aggregates, entities, commands, and public domain methods. Do not expose raw `Guid`, `string`, `int`, `decimal`, or `DateTime`/`DateTimeOffset` for domain concepts.
+- **Rationale:** Trellis models validity at the type level; primitive-based domain APIs reintroduce invalid states and bypass the source-generated converters/binders.
+- **Reference:** See `trellis-api-primitives.md` for the `Required*<T>` family and ready-made primitives (`EmailAddress`, `PhoneNumber`, `CurrencyCode`, `Money`, `MonetaryAmount`).
 
 ### Use `RequiredEnum<T>` for all domain enum-like concepts
 
 - **Rule:** 🔴 MUST model domain enums as `RequiredEnum<T>` partial classes, not C# `enum`.
-- **Rationale:** `RequiredEnum<T>` gives validation, JSON conversion, EF Core conversion, LINQ support, and attachable behavior.
-- **Correct:**
-```csharp
-using Trellis;
+- **Rationale:** `RequiredEnum<T>` provides validation, JSON conversion, EF Core conversion, LINQ support, and attachable per-member behavior — none of which a C# `enum` gives you.
+- **Reference:** See `trellis-api-primitives.md §RequiredEnum<TSelf>` and `trellis-api-efcore.md §ModelConfigurationBuilderExtensions`.
 
-public partial class OrderStatus : RequiredEnum<OrderStatus>
-{
-    public static readonly OrderStatus Draft = new();
-    public static readonly OrderStatus Confirmed = new();
-    public static readonly OrderStatus Shipped = new();
-    public static readonly OrderStatus Cancelled = new();
-}
-
-public partial class PaymentMethod : RequiredEnum<PaymentMethod>
-{
-    [EnumValue("credit-card")]
-    public static readonly PaymentMethod CreditCard = new();
-
-    [EnumValue("bank-transfer")]
-    public static readonly PaymentMethod BankTransfer = new();
-
-    public static readonly PaymentMethod Cash = new();
-}
-
-public partial class FulfillmentStatus : RequiredEnum<FulfillmentStatus>
-{
-    public static readonly FulfillmentStatus Draft = new(canModify: true, isTerminal: false);
-    public static readonly FulfillmentStatus Confirmed = new(canModify: false, isTerminal: false);
-    public static readonly FulfillmentStatus Cancelled = new(canModify: false, isTerminal: true);
-
-    public bool CanModify { get; }
-    public bool IsTerminal { get; }
-
-    private FulfillmentStatus(bool canModify, bool isTerminal)
-    {
-        CanModify = canModify;
-        IsTerminal = isTerminal;
-    }
-}
-```
-- **Incorrect:**
-```csharp
-public enum OrderStatus
-{
-    Draft,
-    Confirmed,
-    Shipped,
-    Cancelled
-}
-```
-- **Reference:** See `.github/trellis-api-primitives.md §RequiredEnum<TSelf>` and `.github/trellis-api-efcore.md §ModelConfigurationBuilderExtensions`.
 ### Make commands always-valid and time-testable
 
-- **Rule:** 🔴 MUST make commands receive value objects, use a private constructor plus `TryCreate` when cross-field validation exists, and use `TimeProvider` instead of `DateTime.UtcNow` or `DateTimeOffset.UtcNow`.
-- **Rationale:** Command validity belongs at construction time, and time-dependent rules must remain testable.
-- **Correct:**
-```csharp
-using Mediator;
-using Trellis;
-using Trellis.Authorization;
-
-public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
-{
-    public TodoId TodoId { get; }
-    public Title Title { get; }
-    public DueDate DueDate { get; }
-
-    private UpdateTodoCommand(TodoId todoId, Title title, DueDate dueDate)
-    {
-        TodoId = todoId;
-        Title = title;
-        DueDate = dueDate;
-    }
-
-    public static Result<UpdateTodoCommand> TryCreate(
-        TodoId todoId,
-        Title title,
-        DueDate dueDate,
-        TimeProvider? timeProvider = null) =>
-        Result.Ensure(
-                dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
-                new Error.UnprocessableContent(EquatableArray.Create(
-                    new FieldViolation(InputPointer.ForProperty("dueDate"), "must-be-future")
-                        { Detail = "Due date must be in the future." })))
-            .Map(_ => new UpdateTodoCommand(todoId, title, dueDate));
-}
-
-public Result<Order> Approve(TimeProvider timeProvider) =>
-    _machine.FireResult(Triggers.Approve)
-        .Tap(order => DomainEvents.Add(new OrderApprovedEvent(Id, OccurredAt: timeProvider.GetUtcNow().UtcDateTime)))
-        .Map(_ => this);
-```
-- **Incorrect:**
-```csharp
-using Mediator;
-
-public sealed record UpdateTodoCommand(Guid TodoId, string Title, DateTime DueDate) : ICommand<Result<TodoItem>>;
-
-public Result<Order> Approve() =>
-    _machine.FireResult(Triggers.Approve)
-        .Tap(_ => DomainEvents.Add(new OrderApprovedEvent(Id, OccurredAt: DateTime.UtcNow)))
-        .Map(_ => this);
-```
-- **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-ddd.md`, `.github/trellis-api-patterns.md`.
+- **Rule:** 🔴 MUST make commands receive value objects, use a private constructor plus `TryCreate` when cross-field validation exists, and use `TimeProvider` instead of `DateTime.UtcNow`/`DateTimeOffset.UtcNow`.
+- **Rationale:** Command validity belongs at construction time; time-dependent rules must remain testable. `TimeProvider.System` is registered as a singleton in `Application/src/DependencyInjection.cs`.
+- **Reference:** See `trellis-api-mediator.md` and `trellis-api-cookbook.md` Recipe 2.
 
 ### Prefer shared resource loaders over per-command loaders
 
-- **Rule:** 🟡 SHOULD use `SharedResourceLoaderById<TResource, TId>` + `IIdentifyResource<TResource, TId>` as the default resource authorization pattern. Use per-command `ResourceLoaderById<TMessage, TResource, TId>` only when the command requires custom load logic (composite keys, non-ID lookups, message-specific projections).
-- **Rationale:** `SharedResourceLoaderById` eliminates per-command loader classes — one loader per aggregate type serves all commands that authorize against that aggregate. `AddResourceAuthorization(assemblies)` auto-bridges commands implementing `IIdentifyResource` to the shared loader. Per-command loaders are boilerplate when the loading logic is identical (find by ID).
-- **Correct:**
-```csharp
-using Mediator;
-using Trellis;
-using Trellis.Authorization;
-
-// Command declares which ID to extract — no per-command loader needed
-public sealed record CompleteTodoCommand(TodoId TodoId)
-    : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>,
-      IIdentifyResource<TodoItem, TodoId>
-{
-    public TodoId GetResourceId() => TodoId;
-    public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosComplete];
-    public IResult Authorize(Actor actor, TodoItem resource) =>
-        Result.Ensure(actor.IsOwner(resource.CreatedByActorId),
-            Error.Forbidden("Only the creator can complete this todo."));
-}
-
-// ONE shared loader for ALL commands that authorize against TodoItem
-internal sealed class TodoItemResourceLoader(AppDbContext context)
-    : SharedResourceLoaderById<TodoItem, TodoId>
-{
-    public override async Task<Result<TodoItem>> GetByIdAsync(
-        TodoId id, CancellationToken cancellationToken) =>
-        await context.TodoItems
-            .FirstOrDefaultResultAsync(
-                t => t.Id == id,
-                Error.NotFound($"Todo item {id.Value} not found."),
-                cancellationToken);
-}
-```
-- **Incorrect:**
-```csharp
-using Mediator;
-using Trellis;
-using Trellis.Authorization;
-
-// Command without IIdentifyResource — requires a per-command loader
-public sealed record CompleteTodoCommand(TodoId TodoId)
-    : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>
-{
-    public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosComplete];
-    public IResult Authorize(Actor actor, TodoItem resource) => /* ... */;
-}
-
-// Per-command loader repeats the same find-by-ID logic for every command
-internal class CompleteTodoResourceLoader
-    : ResourceLoaderById<CompleteTodoCommand, TodoItem, TodoId>
-{
-    protected override TodoId GetId(CompleteTodoCommand msg) => msg.TodoId;
-    protected override Task<Result<TodoItem>> GetByIdAsync(TodoId id, CancellationToken ct)
-        => /* identical DbContext query */;
-}
-```
-- **Reference:** See `.github/trellis-api-authorization.md §SharedResourceLoaderById`, `.github/trellis-api-mediator.md`.
+- **Rule:** 🟡 SHOULD use `SharedResourceLoaderById<TResource, TId>` + `IIdentifyResource<TResource, TId>` as the default resource-authorization pattern. Use a per-command `ResourceLoaderById<TMessage, TResource, TId>` only when the command requires custom load logic (composite keys, non-ID lookups, message-specific projections).
+- **Rationale:** `SharedResourceLoaderById` eliminates per-command loader classes — one loader per aggregate type serves every command that authorizes against that aggregate. `AddResourceAuthorization(assemblies)` auto-bridges commands implementing `IIdentifyResource` to the shared loader.
+- **Reference:** See `trellis-api-authorization.md §SharedResourceLoaderById` and `trellis-api-cookbook.md` Recipe 7.
 
 ### Build layer-by-layer and compile between layers
 
 - **Rule:** 🔴 MUST implement Domain → Application → Acl → Api → Tests, running `dotnet build` between layers and `dotnet test` after tests are added.
-- **Rationale:** Trellis uses source generators for `partial Maybe<T>` properties and Mediator code; later layers depend on generated output from earlier builds.
-- **Correct:**
-```text
-1. Domain/src      -> dotnet build
-2. Application/src -> dotnet build
-3. Acl/src         -> dotnet build
-4. Api/src         -> dotnet build
-5. Tests           -> dotnet test
-```
-- **Incorrect:** Create all files across all projects first, then attempt a single build after generated code is already required by downstream layers.
-- **Reference:** See the `## Implementation Order and Build Checkpoints` section below.
+- **Rationale:** Trellis uses source generators for `partial Maybe<T>` properties, `[OwnedEntity]` plumbing, scalar-VO converters, and Mediator handler registrations; later layers depend on generated output from earlier builds.
+- **Reference:** See *Implementation Order and Build Checkpoints* below.
 
 ### Return `Maybe<T>` from repository lookups
 
-- **Rule:** 🔴 MUST return `Maybe<T>` from repository lookups and convert to `Result<T>` in handlers with `.ToResult(Error.NotFound(...))`.
-- **Rationale:** Absence is data, not failure; handlers own the domain meaning of “not found”.
-- **Correct:**
-```csharp
-using Trellis;
-
-public interface ITodoRepository
-{
-    Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken);
-}
-
-public async ValueTask<Result<TodoItem>> Handle(GetTodoByIdQuery query, CancellationToken cancellationToken)
-{
-    var maybe = await _repository.FindByIdAsync(query.TodoId, cancellationToken);
-    return maybe.ToResult(Error.NotFound("Todo not found.", query.TodoId));
-}
-```
-- **Incorrect:**
-```csharp
-using Trellis;
-
-public interface ITodoRepository
-{
-    Task<Result<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken);
-}
-```
-- **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-efcore.md §QueryableExtensions`.
+- **Rule:** 🔴 MUST return `Maybe<T>` from repository lookups and convert to `Result<T>` in handlers with `.ToResult(new Error.NotFound(...))`.
+- **Rationale:** Absence is data, not failure; handlers own the domain meaning of "not found" (which `ResourceRef` to attach, what `Detail` to surface).
+- **Reference:** See `trellis-api-core.md` (Maybe → Result conversion) and `trellis-api-efcore.md §QueryableExtensions` (`FirstOrDefaultMaybeAsync`, `FirstOrDefaultResultAsync`).
 
 ### Keep handlers on the ROP track
 
-- **Rule:** 🔴 MUST compose handler flows with `Bind`, `BindAsync`, `CheckAsync`, `Map`, and related result combinators. Do not unwrap and branch imperatively unless branching materially improves readability.
-- **Rationale:** ROP chains preserve failure propagation and keep success paths explicit.
-- **Correct:**
-```csharp
-using Trellis;
-
-public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
-    await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken)
-        .BindAsync(order => order.Submit())
-        .BindAsync(order => _orderRepository.SaveAsync(order, cancellationToken).MapAsync(_ => order));
-```
-- **Incorrect:**
-```csharp
-public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken)
-{
-    var result = await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken);
-    if (result.IsFailure)
-        return result.Error;
-
-    var order = result.Value; // ⚠️ won't compile — Result<T>.Value was removed in v2 (see .github/trellis-api-core.md). Use result.TryGetValue(out var order), result.Match(...), or var (ok, order, err) = result;
-    var submitResult = order.Submit();
-    if (submitResult.IsFailure)
-        return submitResult.Error;
-
-    await _orderRepository.SaveAsync(order, cancellationToken);
-    return order;
-}
-```
-- **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-patterns.md`, `.github/trellis-api-mediator.md`.
+- **Rule:** 🔴 MUST compose handler flows with `Bind`, `BindAsync`, `CheckAsync`, `Map`, `Tap`, and related result combinators. Do not destructure and branch imperatively unless branching materially improves readability of a non-linear flow.
+- **Rationale:** ROP chains preserve failure propagation, keep the success path explicit, and let analyzers spot `Map`-vs-`Bind` mistakes (`TRLS010`/`011`) and orphaned `IsSuccess` checks (`TRLS008`).
+- **Reference:** See `trellis-api-core.md` (`Bind`, `BindAsync`, `CheckAsync`, `Match`, `TryGetValue`, deconstruction) and `trellis-api-cookbook.md` Recipes 2, 4, 5.
 
 ### Prefer a single final save in multi-aggregate handlers
 
 - **Rule:** 🔴 MUST prefer a single final `SaveChangesResultUnitAsync` call when a handler mutates multiple aggregates or repositories. Do not call `SaveAsync` on each repository independently.
-- **Rationale:** EF Core's `DbContext` is already a unit of work. All repositories share the same scoped `DbContext`, so a single `SaveChanges` at the end atomically persists all tracked changes. Calling `SaveAsync` per-repository risks committing partial state if a later operation fails. Single-aggregate handlers using `RepositoryBase.SaveAsync` are fine — this rule applies when orchestrating multiple repositories.
-- **Correct:**
-```csharp
-using Trellis;
-using Trellis.EntityFrameworkCore;
-
-// Stage mutations across repositories, then save once at the end.
-public async ValueTask<Result<Unit>> Handle(
-    UploadScorecardCommand command,
-    CancellationToken cancellationToken) =>
-    await _matchRepository.FindByIdAsync(command.MatchId, cancellationToken)
-        .ToResultAsync(Error.NotFound("Match not found.", command.MatchId))
-        .BindAsync(match => match.RecordScorecard(command.Scorecard))
-        .TapAsync(_ => _context.Scorecards.Add(
-            Scorecard.Create(command.MatchId, command.Scorecard)))
-        .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
-```
-- **Incorrect:**
-```csharp
-using Trellis;
-
-// ⚠️ PARTIAL-STATE RISK: If the second save fails, the first is already committed.
-public async ValueTask<Result<Unit>> Handle(
-    UploadScorecardCommand command,
-    CancellationToken cancellationToken) =>
-    await _matchRepository.FindByIdAsync(command.MatchId, cancellationToken)
-        .ToResultAsync(Error.NotFound("Match not found.", command.MatchId))
-        .BindAsync(match => match.RecordScorecard(command.Scorecard))
-        .CheckAsync(match => _matchRepository.SaveAsync(match, cancellationToken))  // ← committed!
-        .TapAsync(_ => _context.Scorecards.Add(
-            Scorecard.Create(command.MatchId, command.Scorecard)))
-        .CheckAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));   // ← fails here
-                                                                                     //   but match is
-                                                                                     //   already saved
-```
-- **Exceptions:** If you need a store-generated value mid-flow (e.g., identity PK), prefer client-generated IDs (Trellis typed IDs are GUIDs). When that is not possible, wrap multiple saves in an explicit EF Core transaction — see the unit-of-work pattern in `.github/trellis-api-patterns.md`.
-- **Reference:** See `.github/trellis-api-patterns.md §Unit of work with shared DbContext`, `.github/trellis-api-efcore.md §DbContextExtensions`.
+- **Rationale:** EF Core's `DbContext` is already a unit of work — all repositories share the same scoped `DbContext`, so a single `SaveChanges` at the end atomically persists every tracked change. Per-repository `SaveAsync` calls risk committing partial state if a later operation fails.
+- **Exceptions:** Single-aggregate handlers using `RepositoryBase.SaveAsync` are fine. If a store-generated value is needed mid-flow, prefer client-generated IDs (Trellis typed IDs are GUIDs); when impossible, wrap multiple saves in an explicit EF Core transaction.
+- **Reference:** See `trellis-api-efcore.md §DbContextExtensions` (`SaveChangesResultUnitAsync`).
 
 ### Use `LazyStateMachine<TState, TTrigger>` in aggregates
 
-- **Rule:** 🔴 MUST use `LazyStateMachine<TState, TTrigger>` instead of constructing `StateMachine<TState, TTrigger>` eagerly inside persisted aggregates.
-- **Rationale:** EF Core materializes aggregates before state properties are populated; eager state-machine initialization can throw `NullReferenceException`.
-- **Correct:**
-```csharp
-using Stateless;
-using Trellis.Stateless;
+- **Rule:** 🔴 MUST use `LazyStateMachine<TState, TTrigger>` instead of constructing a Stateless `StateMachine<TState, TTrigger>` eagerly inside persisted aggregates.
+- **Rationale:** EF Core materializes aggregates before state properties are populated; eager state-machine initialization throws `NullReferenceException` at materialization time.
+- **Reference:** See `trellis-api-statemachine.md §LazyStateMachine<TState, TTrigger>` and `trellis-api-cookbook.md` Recipe 9.
 
-private readonly LazyStateMachine<OrderStatus, string> _machine;
-
-private Order() : base(default!)
-{
-    _machine = new LazyStateMachine<OrderStatus, string>(
-        () => Status,
-        state => Status = state,
-        ConfigureStateMachine);
-}
-
-private static void ConfigureStateMachine(StateMachine<OrderStatus, string> machine)
-{
-    // Configure transitions here.
-}
-
-public Result<OrderStatus> Submit() => _machine.FireResult("Submit");
-```
-- **Incorrect:**
-```csharp
-using Stateless;
-
-private readonly StateMachine<OrderStatus, string> _machine;
-
-private Order() : base(default!)
-{
-    _machine = new StateMachine<OrderStatus, string>(() => Status, state => Status = state);
-}
-```
-- **Reference:** See `.github/trellis-api-stateless.md §LazyStateMachine<TState, TTrigger>` and `.github/trellis-api-stateless.md §StateMachineExtensions`.
 ### Follow Trellis EF Core conventions exactly
 
-- **Rule:** 🔴 MUST use `ApplyTrellisConventions`, `AddTrellisInterceptors`, `SaveChangesResultUnitAsync`, `partial Maybe<T>` properties, `HasTrellisIndex`, and EF materialization boilerplate exactly as Trellis expects.
-- **Rationale:** Trellis persistence relies on conventions and generators; overriding them with manual EF patterns silently breaks mapping, timestamps, or generated backing fields.
-- **Correct:**
-```csharp
-using Microsoft.EntityFrameworkCore;
-using Trellis.EntityFrameworkCore;
-
-public class Customer : Aggregate<CustomerId>
-{
-    public FirstName FirstName { get; private set; } = null!;
-    public LastName LastName { get; private set; } = null!;
-    public EmailAddress Email { get; private set; } = null!;
-    public ShippingAddress ShippingAddress { get; private set; } = null!;
-    public partial Maybe<PhoneNumber> Phone { get; set; }
-
-    private Customer() : base(default!) { }
-}
-
-protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) =>
-    configurationBuilder.ApplyTrellisConventions(typeof(Customer).Assembly);
-
-protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
-    optionsBuilder.AddTrellisInterceptors();
-
-builder.HasTrellisIndex(x => new { x.Name, x.SubmittedAt });
-
-return await _context.SaveChangesResultUnitAsync(cancellationToken);
-```
-- **Incorrect:**
-```csharp
-using Microsoft.EntityFrameworkCore;
-
-protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
-{
-}
-
-builder.Property(x => x.Status).HasConversion<string>();
-builder.OwnsOne(x => x.Money);
-builder.HasIndex(x => new { x.Status, x.SubmittedAt });
-
-return await _context.SaveChangesAsync(cancellationToken);
-```
-- **Reference:** See `.github/trellis-api-efcore.md §DbContextOptionsBuilderExtensions`, `.github/trellis-api-efcore.md §ModelConfigurationBuilderExtensions`, `.github/trellis-api-efcore.md §DbContextExtensions`, `.github/trellis-api-efcore.md §MaybeEntityTypeBuilderExtensions`.
+- **Rule:** 🔴 MUST use `ApplyTrellisConventions`, `AddTrellisInterceptors`, `SaveChangesResultUnitAsync`, `partial Maybe<T>` properties, and `HasTrellisIndex` exactly as Trellis expects. **Do NOT** explicitly configure `Maybe<T>` properties or composite owned value objects (`[OwnedEntity]` types like `Money`, `ShippingAddress`) in `IEntityTypeConfiguration` — the conventions own those mappings.
+- **Rationale:** Trellis persistence relies on conventions and source generators; overriding them with manual `builder.Property(c => c.SomeMaybeT)` or `builder.OwnsOne(c => c.SomeOwnedVo)` either fails at model validation ("type not supported by the database provider") or silently shadows the convention's annotations.
+- **Reference:** See `trellis-api-efcore.md §ModelConfigurationBuilderExtensions`, `trellis-api-efcore.md §MaybeEntityTypeBuilderExtensions`, `trellis-api-efcore.md §DbContextExtensions`, and `trellis-api-cookbook.md` Recipes 8, 13.
 
 ### Keep controllers thin and value-object-first
 
-- **Rule:** 🔴 MUST accept scalar value-object parameters directly in controllers, map domain results to DTOs in controllers, and add XML doc comments to all public API types and members.
-- **Rationale:** Scalar binding and HTTP mapping are presentation concerns; handlers should stay domain-focused, and missing XML docs break builds with CS1591.
-- **Correct:**
-```csharp
-using Mediator;
-using Microsoft.AspNetCore.Mvc;
-using TodoSample.Api.v2026_03_26.Models;
-using TodoSample.Application.Todos;
-using TodoSample.Domain;
-using Trellis.Asp;
-
-[ApiController]
-[Consumes("application/json")]
-[Produces("application/json")]
-[Route("api/[controller]")]
-public class TodosController : ControllerBase
-{
-    private readonly ISender _sender;
-
-    /// <summary>
-    /// Constructor.
-    /// </summary>
-    public TodosController(ISender sender) => _sender = sender;
-
-    /// <summary>
-    /// Get a todo item by ID.
-    /// </summary>
-    [HttpGet("{id}")]
-    public async ValueTask<ActionResult<TodoResponse>> GetById(TodoId id, CancellationToken cancellationToken) =>
-        await _sender.Send(new GetTodoByIdQuery(id), cancellationToken)
-            .ToActionResultAsync(
-                this,
-                todo => RepresentationMetadata.WithStrongETag(todo.ETag),
-                TodoResponse.From);
-}
-```
-- **Incorrect:**
-```csharp
-[HttpGet("{id}")]
-public async Task<TodoItem> GetById(Guid id, CancellationToken cancellationToken)
-{
-    var todoId = TodoId.Create(id);
-    return (await _sender.Send(new GetTodoByIdQuery(todoId), cancellationToken)).Value;
-}
-```
-- **Reference:** See `.github/trellis-api-asp.md §ActionResultExtensions`, `.github/trellis-api-asp.md §ActionResultExtensionsAsync`, `.github/trellis-api-asp.md §ServiceCollectionExtensions`.
+- **Rule:** 🔴 MUST accept scalar value-object parameters directly in controllers (not raw `Guid`/`string`), map domain results to DTOs in controllers (not in handlers), and add XML doc comments to all public API types and members.
+- **Rationale:** Scalar binding and HTTP wire-mapping are presentation concerns; handlers stay domain-focused. Missing XML docs break builds with CS1591 because the template enables `GenerateDocumentationFile` + `TreatWarningsAsErrors`.
+- **Reference:** See `trellis-api-asp.md` (`ActionResultExtensions`, `ServiceCollectionExtensions`, `HttpResponseOptionsBuilder`) and `trellis-api-cookbook.md` Recipes 4, 5, 14.
 
 ### Read the testing reference before writing tests
 
-- **Rule:** 🔴 MUST read `.github/trellis-api-testing-reference.md` before writing tests, and use Trellis testing assertions for `Result<T>` and `Maybe<T>`.
-- **Rationale:** The testing package already provides assertions, fake repositories, actor providers, and safe unwrapping patterns expected by this template.
-- **Correct:**
-```csharp
-using Trellis.Testing;
-
-result.Should().BeSuccess();
-var order = result.Unwrap(); // ⚠️ test-only — Unwrap() lives in Trellis.Testing.UnwrapExtensions and throws on failure. In production code use result.TryGetValue(out var order), result.Match(...), or var (ok, order, err) = result;
-customer.PhoneNumber.Should().HaveValue();
-customer.AlternatePhoneNumber.Should().BeNone();
-```
-- **Incorrect:**
-```csharp
-result.Value.Should().NotBeNull(); // ⚠️ won't compile — Result<T>.Value was removed in v2. Use result.Should().BeSuccess() then result.Unwrap() (test-only).
-customer.PhoneNumber.HasValue.Should().BeTrue();
-customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
-```
-- **Reference:** See `.github/trellis-api-testing-reference.md §Usage notes`, `.github/trellis-api-testing-reference.md §UnwrapExtensions`.
+- **Rule:** 🔴 MUST read `trellis-api-testing-reference.md` before writing tests, and use the assertions, fakes, and fixtures it provides.
+- **Rationale:** The testing package already provides `Should().BeSuccess()`/`UnwrapError()` assertions, `FakeRepository<T,TId>`, `TestWebApplicationFactoryFixture`, `CreateClientWithActor`, and `Unwrap()` (test-only — production code uses `TryGetValue`/`Match`/deconstruction). Hand-rolling these wastes time and diverges from the conventions analyzers expect.
+- **Reference:** See `trellis-api-testing-reference.md` and `trellis-api-cookbook.md` Recipe 10.
 
 ### Keep `Smoke.cs` in every test project
 
 - **Rule:** 🔴 MUST NOT delete `Smoke.cs` from any test project (`Domain.Tests`, `Application.Tests`, `Api.Tests`, `AntiCorruptionLayer.Tests`).
-- **Rationale:** Microsoft.Testing.Platform (MTP) returns exit code 8 ("zero tests ran") when a test project compiles successfully but contains no `[Fact]` methods. The slnx-level `dotnet test` treats that as a run failure. While you replace the `TodoSample.*` tests with your domain tests, there is a window where a test project may have no real tests yet — `Smoke.cs` keeps `dotnet test` green during that window. Replace TodoSample tests around it; do not delete it.
+- **Rationale:** Microsoft.Testing.Platform (MTP) returns exit code 8 ("zero tests ran") when a test project compiles successfully but contains no `[Fact]` methods, and the slnx-level `dotnet test` treats that as a run failure. While replacing the `TodoSample.*` tests with your domain tests, there is a window where a project may have no real tests yet — `Smoke.cs` keeps `dotnet test` green during that window. Replace TodoSample tests around it; do not delete it.
 
 ## Decision Tables
+
+These tables condense the rules above into "if you see this scenario, reach for that idiom" lookups. They do not introduce new rules — they index the API references.
 
 ### Modeling decisions
 
@@ -569,18 +144,19 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 | Reusable domain concept in two contexts | Separate value-object types | One shared primitive and comments |
 | Single-currency money | `MonetaryAmount` | `Money` |
 | Multi-currency money | `Money` | `MonetaryAmount` |
-| Composite value object | `ValueObject` + `Result.Combine(...)` + `GetEqualityComponents()` | Scalar-shaped wrapper with fake `Value` |
-| Optional composite value object in EF Core | `partial Maybe<T>` | Manual nullable owned-type plumbing |
+| Composite value object (multi-field) | `ValueObject` + `Result.Combine(...)` + `GetEqualityComponents()` + `[OwnedEntity]` + `[JsonConverter(typeof(CompositeValueObjectJsonConverter<T>))]` | Scalar-shaped wrapper with fake `Value` |
+| Optional composite value object on a domain model | `partial Maybe<T>` (where `T` is the composite VO) | Manual nullable owned-type plumbing |
+| Optional composite value object on a request DTO | Nullable transport (`T?`) + controller-seam `Maybe.From(...)` | `Maybe<T>` directly on the DTO (silently bypasses `TryCreate`) |
 
 ### Validation and authorization decisions
 
 | Scenario | Use | Not |
 |---|---|---|
-| Cross-field command validation | Private constructor + `TryCreate(...)` | Mutable command + later validation |
+| Cross-field command validation | Private constructor + `TryCreate(...)` returning `Result<TCommand>` | Mutable command + later validation |
 | Validation that cannot happen in `TryCreate` | `IValidate.Validate()` returning `IResult` | Late handler-only validation |
 | Permission-based authorization | `IAuthorize` | Handler-side permission `if` statements |
 | Resource-based authorization | `IAuthorizeResource<TResource>` + loader | Handler-side ownership checks |
-| Shared loader by ID | `SharedResourceLoaderById<TResource, TId>` + `IIdentifyResource<TResource, TId>` | Repeating per-command loader code |
+| Shared loader by ID | `SharedResourceLoaderById<TResource, TId>` + `IIdentifyResource<TResource, TId>` | Per-command loader code |
 | Complex per-command load logic | `ResourceLoaderById<TMessage, TResource, TId>` | Overfitting a shared loader |
 | Optional `If-Match` handling | `.OptionalETag(expectedETags)` | Manual ETag comparison |
 | Required `If-Match` handling | `.RequireETag(expectedETags)` | Ad hoc 428/412 logic |
@@ -608,29 +184,32 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 | Conventions | `ApplyTrellisConventions(...)` | Manual `HasConversion()` / `OwnsOne()` for Trellis-supported types |
 | Interceptors | `AddTrellisInterceptors()` | Reimplement timestamp or ETag plumbing |
 | Save changes in repositories | `SaveChangesResultUnitAsync()` | Bare `SaveChangesAsync()` |
-| Optional lookup | `FirstOrDefaultMaybeAsync(...)` | `FirstOrDefaultAsync(...)` + `null` |
-| Required lookup | `FirstOrDefaultResultAsync(..., Error.NotFound(...))` | Returning `null` or throwing |
+| Optional lookup | `FirstOrDefaultMaybeAsync(...)` | `FirstOrDefaultAsync(...)` + `null` check |
+| Required lookup | `FirstOrDefaultResultAsync(..., new Error.NotFound(...))` | Returning `null` or throwing |
 | `Maybe<T>` comparisons in LINQ | `WhereLessThan`, `WhereHasValue`, `WhereEquals`, etc. | Direct `Value` access in LINQ |
 | Index containing `Maybe<T>` | `HasTrellisIndex(...)` | `HasIndex(...)` |
+| `Maybe<T>` property in `IEntityTypeConfiguration` | Say nothing — `MaybeConvention` owns it | `builder.Property(c => c.SomeMaybeT)` (model-validation error) |
+| Composite owned VO in `IEntityTypeConfiguration` | Say nothing — `CompositeValueObjectConvention` owns it; use `OwnsOne` only to **override** column metadata | `builder.Property(p => p.UnitPrice)` for `Money`/`ShippingAddress`/etc. |
 | Entity configuration placement | `IEntityTypeConfiguration<T>` in Acl | Inline `OnModelCreating` configuration |
+
 ## Reference Implementation
 
-Study these files before replacing the Todo sample.
+Study these files before replacing the `TodoSample.*` code.
 
 | Pattern | Files |
 |---|---|
-| Scalar value objects with `RequiredGuid`, `RequiredString`, `RequiredDateTime`, `ValidateAdditional` | `template/Domain/src/ValueObjects/` |
-| `RequiredEnum` smart enum | `template/Domain/src/TodoStatus.cs` |
-| Aggregate with `LazyStateMachine` and `Maybe<T>` partial properties | `template/Domain/src/Aggregates/TodoItem.cs` |
-| Specification with `.And()` composition | `template/Domain/src/Specifications/OverdueTodoSpecification.cs` |
-| Always-valid command with private constructor + `TryCreate` | `template/Application/src/Todos/UpdateTodoCommand.cs` |
-| `Result.Ensure` authorization check | `template/Application/src/Todos/CompleteTodoCommand.cs` |
-| `IAuthorizeResource<T>` with `SharedResourceLoaderById` and `IIdentifyResource` | `template/Application/src/Todos/CompleteTodoCommand.cs`, `template/Acl/src/TodoItemResourceLoader.cs` |
-| Repository returning `Maybe<T>` | `template/Application/src/Todos/ITodoRepository.cs` |
-| Handlers returning domain types and controller DTO mapping | `template/Application/src/Todos/`, `template/Api/src/2026-03-26/Models/TodoResponse.cs` |
-| `TimeProvider` for testable time validation | `template/Application/src/Todos/UpdateTodoCommand.cs` |
-| Controller `TryCreate` → `BindAsync` → `Send` flow | `template/Api/src/2026-03-26/Controllers/TodosController.cs` |
-| Domain, Application, and API tests | `template/Domain/tests/`, `template/Application/tests/`, `template/Api/tests/` |
+| Scalar value objects with `RequiredGuid`, `RequiredString`, `RequiredDateTime`, `ValidateAdditional` | `Domain/src/ValueObjects/` |
+| `RequiredEnum` smart enum | `Domain/src/TodoStatus.cs` |
+| Aggregate with `LazyStateMachine` and `Maybe<T>` partial properties | `Domain/src/Aggregates/TodoItem.cs` |
+| Specification with `.And()` composition | `Domain/src/Specifications/OverdueTodoSpecification.cs` |
+| Always-valid command with private constructor + `TryCreate` | `Application/src/Todos/UpdateTodoCommand.cs` |
+| `Result.Ensure` authorization check | `Application/src/Todos/CompleteTodoCommand.cs` |
+| `IAuthorizeResource<T>` with `SharedResourceLoaderById` and `IIdentifyResource` | `Application/src/Todos/CompleteTodoCommand.cs`, `Acl/src/TodoItemResourceLoader.cs` |
+| Repository returning `Maybe<T>` | `Application/src/Todos/ITodoRepository.cs` |
+| Handlers returning domain types and controller DTO mapping | `Application/src/Todos/`, `Api/src/2026-03-26/Models/TodoResponse.cs` |
+| `TimeProvider` for testable time validation | `Application/src/Todos/UpdateTodoCommand.cs` |
+| Controller `TryCreate` → `BindAsync` → `Send` flow | `Api/src/2026-03-26/Controllers/TodosController.cs` |
+| Domain, Application, and API tests | `Domain/tests/`, `Application/tests/`, `Api/tests/` |
 
 ## Architecture and Layout
 
@@ -638,55 +217,27 @@ Study these files before replacing the Todo sample.
 
 - **Rule:** 🟡 SHOULD keep dependencies flowing inward only.
 - **Rationale:** Trellis expects domain purity, application orchestration, Acl persistence adapters, and API presentation boundaries.
-- **Correct:**
 
 | Layer | Can depend on | Cannot depend on | Contains |
 |---|---|---|---|
-| Domain | Trellis packages only (`Results`, `Primitives`, `DDD`, `Stateless`, `Authorization`) | EF Core, ASP.NET Core, Mediator | Aggregates, entities, value objects, domain events, specifications, permission constants |
+| Domain | Trellis packages only (`Trellis.Core`, `Trellis.Primitives`, `Trellis.Authorization`, `Trellis.StateMachine`) | EF Core, ASP.NET Core, Mediator | Aggregates, entities, value objects, domain events, specifications, permission constants |
 | Application | Domain, Mediator, `Trellis.Mediator` | ASP.NET Core, EF Core providers | Commands, queries, handlers, repository interfaces |
 | Acl | Application, `Trellis.EntityFrameworkCore`, EF Core provider | API types | `DbContext`, entity configurations, repository implementations, migrations, resource loaders |
 | Api | Application, Acl, `Trellis.Asp` | Domain persistence implementation details | Controllers/endpoints, DTOs, `Program.cs`, `IActorProvider` |
 
-- **Incorrect:** Let Domain reference EF Core or ASP.NET Core, place repository implementations in Application, or return DTOs from handlers.
-- **Reference:** See `.github/trellis-api-ddd.md`, `.github/trellis-api-asp.md`, `.github/trellis-api-efcore.md`.
-
-> **Why “Acl”?** ACL stands for Anti-Corruption Layer. It adapts external systems (SQL Server, message queues, other services) to the domain model and avoids overloading the word “Infrastructure”.
+> **Why "Acl"?** ACL stands for Anti-Corruption Layer. It adapts external systems (SQL Server, message queues, other services) to the domain model and avoids overloading the word "Infrastructure".
 
 ### Composition root and registration rules
 
 - **Rule:** 🔴 MUST keep repository interfaces in Application, implementations in Acl, one `DependencyInjection.cs` per layer, `IActorProvider` registered in Api, and `TimeProvider.System` as a singleton in Application.
-- **Rationale:** ASP.NET Core does not auto-register `TimeProvider`. `IActorProvider` must be configured per environment (development vs. production). For custom providers that perform expensive async operations (e.g., database permission lookups), wrap with `AddCachingActorProvider<T>()` to cache the `Task<Actor>` per DI scope and avoid redundant resolution.
-- **Correct:**
-```csharp
-using Microsoft.Extensions.DependencyInjection;
-
-services.AddSingleton(TimeProvider.System);
-
-// Development — lightweight, no caching needed:
-services.AddDevelopmentActorProvider();
-
-// Production with cheap claim parsing — no caching needed:
-services.AddEntraActorProvider();
-
-// Production with expensive async provider (DB/API lookup) — use caching:
-services.AddCachingActorProvider<DatabaseActorProvider>();
-```
-- **Incorrect:**
-```csharp
-// ⚠️ Bypasses caching — if DatabaseActorProvider does expensive work,
-// it will repeat that work every time GetCurrentActorAsync is called
-// within the same request (permission check + resource auth check).
-services.AddScoped<IActorProvider, DatabaseActorProvider>();
-```
-- **Reference:** See `.github/trellis-api-authorization.md`, `.github/trellis-api-patterns.md`, `.github/trellis-api-asp.md`.
-
-> **`CachingActorProvider`:** Wraps any `IActorProvider` and caches the in-flight `Task<Actor>` for the current DI scope. Use `AddCachingActorProvider<T>()` when the inner provider performs expensive async work (database lookups, external API calls). Built-in providers (`AddDevelopmentActorProvider`, `AddEntraActorProvider`, `AddClaimsActorProvider`) are lightweight and do not require caching.
+- **Rationale:** ASP.NET Core does not auto-register `TimeProvider`. `IActorProvider` must be configured per environment (development vs. production). For custom providers that perform expensive async operations (database permission lookups, etc.), wrap with `AddCachingActorProvider<T>()` so the `Task<Actor>` is cached per DI scope and not recomputed on every authorization check.
+- **Reference:** See `trellis-api-authorization.md` (`IActorProvider`, `AddDevelopmentActorProvider`, `AddEntraActorProvider`, `AddClaimsActorProvider`, `AddCachingActorProvider<T>`) and `trellis-api-asp.md §ServiceCollectionExtensions` (`AddTrellisAsp`).
 
 ### Project layout
 
 - **Rule:** 🟡 SHOULD preserve the template structure and only add code where the template expects it.
-- **Rationale:** The solution, package management, and test props are already preconfigured.
-- **Correct:**
+- **Rationale:** The solution, central package management, build props, and test props are all preconfigured.
+
 ```text
 {ServiceName}/
 ├── {ServiceName}.slnx
@@ -696,80 +247,43 @@ services.AddScoped<IActorProvider, DatabaseActorProvider>();
 ├── build/
 │   └── test.props                 ← DO NOT MODIFY
 ├── .github/
-│   ├── copilot-instructions.md
-│   ├── trellis-api-results.md
-│   ├── trellis-api-asp.md
-│   ├── trellis-api-ddd.md
-│   ├── trellis-api-primitives.md
-│   ├── trellis-api-efcore.md
-│   ├── trellis-api-mediator.md
-│   ├── trellis-api-authorization.md
-│   ├── trellis-api-http.md
-│   ├── trellis-api-stateless.md
-│   ├── trellis-api-fluentvalidation.md
-│   ├── trellis-api-analyzers.md
-│   ├── trellis-api-patterns.md
-│   ├── trellis-api-testing-reference.md
-│   └── trellis-value-object-taxonomy.md
+│   ├── copilot-instructions.md    ← this file
+│   └── trellis-api-*.md           ← auto-synced from Trellis NuGet packages
 ├── Domain/
-│   ├── src/
-│   │   └── Domain.csproj
-│   └── tests/
-│       └── Domain.Tests.csproj
+│   ├── src/Domain.csproj
+│   └── tests/Domain.Tests.csproj         ← keep Smoke.cs
 ├── Application/
-│   ├── src/
-│   │   └── Application.csproj
-│   └── tests/
-│       └── Application.Tests.csproj
+│   ├── src/Application.csproj
+│   └── tests/Application.Tests.csproj    ← keep Smoke.cs
 ├── Acl/
-│   ├── src/
-│   │   └── AntiCorruptionLayer.csproj
-│   └── tests/
-│       └── AntiCorruptionLayer.Tests.csproj
+│   ├── src/AntiCorruptionLayer.csproj
+│   └── tests/AntiCorruptionLayer.Tests.csproj   ← keep Smoke.cs
 └── Api/
-    ├── src/
-    │   └── Api.csproj
-    └── tests/
-        └── Api.Tests.csproj
+    ├── src/Api.csproj
+    └── tests/Api.Tests.csproj            ← keep Smoke.cs
 ```
-- **Incorrect:** Recreate `Directory.Build.props`, put package versions in `.csproj`, or create alternative folder conventions that bypass the template.
-- **Reference:** See the template tree under `template/`.
 
-> **NuGet packages:** Add `<PackageVersion>` to `Directory.Packages.props`, then add `<PackageReference>` without a version in the relevant `.csproj`.
+> **NuGet packages:** Add `<PackageVersion>` to `Directory.Packages.props`, then add `<PackageReference>` *without* a version in the relevant `.csproj`.
 
-> **Upgrading Trellis packages:** After changing `TrellisVersion` in `Directory.Packages.props`, run `dotnet build ./{ServiceName}.slnx /t:TrellisSyncApiReference` from the service repository root to update the `.github/trellis-api-*.md` reference files from the new package versions.
+> **Upgrading Trellis packages:** After changing `TrellisVersion` in `Directory.Packages.props`, run `dotnet build ./{ServiceName}.slnx /t:TrellisSyncApiReference` from the service repository root to refresh the `.github/trellis-api-*.md` reference files from the new package versions.
 
 ### HTTP request documentation files
 
-- **Rule:** 🟡 SHOULD replace `Api/src/api.http` with end-to-end requests for every endpoint and keep complex header values in `Api/src/http-client.env.json` as escaped JSON strings.
+- **Rule:** 🟡 SHOULD replace `Api/src/api.http` with end-to-end requests for every endpoint, and keep complex header values in `Api/src/http-client.env.json` as escaped JSON strings.
 - **Rationale:** The `.http` file is living API documentation, and the HTTP client only supports scalar variable substitution.
-- **Correct:**
-```json
-{
-  "dev": {
-    "host": "https://localhost:7011",
-    "apiVersion": "2026-11-12",
-    "adminActor": "{\"Id\":\"admin-1\",\"Permissions\":[\"customers:create\",\"products:create\"]}",
-    "userActor": "{\"Id\":\"user-1\",\"Permissions\":[\"orders:create\",\"orders:read\"]}"
-  }
-}
-```
-- **Incorrect:** Put nested JSON directly in `.http` variables or let `host` drift from `Properties/launchSettings.json`.
-- **Reference:** See `template/Api/src/api.http`, `template/Api/src/http-client.env.json`, and `template/Api/src/Properties/launchSettings.json`.
+- **Reference:** See `Api/src/api.http`, `Api/src/http-client.env.json`, and `Api/src/Properties/launchSettings.json`.
 
 ## Implementation Order and Build Checkpoints
 
 ### Build between layers
 
 - **Rule:** 🔴 MUST build after each layer because generated code appears only after compilation.
-- **Rationale:** The `MaybePartialPropertyGenerator` emits `_camelCase` backing fields used later by EF Core configuration and query helpers.
-- **Correct:**
+- **Rationale:** `MaybePartialPropertyGenerator` emits `_camelCase` backing fields used later by EF Core configuration and query helpers; `OwnedEntityGenerator` emits parameterless constructors required by EF materialization; the Mediator source generator emits handler registrations consumed by `AddTrellis*` extensions.
+
 ```text
-1. Domain/src — implement value objects, aggregates, entities, events, specifications, permissions. Then run dotnet build.
-2. Application/src — implement repository interfaces, commands, queries, handlers. Then run dotnet build.
-3. Acl/src — implement DbContext, entity configurations, repositories, resource loaders. Then run dotnet build.
-4. Api/src — implement controllers, DTOs, Program.cs, IActorProvider. Then run dotnet build.
-5. Tests — implement Domain.Tests, Application.Tests, Api.Tests. Then run dotnet test.
+1. Domain/src       — value objects, aggregates, entities, events, specifications, permissions   → dotnet build
+2. Application/src  — repository interfaces, commands, queries, handlers                          → dotnet build
+3. Acl/src          — DbContext, entity configurations, repositories, resource loaders            → dotnet build
+4. Api/src          — controllers, DTOs, Program.cs, IActorProvider                               → dotnet build
+5. Tests            — Domain.Tests, Application.Tests, AntiCorruptionLayer.Tests, Api.Tests       → dotnet test
 ```
-- **Incorrect:** Depend on `_submittedAt` or generated mediator code before the earlier projects have been built once.
-- **Reference:** See `.github/trellis-api-efcore.md` and `.github/trellis-api-mediator.md`.
