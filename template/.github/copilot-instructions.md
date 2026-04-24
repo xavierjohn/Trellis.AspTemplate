@@ -547,6 +547,11 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 ```
 - **Reference:** See `.github/trellis-api-testing-reference.md §Usage notes`, `.github/trellis-api-testing-reference.md §UnwrapExtensions`.
 
+### Keep `Smoke.cs` in every test project
+
+- **Rule:** 🔴 MUST NOT delete `Smoke.cs` from any test project (`Domain.Tests`, `Application.Tests`, `Api.Tests`, `AntiCorruptionLayer.Tests`).
+- **Rationale:** Microsoft.Testing.Platform (MTP) returns exit code 8 ("zero tests ran") when a test project compiles successfully but contains no `[Fact]` methods. The slnx-level `dotnet test` treats that as a run failure. While you replace the `TodoSample.*` tests with your domain tests, there is a window where a test project may have no real tests yet — `Smoke.cs` keeps `dotnet test` green during that window. Replace TodoSample tests around it; do not delete it.
+
 ## Decision Tables
 
 ### Modeling decisions
