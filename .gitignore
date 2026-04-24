@@ -397,3 +397,9 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 /DockerOpenTelemetry/output/logs.json
+
+# Trellis API reference docs land here when consumer projects build against parent .git;
+# the template ships them under template/.github/ instead.
+/.github/trellis-api-*.md
+/.github/trellis-value-object-taxonomy.md
+
