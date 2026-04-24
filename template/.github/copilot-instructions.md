@@ -54,8 +54,9 @@ using Trellis;
 
 public static Result<Order> TryCreate(OrderName name) =>
     string.IsNullOrWhiteSpace(name.Value)
-        ? Result.Failure<Order>(Error.Validation("Name is required.", "name"))
-        : Result.Success(new Order(name));
+        ? Result.Fail<Order>(new Error.UnprocessableContent(EquatableArray.Create(
+            new FieldViolation(InputPointer.ForProperty("name"), "required") { Detail = "Name is required." })))
+        : Result.Ok(new Order(name));
 
 public partial class Customer : Aggregate<CustomerId>
 {
@@ -193,7 +194,9 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
         TimeProvider? timeProvider = null) =>
         Result.Ensure(
                 dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
-                Error.Validation("Due date must be in the future.", "dueDate"))
+                new Error.UnprocessableContent(EquatableArray.Create(
+                    new FieldViolation(InputPointer.ForProperty("dueDate"), "must-be-future")
+                        { Detail = "Due date must be in the future." })))
             .Map(_ => new UpdateTodoCommand(todoId, title, dueDate));
 }
 
