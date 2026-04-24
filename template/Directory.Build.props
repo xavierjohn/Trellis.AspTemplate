@@ -28,6 +28,16 @@
     <Using Include="Trellis" />
     <PackageReference Include="DotNet.ReproducibleBuilds" PrivateAssets="All" />
     <PackageReference Include="Trellis.Analyzers" />
+    <!--
+      Pin OpenTelemetry.Api transitively to a non-vulnerable version. Trellis.Core
+      pulls OpenTelemetry.Api in for Activity tracing (see Activity Tracing section in
+      copilot-instructions.md), and the 1.15.1 release has GHSA-g94r-2vxg-569j +
+      GHSA-mr8r-92fq-pj8p flagged by NuGet audit. An explicit PackageReference here
+      forces the resolved version across every project without requiring
+      CentralPackageTransitivePinningEnabled (which can disturb other transitive
+      graphs such as Microsoft.OpenApi / source generators).
+    -->
+    <PackageReference Include="OpenTelemetry.Api" />
   </ItemGroup>
 
   <PropertyGroup Condition=" '$(IsTestProject)' == 'false' ">

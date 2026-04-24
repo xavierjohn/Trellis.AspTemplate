@@ -113,8 +113,8 @@ Each rule is normative for **this service**. The "Reference" pointer is where to
 
 ### Keep controllers thin and value-object-first
 
-- **Rule:** 🔴 MUST accept scalar value-object parameters directly in controllers (not raw `Guid`/`string`), map domain results to DTOs in controllers (not in handlers), and add XML doc comments to all public API types and members.
-- **Rationale:** Scalar binding and HTTP wire-mapping are presentation concerns; handlers stay domain-focused. Missing XML docs break builds with CS1591 because the template enables `GenerateDocumentationFile` + `TreatWarningsAsErrors`.
+- **Rule:** 🔴 MUST accept scalar value-object parameters directly in controllers (not raw `Guid`/`string`), map domain results to DTOs in controllers (not in handlers), and write `///` XML doc comments on **every** `public` / `protected` type and member as you create it (controllers, action methods, DTOs and their properties, handlers, commands/queries, aggregates, value objects, domain events).
+- **Rationale:** Scalar binding and HTTP wire-mapping are presentation concerns; handlers stay domain-focused. XML docs are non-negotiable: (1) the template enables `GenerateDocumentationFile` + `TreatWarningsAsErrors`, so missing docs break the build with CS1591; (2) `Microsoft.AspNetCore.OpenApi` reads the generated `<assembly>.xml` at runtime to populate `summary` / `description` / `param` / `remarks` on every operation and schema in the published OpenAPI document — without docs, Swagger UI and generated clients show opaque, undescribed endpoints; (3) docfx consumes the same XML for static reference docs. Suppressing CS1591 silently degrades all three. Write the docs upfront, not as a build-fix afterthought.
 - **Reference:** See `trellis-api-asp.md` (`ActionResultExtensions`, `ServiceCollectionExtensions`, `HttpResponseOptionsBuilder`) and `trellis-api-cookbook.md` Recipes 4, 5, 14.
 
 ### Read the testing reference before writing tests

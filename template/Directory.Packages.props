@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <TrellisVersion>3.0.0-alpha.204</TrellisVersion>
+    <TrellisVersion>3.0.0-alpha.205</TrellisVersion>
     <TrellisSliVersion>10.0.0-preview.14</TrellisSliVersion>
   </PropertyGroup>
   <!-- Runtime -->
@@ -20,9 +20,15 @@
     <PackageVersion Include="Microsoft.Extensions.DependencyModel" Version="10.0.5" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.4.0" />
     <PackageVersion Include="Microsoft.OpenApi" Version="3.5.1" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.1" />
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.1" />
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <!--
+      OpenTelemetry.Instrumentation.AspNetCore lags behind the rest of the OTel
+      stack — 1.15.3 is not published. 1.15.2 takes the patch indirectly via the
+      OpenTelemetry.Api 1.15.3 pin in template/Directory.Build.props.
+    -->
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.13.20" />
     <PackageVersion Include="Scalar.AspNetCore.Microsoft" Version="2.13.20" />
     <PackageVersion Include="System.Text.Json" Version="10.0.5" />
