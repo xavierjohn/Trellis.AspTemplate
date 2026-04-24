@@ -341,7 +341,7 @@ public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, Cancell
     if (result.IsFailure)
         return result.Error;
 
-    var order = result.Value;
+    var order = result.Value; // ⚠️ won't compile — Result<T>.Value was removed in v2 (see .github/trellis-api-core.md). Use result.TryGetValue(out var order), result.Match(...), or var (ok, order, err) = result;
     var submitResult = order.Submit();
     if (submitResult.IsFailure)
         return submitResult.Error;
@@ -535,13 +535,13 @@ public async Task<TodoItem> GetById(Guid id, CancellationToken cancellationToken
 using Trellis.Testing;
 
 result.Should().BeSuccess();
-var order = result.Unwrap();
+var order = result.Unwrap(); // ⚠️ test-only — Unwrap() lives in Trellis.Testing.UnwrapExtensions and throws on failure. In production code use result.TryGetValue(out var order), result.Match(...), or var (ok, order, err) = result;
 customer.PhoneNumber.Should().HaveValue();
 customer.AlternatePhoneNumber.Should().BeNone();
 ```
 - **Incorrect:**
 ```csharp
-result.Value.Should().NotBeNull();
+result.Value.Should().NotBeNull(); // ⚠️ won't compile — Result<T>.Value was removed in v2. Use result.Should().BeSuccess() then result.Unwrap() (test-only).
 customer.PhoneNumber.HasValue.Should().BeTrue();
 customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 ```
