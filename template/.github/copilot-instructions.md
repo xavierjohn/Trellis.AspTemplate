@@ -19,7 +19,7 @@ Before writing any code, read these in order. They are the source of truth for e
 
 | Order | File | Why |
 |---|---|---|
-| 1 | `.github/trellis-api-cookbook.md` | **Start here.** 14 ready-to-copy recipes covering the most common patterns: CRUD aggregate, command/query handlers, paginated queries, minimal-API and MVC wiring, conditional GET, authorization, EF Core mappings, state machines, tests, anti-patterns, DI wiring, owned value objects, optional DTO fields. |
+| 1 | `.github/trellis-api-cookbook.md` | **Start here.** 17 ready-to-copy recipes covering the most common patterns: CRUD aggregate, command/query handlers, paginated queries, minimal-API and MVC wiring, conditional GET, authorization, EF Core mappings, state machines, tests, anti-patterns, DI wiring, composite value objects (Domain + JSON binding + EF ownership), optional DTO fields, `Maybe<T>` specifications, unit-of-work `Add` staging, and custom domain events. |
 | 2 | `.github/trellis-api-core.md` | `Result<T>`, `Maybe<T>`, `Error` (closed ADT), `WriteOutcome<T>`, value-object base types, DDD primitives, `EquatableArray`, `FieldViolation`, `InputPointer`. |
 | 3 | `.github/trellis-api-primitives.md` | `RequiredString<T>`, `RequiredGuid<T>`, `RequiredInt<T>`, `RequiredDecimal<T>`, `RequiredDateTime<T>`, `RequiredEnum<T>`, `Money`, `MonetaryAmount`, `EmailAddress`, `PhoneNumber`, `CurrencyCode`, etc. |
 | 4 | `.github/trellis-api-mediator.md` | `ICommand<T>`, `IQuery<T>`, `IMessageHandler<,>`, pipeline behaviors, `AddTrellis*` registration. |
