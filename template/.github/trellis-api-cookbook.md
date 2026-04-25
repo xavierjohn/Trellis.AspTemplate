@@ -399,7 +399,7 @@ public static class ModelDiagnostics
 
 **What it shows.** `Maybe<T>` properties are routed through `MaybeConvention`, which generates a backing field (`_email` for `Email`) that EF Core maps to a nullable column. The CLR property remains `Maybe<EmailAddress>` everywhere in the domain. `MaybePropertyMapping` is the diagnostic record that exposes both names — useful for `HasIndex` on the storage member.
 
-> For **composite** value objects (multi-field `[OwnedEntity]` types like `ShippingAddress`) — and for `Maybe<T>` where `T` is composite — see [Recipe 13](#recipe-13--ef-core-composite-owned-value-object-ownedentity--ownsone-not-needed). `Recipe 8` covers scalar `Maybe<T>` only.
+> For **composite** value objects (multi-field `[OwnedEntity]` types like `ShippingAddress`) — and for `Maybe<T>` where `T` is composite — see [Recipe 13](#recipe-13--composite-value-object-end-to-end-domain--api-json-binding--ef-core-ownership). `Recipe 8` covers scalar `Maybe<T>` only.
 
 **Anti-pattern → fix (TRLS016).**
 
@@ -431,6 +431,51 @@ modelBuilder.Entity<Customer>().HasTrellisIndex(c => new { c.Status, c.Email });
 
 // FIX 2 — string-based HasIndex against the storage member
 modelBuilder.Entity<Customer>().HasIndex("Status", "_email");
+```
+
+### Filtering on `Maybe<T>` properties in LINQ and `Specification<T>`
+
+Once `MaybeConvention` maps the storage member, the **`MaybeQueryInterceptor`** (registered by `optionsBuilder.AddTrellisInterceptors()`) lets you write natural LINQ against the CLR `Maybe<T>` property — no `EF.Property<T?>(o, "_x")` boilerplate, no separate query helpers. The interceptor rewrites the expression tree before EF Core compiles it, translating `o.Maybe.HasValue`, `o.Maybe.Value`, `o.Maybe.GetValueOrDefault(d)`, and `o.Maybe == Maybe<T>.None` to the storage-member access.
+
+```csharp
+// Specification — exactly the shape you'd write for an aggregate query.
+public sealed class OverdueOrderSpecification(DateTime asOf) : Specification<Order>
+{
+    private readonly DateTime _threshold = asOf.AddDays(-7);
+
+    // HasValue gates Value so the compiled lambda short-circuits on None for
+    // FakeRepository tests; the interceptor rewrites both halves to EF.Property.
+    public override Expression<Func<Order, bool>> ToExpression() =>
+        o => o.Status == OrderStatus.Submitted
+             && o.SubmittedAt.HasValue
+             && o.SubmittedAt.Value < _threshold;
+}
+
+// Repository / DbContext usage — the spec composes through IQueryable.Where.
+var overdue = await context.Orders
+    .Where(new OverdueOrderSpecification(timeProvider.GetUtcNow().DateTime).ToExpression())
+    .ToListAsync(ct);
+```
+
+**Why this works in both EF and `FakeRepository<T, TId>`** — the `HasValue && Value` idiom is C# `AndAlso`, which short-circuits in the compiled `Func<Order, bool>` that `FakeRepository` evaluates in memory: `Value` never executes when the property is `None`, so no `InvalidOperationException`. In EF, the interceptor rewrites the entire predicate to `... AND "_submittedAt" IS NOT NULL AND "_submittedAt" < @threshold` so the same expression translates faithfully to SQL. **One Specification, one predicate, identical semantics in production and in tests.**
+
+```csharp
+// Equivalent alternative — pick whichever reads better for your team.
+public override Expression<Func<Order, bool>> ToExpression() =>
+    o => o.Status == OrderStatus.Submitted
+         && o.SubmittedAt.GetValueOrDefault(DateTime.MaxValue) < _threshold;
+```
+
+> **Prerequisite.** The interceptor only runs when the `DbContext` is configured with `optionsBuilder.AddTrellisInterceptors()`. Without it, EF Core sees `Maybe<T>` as an unmapped CLR type and either drops the predicate silently or fails translation — while the `FakeRepository` tests continue to pass. This is the failure mode that creates "fake says yes, production says no". Always wire interceptors in `AddDbContext`. See [Recipe 15](#recipe-15--specifications-with-maybet-the-fakereal-divergence-trap) for the complete spec walkthrough.
+
+For ad-hoc `IQueryable<T>` calls (outside a `Specification<T>`), the strongly-typed `IQueryable<T>` extensions in `MaybeQueryableExtensions` — `WhereHasValue`, `WhereNone`, `WhereEquals`, `WhereLessThan`, `WhereGreaterThanOrEqual`, `OrderByMaybe`, etc. — are an alternative that doesn't depend on the interceptor. They compose with the same storage member directly via `EF.Property`.
+
+```csharp
+// Equivalent ad-hoc query without a Specification (interceptor not required for this form):
+var overdue = await context.Orders
+    .Where(o => o.Status == OrderStatus.Submitted)
+    .WhereLessThan(o => o.SubmittedAt, threshold)
+    .ToListAsync(ct);
 ```
 
 ---
@@ -469,8 +514,10 @@ public sealed class DocumentService
                .Permit(DocumentTrigger.Approve, DocumentState.Approved)
                .Permit(DocumentTrigger.Reject,  DocumentState.Draft);
 
-        // FireResult pre-checks CanFire and converts invalid transitions to
-        // Error.Conflict("state.machine.invalid.transition").
+        // FireResult pre-checks CanFire and converts invalid transitions to an
+        // Error.UnprocessableContent (HTTP 422) carrying a single RuleViolation with
+        // ReasonCode "state.machine.invalid.transition" — invalid transitions are
+        // semantic rule violations, not concurrent-modification conflicts.
         Result<DocumentState> result = machine.FireResult(DocumentTrigger.Submit);
         return result.Tap(newState => doc.State = newState);
     }
@@ -478,6 +525,14 @@ public sealed class DocumentService
 ```
 
 **What it shows.** `StateMachineExtensions.FireResult(...)` honors `PermitIf`/`IgnoreIf` guards via `CanFire(...)` rather than parsing exception messages, so it survives Stateless library upgrades. For aggregates whose state lives in a backing field (e.g., loaded from EF), use `LazyStateMachine<TState, TTrigger>` to defer machine creation until the first `FireResult` call.
+
+> **HTTP semantics.** Invalid state-machine transitions surface as `Error.UnprocessableContent` (HTTP 422), not `Error.Conflict` (HTTP 409). The reasoning: `Error.Conflict` semantically means "your request is valid but collides with concurrent state — retry may succeed"; a state-machine rejection ("you asked for `Submit` on a `Cancelled` order") is not retriable and is not about concurrent modification — it's a semantic rule violation. Callers that need to distinguish state-machine rejections from other 422s can match on the `RuleViolation.ReasonCode` value `state.machine.invalid.transition`.
+
+```csharp
+// Asserting on a state-machine rejection in tests:
+var unproc = result.Error.Should().BeOfType<Error.UnprocessableContent>().Subject;
+unproc.Rules.Should().ContainSingle().Which.ReasonCode.Should().Be("state.machine.invalid.transition");
+```
 
 ---
 
@@ -676,7 +731,7 @@ public static class CompositionRoot
 
 ---
 
-## Recipe 13 — EF Core: composite owned value object (`[OwnedEntity]` + `OwnsOne` not needed)
+## Recipe 13 — Composite value object end-to-end (Domain + API JSON binding + EF Core ownership)
 
 **Problem.** Persist a multi-field value object (`ShippingAddress` with street/city/state/postalCode/country) as part of a `Customer` aggregate. Every field is required, the VO must validate at construction, and the JSON wire format must reuse the same validation as the domain TryCreate.
 
@@ -855,6 +910,48 @@ public partial class ShippingAddress : ValueObject { public ShippingAddress() { 
 public partial class ShippingAddress { /* … */ }
 ```
 
+### Owned collections with a private backing field
+
+When an aggregate exposes a collection navigation as an `IReadOnlyList<T>` (or `IReadOnlyCollection<T>`) facade over a private `List<T>` field, **ignore the facade and map via the backing field name**. EF Core cannot instantiate an interface type for a navigation, so it has to bind directly to the concrete `List<T>` field.
+
+```csharp
+public sealed partial class Order : Aggregate<OrderId>
+{
+    private readonly List<LineItem> _lineItems = [];
+    public IReadOnlyList<LineItem> LineItems => _lineItems;       // public facade — interface, EF can't materialize
+    // ...
+}
+
+internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
+{
+    public void Configure(EntityTypeBuilder<Order> builder)
+    {
+        builder.HasKey(o => o.Id);
+
+        // The public facade is IReadOnlyList<T> — EF cannot instantiate an interface.
+        // Ignore the facade and map directly against the private backing field by name.
+        builder.Ignore(o => o.LineItems);
+        builder.OwnsMany<LineItem>("_lineItems", li =>
+        {
+            li.ToTable("LineItems");
+            li.HasKey(x => x.Id);
+            // Inner [OwnedEntity] composites (e.g., LineItem.UnitPrice : Money)
+            // are still picked up by CompositeValueObjectConvention — no extra OwnsOne needed here.
+        });
+    }
+}
+```
+
+The string `"_lineItems"` is unfortunately part of the public mapping contract: rename the private field and the EF model silently stops working. Two mitigations and what they buy you:
+
+| Mitigation | Compile-time safety | Cost |
+|---|---|---|
+| Raw string `"_lineItems"` | None — typo or rename breaks at runtime model-validation. | Zero. The pattern shown above. |
+| `private const string LineItemsField = "_lineItems";` on `Order`, then `builder.OwnsMany<LineItem>(Order.LineItemsField, …)` | Refactoring tools follow the constant. Still no compile check that the field actually exists. | Leaks the field name through `internal`/`public` constant on the aggregate — adds public surface for a persistence concern. |
+| `builder.OwnsMany(o => o.LineItems, …)` directly against the facade | n/a | Does not work: EF reports it cannot determine the relationship from `IReadOnlyList<LineItem>`. |
+
+**Why no `[OwnedEntity]`-style convention for collections (yet).** `[OwnedEntity]` + `CompositeValueObjectConvention` discovers composite owned *value objects* by attribute. An equivalent collection convention would need to walk every aggregate, find `IReadOnlyList<T>` / `IReadOnlyCollection<T>` properties whose `T` is an entity, locate a matching `_camelCase` backing field, and register the `OwnsMany` against it. This is on the roadmap (tracked as the analogue of `MaybeConvention` for collections); for now the cookbook pattern above is the supported approach.
+
 ---
 
 ## Recipe 14 — Optional fields in request DTOs: `Maybe<TScalar>` vs nullable transport
@@ -955,6 +1052,226 @@ services.AddControllers();
 
 ---
 
+## Recipe 15 — Specifications with `Maybe<T>`: the fake/real divergence trap
+
+**Problem.** A `Specification<T>` whose `ToExpression()` filters on a `partial Maybe<T>` property must produce the *same* result set in production (EF Core → SQL) and in `FakeRepository<T, TId>` (compiled lambda over an in-memory list). Get this wrong and the fake passes while the real query silently returns the wrong rows — the most expensive class of bug to catch in code review.
+
+```csharp
+using System.Linq.Expressions;
+using Trellis;
+
+public sealed class OverdueOrderSpecification : Specification<Order>
+{
+    private readonly DateTime _threshold;
+
+    public OverdueOrderSpecification(DateTime asOf) => _threshold = asOf.AddDays(-7);
+
+    public override Expression<Func<Order, bool>> ToExpression() =>
+        o => o.Status == OrderStatus.Submitted
+             && o.SubmittedAt.HasValue
+             && o.SubmittedAt.Value < _threshold;
+}
+```
+
+**Why this expression is safe in both worlds.**
+
+| Path | What runs | Why `.Value` is safe |
+|------|-----------|---------------------|
+| EF Core production | `MaybeQueryInterceptor` (registered via `AddTrellisInterceptors()`) rewrites `o.SubmittedAt.HasValue` → `EF.Property<DateTime?>(o, "_submittedAt") IS NOT NULL` and `o.SubmittedAt.Value` → `EF.Property<DateTime?>(o, "_submittedAt")`. The whole predicate translates to one SQL `WHERE` clause. | The CLR `.Value` accessor never executes — the interceptor strips it before EF Core compiles the query. |
+| `FakeRepository<Order, OrderId>.WhereAsync(spec.ToExpression().Compile())` | The expression compiles to `Func<Order, bool>` and is evaluated per element. C# `&&` short-circuits — when `HasValue` is `false`, `.Value` is never called. | C# `AndAlso` semantics on the compiled delegate. |
+
+**Anti-pattern → fix.**
+
+```csharp
+// ❌ Wrong — predicate is incomplete; production returns ALL submitted orders.
+//   The author saw that `partial Maybe<DateTime>` couldn't be referenced "directly" and
+//   silently dropped the time filter. FakeRepository.WhereAsync(...) was filled in with a
+//   plain lambda that DID apply the threshold, masking the gap.
+public override Expression<Func<Order, bool>> ToExpression() =>
+    o => o.Status == OrderStatus.Submitted;   // missing time filter — silent fake/real divergence
+
+// ❌ Wrong — `.Value` without `HasValue` guard. Compiles, but at runtime the FakeRepository
+//   throws InvalidOperationException("Maybe has no value.") on the first None record;
+//   EF translates fine because the interceptor rewrites both sides, hiding the bug.
+public override Expression<Func<Order, bool>> ToExpression() =>
+    o => o.Status == OrderStatus.Submitted
+         && o.SubmittedAt.Value < _threshold;   // TRLS003 + fake throws on None
+
+// ✅ Correct — HasValue guards Value; one Specification, identical semantics in both paths.
+public override Expression<Func<Order, bool>> ToExpression() =>
+    o => o.Status == OrderStatus.Submitted
+         && o.SubmittedAt.HasValue
+         && o.SubmittedAt.Value < _threshold;
+
+// ✅ Correct alternative — GetValueOrDefault with a sentinel that always fails the comparison.
+//   Reads "if no SubmittedAt, treat as never overdue (DateTime.MaxValue)".
+public override Expression<Func<Order, bool>> ToExpression() =>
+    o => o.Status == OrderStatus.Submitted
+         && o.SubmittedAt.GetValueOrDefault(DateTime.MaxValue) < _threshold;
+```
+
+**Prerequisites checklist** (the most common cause of "works in tests, fails in prod"):
+
+1. **`AddTrellisInterceptors()` is wired in `AddDbContext`.** Without it, the interceptor isn't registered and EF Core can't translate the `Maybe<T>` access — you'll see either a `NotSupportedException` at query time or, worse, a silently dropped predicate.
+2. **`MaybeConvention` is applied via `ApplyTrellisConventions`** (see Recipe 8). Without it, no storage member exists for the interceptor to target.
+3. **The fake uses the *same* `spec.ToExpression()`** — never duplicate the predicate by hand in `FakeRepository.WhereAsync`. The whole point of `Specification<T>` is single-sourcing.
+
+```csharp
+// FakeRepository wiring — pass the spec expression through, do NOT rewrite it.
+public Task<IReadOnlyList<Order>> FindOverdueAsync(DateTime asOf, CancellationToken ct) =>
+    fake.WhereAsync(new OverdueOrderSpecification(asOf).ToExpression(), ct);
+```
+
+**For ad-hoc queries** (no `Specification`), `MaybeQueryableExtensions` gives strongly-typed `IQueryable<T>` operators that don't depend on the interceptor:
+
+```csharp
+var overdue = await context.Orders
+    .Where(o => o.Status == OrderStatus.Submitted)
+    .WhereLessThan(o => o.SubmittedAt, threshold)
+    .ToListAsync(ct);
+```
+
+These compose with `EF.Property<T?>` directly. They're a fine choice for one-off repository methods, but inside a reusable `Specification<T>` the natural-LINQ form keeps the predicate symmetric across EF and fake paths.
+
+---
+
+## Recipe 16 — Unit of work in handlers: `Add` staging vs immediate `SaveAsync`
+
+**Problem.** A command handler creates a new aggregate. Where does the `SaveChanges` call go? The first time you read a Trellis handler that ends with `repo.Add(order); return Result.Ok(order.Id);` the question is unavoidable: *who actually saves it?*
+
+```csharp
+public sealed class CreateOrderHandler(IOrderRepository repo)
+    : ICommandHandler<CreateOrderCommand, Result<OrderId>>
+{
+    public ValueTask<Result<OrderId>> Handle(CreateOrderCommand cmd, CancellationToken ct) =>
+        new(Order.Create(cmd.Total)
+            .Tap(repo.Add)                  // stages — no save here
+            .Map(o => o.Id));               // handler returns immediately
+}
+```
+
+> `repo.Add(entity)` stages the aggregate for insertion via EF Core; `TransactionalCommandBehavior`, registered by `services.AddTrellisUnitOfWork<TContext>()` in your ACL composition root, automatically calls `SaveChangesAsync` after every successful handler — no explicit save call is needed in the handler.
+
+**What it shows.** Handlers in Trellis follow a strict separation: the handler shapes domain state and the pipeline owns the commit boundary. `IRepository.Add` returns `void` precisely to signal "staged, not yet persisted" — the `void` return makes it impossible to write the (wrong) `await repo.Add(...).Should().BeSuccess()`. The mediator pipeline for command handlers is, innermost first: `TransactionalCommandBehavior` → `ValidationBehavior` → `LoggingBehavior` → handler. When the handler returns a successful `Result<T>`, the transactional behavior calls `SaveChangesAsync` and only then surfaces the result; on failure or exception, nothing is committed.
+
+| Method | Signature | Saves immediately? | When to use |
+|---|---|---|---|
+| `IRepository.Add(T)` (and `Remove(T)`, `RemoveByIdAsync(TId)`) | `void` / `Task<Result>` for not-found | **No** — staged for the UoW | Handlers and any production-shaped repository contract |
+| `FakeRepository.Add(T)` | `void` | n/a (in-memory; visible immediately) | **Test setup** — "put this in the store so the handler can find it" |
+| `FakeRepository.SaveAsync(T)` | `Task<Result>` | n/a (in-memory; visible immediately) | Tests that explicitly assert on the `Result` shape, e.g., conflict-result handling |
+
+**Anti-pattern → fix.**
+
+```csharp
+// ❌ Wrong — explicit SaveChangesAsync in the handler. Bypasses TransactionalCommandBehavior,
+//   so cross-aggregate behaviors that depend on a single commit boundary (outbox writes,
+//   ETag bumps, audit logs) end up in inconsistent states. Also: you've now committed even
+//   if a later behavior in the pipeline fails post-handler.
+public ValueTask<Result<OrderId>> Handle(CreateOrderCommand cmd, CancellationToken ct) =>
+    Order.Create(cmd.Total)
+        .Tap(repo.Add)
+        .TapAsync(_ => dbContext.SaveChangesAsync(ct));   // ❌ — duplicates UoW, racy
+
+// ❌ Wrong — calling SaveAsync from a production handler. SaveAsync is a FakeRepository
+//   convenience for tests. EF repositories don't expose it (and shouldn't).
+.TapAsync(o => repo.SaveAsync(o, ct))   // ❌ — IRepository<Order>.SaveAsync doesn't exist
+
+// ✅ Correct — stage with Add, let TransactionalCommandBehavior commit on success.
+.Tap(repo.Add)
+```
+
+**Test setup pattern.** When unit-testing a handler with `FakeRepository`, prefer `Add` for setup and reserve `SaveAsync` for tests that specifically assert on the Result of the save (conflict handling, etc.). The void surface keeps the test intent visually honest: setup should not have a return value to assert on.
+
+```csharp
+// ✅ Setup: void Add — no .GetAwaiter().GetResult(), no Result assertion in setup.
+var customers = new FakeRepository<Customer, CustomerId>();
+customers.Add(Customer.Create(/* ... */));   // matches the handler's surface exactly
+
+// ✅ Conflict-result test: SaveAsync returns the Error.Conflict so the test can assert.
+var customers = new FakeRepository<Customer, CustomerId>().WithUniqueConstraint(c => c.Email);
+customers.Add(Customer.Create("alice@x.com"));
+var result = await customers.SaveAsync(Customer.Create("alice@x.com"));   // intentional conflict
+result.UnwrapError().Should().BeOfType<Error.Conflict>();
+```
+
+> `FakeRepository.Add` enforces unique constraints **eagerly** by throwing `InvalidOperationException` — setup-time violations are almost always test bugs and should fail loud at the offending call site, not at a deferred Result assertion further down. Use `SaveAsync` when you specifically want to test handler behavior on conflict (where the `Error.Conflict` Result is the system-under-test, not a setup mistake).
+
+**DI prerequisites checklist.**
+
+```csharp
+services
+    .AddTrellisBehaviors()                              // validation/logging/tracing
+    .AddTrellisFluentValidation(typeof(MyValidator).Assembly)
+    .AddTrellisUnitOfWork<AppDbContext>()               // ⬅ registers TransactionalCommandBehavior
+    .AddScoped<IOrderRepository, EfOrderRepository>();
+```
+
+Without `AddTrellisUnitOfWork<TContext>()`, `repo.Add(order)` stages the entity but **nothing ever calls `SaveChangesAsync`** — handler tests against EF (or against a real database) silently insert nothing. This is the production analogue of the fake/real divergence trap from [Recipe 15](#recipe-15--specifications-with-maybet-the-fakereal-divergence-trap): the tests pass against `FakeRepository` (which has no UoW boundary, so `Add` is immediately visible), and production silently commits nothing. Always wire `AddTrellisUnitOfWork` in the ACL composition root, not inside each handler.
+
+---
+
+## Recipe 17 — Defining custom domain events: `OccurredAt` is the only timestamp
+
+**Problem.** You're modeling an order workflow and reach for a domain event:
+
+```csharp
+// ❌ Wrong — CS0535 'OrderSubmitted does not implement IDomainEvent.OccurredAt'
+public sealed record OrderSubmitted(OrderId OrderId, Money Total, DateTime SubmittedAt) : IDomainEvent;
+```
+
+The compile error is unambiguous, but the obvious "fix" — adding `OccurredAt` *alongside* `SubmittedAt` — is the wrong shape:
+
+```csharp
+// ❌ Wrong — duplicate timestamps. SubmittedAt and OccurredAt always carry the same value.
+public sealed record OrderSubmitted(OrderId OrderId, Money Total, DateTime SubmittedAt, DateTime OccurredAt) : IDomainEvent;
+```
+
+**Fix.** `OccurredAt` is the canonical, only timestamp on every domain event. The semantic meaning ("when the order was submitted") is carried by the *event type name* (`OrderSubmitted`), not by a parallel timestamp field. Drop the semantic alias:
+
+```csharp
+// ✅ Correct — OccurredAt is the timestamp; the event name carries the semantic.
+public sealed record OrderSubmitted(OrderId OrderId, Money Total, DateTime OccurredAt) : IDomainEvent;
+public sealed record OrderApproved(OrderId OrderId, ActorId ApprovedBy, DateTime OccurredAt) : IDomainEvent;
+public sealed record OrderShipped(OrderId OrderId, TrackingNumber Tracking, DateTime OccurredAt) : IDomainEvent;
+```
+
+**Raising the event.** Always pass `DateTime.UtcNow` (or an injected `TimeProvider.GetUtcNow().UtcDateTime` for testability). The aggregate's domain method, not the event constructor, is where time enters the system:
+
+```csharp
+public Result<Order> Submit(TimeProvider clock)
+{
+    return this.ToResult()
+        .Ensure(_ => Status == OrderStatus.Draft, Error.Validation("Already submitted"))
+        .Tap(_ =>
+        {
+            Status = OrderStatus.Submitted;
+            DomainEvents.Add(new OrderSubmitted(Id, Total, clock.GetUtcNow().UtcDateTime));
+        });
+}
+```
+
+**On the aggregate.** If your aggregate also exposes a public `SubmittedAt` property (e.g., to drive UI sort order or read-model projections), source it from the event timestamp at write time — don't track it independently:
+
+```csharp
+public DateTime? SubmittedAt { get; private set; }
+
+public Result<Order> Submit(TimeProvider clock)
+{
+    var occurredAt = clock.GetUtcNow().UtcDateTime;
+    // ... ensure rules ...
+    Status = OrderStatus.Submitted;
+    SubmittedAt = occurredAt;
+    DomainEvents.Add(new OrderSubmitted(Id, Total, occurredAt));
+    return this;
+}
+```
+
+**Why a single timestamp.** Domain events flow into outbox tables, integration buses, audit projections, and event-sourced read models. Every consumer assumes `OccurredAt` is *the* occurrence time. Adding `SubmittedAt`/`ApprovedAt`/`ShippedAt` to individual events forces every consumer to know which field to project per event type — and the two fields can drift if the aggregate's setter and the event constructor are passed different `DateTime.UtcNow` calls.
+
+**See also.** The XML doc on `IDomainEvent.OccurredAt` (in `Trellis.Core`) calls this out explicitly. If your IDE shows the doc on hover, the rule is right there before you hit the compile error.
+
+---
+
 ## Cross-cutting tips
 
 - **Run analyzers in CI.** `Trellis.Analyzers` ships in the framework and runs as part of every `dotnet build`. Treat warnings as errors for `TRLS00x` once your codebase is clean.
@@ -965,7 +1282,8 @@ services.AddControllers();
 - **Use `Error.UnprocessableContent.ForField` / `.ForRule` for single-violation 422s.** The most common shape (every primitive `TryCreate`, every value-object invariant, every `RequiredEnum`/`RequiredString` failure) is a single `FieldViolation` or a single `RuleViolation`. Use the factories instead of the verbose constructor: `Error.UnprocessableContent.ForField("email", "invalid_format", "must contain @")` over `new Error.UnprocessableContent(EquatableArray.Create(new FieldViolation(InputPointer.ForProperty("email"), "invalid_format") { Detail = "must contain @" }))`. There is also `ForField(InputPointer field, …)` for nested/array pointers (e.g. `new InputPointer("/items/0/quantity")`) or `InputPointer.Root` for whole-body violations, and `ForRule(reasonCode, detail)` for global rules. For aggregating multiple per-field violations into one error (e.g. composite VO `TryCreate`), keep the manual constructor with an `EquatableArray<FieldViolation>` or use the `Validate` builder.
 - **`InputPointer.Root` for whole-body violations.** Use `InputPointer.ForProperty(name)` for field-level violations and `InputPointer.Root` when the rule is object-level.
 - **Only the `Trellis` namespace is auto-imported.** The template's implicit usings include `Trellis` (which exposes `Result`, `Result<T>`, `Error`, `Maybe<T>`, `RequiredString<T>`, `RequiredGuid<T>`, `RequiredInt<T>`, `RequiredDecimal<T>`, `RequiredDateTime<T>`, etc.). Every other Trellis namespace requires an explicit `using` per file — e.g. `using Trellis.Primitives;` for `Money` / `EmailAddress` / `PhoneNumber` / `MonetaryAmount` / `CurrencyCode` / `CountryCode` / etc., `using Trellis.StateMachine;` for `StateMachine<TState, TTrigger>`, `using Trellis.Authorization;` for permission types. This is intentional: implicit usings cannot be added at the template level without breaking services that don't reference the package.
-- **Accessing `Maybe<T>.Value` inside `Expression<Func<...>>` lambdas (EF Core `Where`/`Select`, FluentValidation `RuleFor`, Specifications):** TRLS003 still applies inside expression trees — use the short-circuit idiom `e => e.X.HasValue && e.X.Value == y` for predicates, or hoist into a guarded variable for projections. This is intentional: EF Core needs the `HasValue` predicate to emit `IS NOT NULL` SQL, and a blanket carve-out would hide real translation bugs. Do not suppress with `#pragma warning disable TRLS003`.
+- **Accessing `Maybe<T>.Value` inside `Expression<Func<...>>` lambdas (EF Core `Where`/`Select`, FluentValidation `RuleFor`, Specifications):** TRLS003 still applies inside expression trees — use the short-circuit idiom `e => e.X.HasValue && e.X.Value == y` for predicates, or hoist into a guarded variable for projections. This is intentional: EF Core needs the `HasValue` predicate to emit `IS NOT NULL` SQL, and a blanket carve-out would hide real translation bugs. Do not suppress with `#pragma warning disable TRLS003`. See [Recipe 15](#recipe-15--specifications-with-maybet-the-fakereal-divergence-trap) for the full Specification walkthrough including the fake-vs-real divergence trap.
+- **`EquatableArray<T>` does not implement `IEnumerable<T>` — project through `.Items` for LINQ / FluentAssertions / `string.Join`.** The sequence-equality wrapper exposes a duck-typed `GetEnumerator()` for allocation-free `foreach` but deliberately does not implement `IEnumerable<T>`. LINQ extension methods (`Select`, `Where`, `Any`, `ToList`) and FluentAssertions extensions (`Should().ContainSingle()`, `Should().HaveCount(...)`, `Should().BeEquivalentTo(...)`) bind on `IEnumerable<T>` and will not compile against the raw wrapper. Call `.Items` first — it returns the wrapped `ImmutableArray<T>`, which IS `IEnumerable<T>`. This shows up most often in test assertions on `Error.UnprocessableContent.Fields` / `.Rules` and in error-rendering helpers. See [`EquatableArray<T>`](trellis-api-core.md#public-readonly-struct-equatablearrayt--iequatableequatablearrayt) in the Core reference for the worked example.
 
 ---
 
