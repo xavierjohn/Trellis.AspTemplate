@@ -41,6 +41,14 @@
   </ItemGroup>
 
   <PropertyGroup Condition=" '$(IsTestProject)' == 'false' ">
+    <!--
+      Branding rename (the only allowed edit to this file):
+      `dotnet new trellis-asp -n {ServiceName}` substitutes "TodoSample" via the
+      template's `serviceName` symbol. If the template was cloned via git instead
+      (e.g., a lab seed or a fork that copied files raw), replace both occurrences
+      of "TodoSample" below with your service name to fix the assembly/root-namespace
+      prefix. Also check .vscode/launch.json and *.http files for the same string.
+    -->
     <RootNamespace>TodoSample.$(MSBuildProjectName.Replace(" ", "_"))</RootNamespace>
     <AssemblyName>TodoSample.$(MSBuildProjectName)</AssemblyName>
   </PropertyGroup>

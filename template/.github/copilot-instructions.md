@@ -241,7 +241,7 @@ Study these files before replacing the `TodoSample.*` code.
 ```text
 {ServiceName}/
 ├── {ServiceName}.slnx
-├── Directory.Build.props          ← DO NOT MODIFY
+├── Directory.Build.props          ← DO NOT MODIFY (except branding — see below)
 ├── Directory.Packages.props       ← ADD new packages here (versions only)
 ├── global.json                    ← DO NOT MODIFY
 ├── build/
@@ -266,6 +266,13 @@ Study these files before replacing the `TodoSample.*` code.
 > **NuGet packages:** Add `<PackageVersion>` to `Directory.Packages.props`, then add `<PackageReference>` *without* a version in the relevant `.csproj`.
 
 > **Upgrading Trellis packages:** After changing `TrellisVersion` in `Directory.Packages.props`, run `dotnet build ./{ServiceName}.slnx /t:TrellisSyncApiReference` from the service repository root to refresh the `.github/trellis-api-*.md` reference files from the new package versions.
+
+> **Branding rename — the one allowed `Directory.Build.props` edit.** The template ships with `<RootNamespace>TodoSample.$(MSBuildProjectName...)</RootNamespace>` and `<AssemblyName>TodoSample.$(MSBuildProjectName)</AssemblyName>` for the reference Todo implementation. When the template is rendered via `dotnet new trellis-asp -n {ServiceName}`, the `serviceName` symbol substitutes `TodoSample` everywhere — including these two lines — so no manual edit is needed. **However**, if the template was cloned via `git` (e.g., a lab seed or a fork that copied files raw without running `dotnet new`), `TodoSample` will still appear in `Directory.Build.props` and the produced assemblies will be named `TodoSample.Domain.dll`, `TodoSample.Application.dll`, etc. To fix:
+>
+> 1. In `Directory.Build.props`, replace both occurrences of `TodoSample` (on the `RootNamespace` and `AssemblyName` lines) with your service name. **This is the only edit permitted to `Directory.Build.props`.**
+> 2. Also check `.vscode/launch.json` and any `*.http` request files for stale `TodoSample.*` references — these come from the same un-rendered seed and are part of the same one-time branding cleanup.
+>
+> Per-file `namespace TodoSample.X` declarations inside the reference Todo implementation are replaced naturally as you replace those files with your domain code; the `Directory.Build.props` edit above only addresses the assembly/root-namespace prefix that survives the per-file replacement.
 
 ### HTTP request documentation files
 
