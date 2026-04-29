@@ -1,5 +1,5 @@
 ﻿using Scalar.AspNetCore;
-using ServiceLevelIndicators;
+using Trellis.ServiceLevelIndicators;
 using TodoSample.AntiCorruptionLayer;
 using TodoSample.Api;
 using TodoSample.Api.Middleware;

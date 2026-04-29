@@ -14,8 +14,8 @@ public interface ITodoRepository
     Task<IReadOnlyList<TodoItem>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken);
 
     /// <summary>Saves a new or updated todo.</summary>
-    Task<Result<Unit>> SaveAsync(TodoItem todo, CancellationToken cancellationToken);
+    Task<Result> SaveAsync(TodoItem todo, CancellationToken cancellationToken);
 
     /// <summary>Deletes a todo by ID.</summary>
-    Task<Result<Unit>> DeleteAsync(TodoId id, CancellationToken cancellationToken);
+    Task<Result> DeleteAsync(TodoId id, CancellationToken cancellationToken);
 }

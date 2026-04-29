@@ -16,18 +16,16 @@ TrellisAspTemplate/
 ├── template/                      ← The actual template content (installed by `dotnet new`)
 │   ├── .github/
 │   │   ├── copilot-instructions.md   ← AI instructions for template users
-│   │   ├── trellis-api-results.md    ← Result, Maybe, Error types
+│   │   ├── trellis-api-core.md       ← Result, Maybe, Error, DDD types (Aggregate, Entity, ValueObject)
 │   │   ├── trellis-api-asp.md        ← Response mappers, ETag helpers
-│   │   ├── trellis-api-ddd.md        ← Aggregates, entities, value objects
 │   │   ├── trellis-api-primitives.md ← Built-in value objects
 │   │   ├── trellis-api-efcore.md     ← EF Core conventions
 │   │   ├── trellis-api-mediator.md   ← Pipeline behaviors
 │   │   ├── trellis-api-authorization.md ← Actor, permissions
 │   │   ├── trellis-api-http.md       ← HttpClient → Result extensions
-│   │   ├── trellis-api-stateless.md  ← State machine integration
+│   │   ├── trellis-api-statemachine.md ← State machine integration
 │   │   ├── trellis-api-fluentvalidation.md ← FluentValidation bridge
 │   │   ├── trellis-api-analyzers.md  ← TRLS/TRLSGEN diagnostics
-│   │   ├── trellis-api-patterns.md   ← Usage patterns, workarounds
 │   │   └── trellis-api-testing-reference.md ← Testing API surface
 │   ├── Directory.Build.props
 │   ├── Directory.Packages.props      ← Trellis + dependency versions
@@ -43,7 +41,7 @@ TrellisAspTemplate/
 ## Key Files
 
 - **`template/.github/copilot-instructions.md`** — The most important file for Trellis conventions. This is what AI agents see when building services from the template. Keep it focused on architectural rules and conventions; defer API details to the template API reference.
-- **`template/.github/trellis-api-*.md`** — Per-library Trellis API references shipped with the template for downstream AI use. Key files: `trellis-api-results.md`, `trellis-api-asp.md`, `trellis-api-efcore.md`, `trellis-api-primitives.md`, `trellis-api-ddd.md`.
+- **`template/.github/trellis-api-*.md`** — Per-library Trellis API references shipped with the template for downstream AI use. Key files: `trellis-api-core.md`, `trellis-api-asp.md`, `trellis-api-efcore.md`, `trellis-api-primitives.md`.
 - **`template/Directory.Packages.props`** — Central package version management. The `TrellisVersion` property controls all Trellis package versions.
 
 ## Working on the Template

@@ -1,6 +1,6 @@
 ﻿namespace TodoSample.Domain;
 
-using Trellis.Stateless;
+using Trellis.StateMachine;
 
 /// <summary>
 /// A todo item aggregate with state machine lifecycle management.
@@ -63,7 +63,7 @@ public partial class TodoItem : Aggregate<TodoId>
     /// Creates a new todo item in Pending state.
     /// </summary>
     public static Result<TodoItem> TryCreate(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider? timeProvider = null) =>
-        new TodoItem(title, dueDate, tag, createdByActorId, timeProvider ?? TimeProvider.System);
+        Result.Ok(new TodoItem(title, dueDate, tag, createdByActorId, timeProvider ?? TimeProvider.System));
 
     /// <summary>
     /// Starts the todo, transitioning from Pending to Active.
@@ -97,8 +97,8 @@ public partial class TodoItem : Aggregate<TodoId>
     /// </summary>
     public Result<TodoItem> Update(Title title, DueDate dueDate, Maybe<Tag> tag) =>
         Status == TodoStatus.Completed
-            ? Result.Failure<TodoItem>(Error.Domain("Cannot update a completed todo."))
-            : Result.Success(this)
+            ? Result.Fail<TodoItem>(Error.UnprocessableContent.ForRule("todo.completed", "Cannot update a completed todo."))
+            : Result.Ok(this)
                 .Tap(_ =>
                 {
                     Title = title;

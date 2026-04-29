@@ -1,10 +1,12 @@
-# Trellis.Stateless — API Reference
+# Trellis.StateMachine — API Reference
 
 ## Header
 
-- **Package:** `Trellis.Stateless`
-- **Namespace:** `Trellis.Stateless`
+- **Package:** `Trellis.StateMachine`
+- **Namespace:** `Trellis.StateMachine`
 - **Purpose:** Wraps Stateless state transitions in Trellis `Result<TState>` APIs and provides lazy state-machine construction for aggregate materialization scenarios.
+
+See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using this package.
 
 ## Types
 
@@ -30,7 +32,7 @@ public static class StateMachineExtensions
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static Result<TState> FireResult<TState, TTrigger>(this StateMachine<TState, TTrigger> stateMachine, TTrigger trigger) where TState : notnull where TTrigger : notnull` | `Result<TState>` | Calls `stateMachine.Fire(trigger)` once and returns the resulting `stateMachine.State` on success. Converts only recognized Stateless invalid-transition `InvalidOperationException` instances into `Error.Domain(exception.Message, code: "state.machine.invalid.transition", instance: null)`. Other exceptions are rethrown. |
+| `public static Result<TState> FireResult<TState, TTrigger>(this StateMachine<TState, TTrigger> stateMachine, TTrigger trigger) where TState : notnull where TTrigger : notnull` | `Result<TState>` | Pre-checks with `stateMachine.CanFire(trigger)` (which honors `PermitIf`/`IgnoreIf` guards). When permitted, calls `stateMachine.Fire(trigger)` and returns `Result.Ok(stateMachine.State)`. When not permitted, still invokes `Fire(trigger)` so any user-configured `OnUnhandledTrigger` callback runs: an `InvalidOperationException` from that path is translated to `Error.UnprocessableContent.ForRule("state.machine.invalid.transition", $"Trigger '{trigger}' is not permitted from state '{stateMachine.State}'.")` (HTTP 422 — invalid transitions are semantic rule violations, not concurrent-modification conflicts). If a custom unhandled-trigger handler swallows the trigger, returns `Result.Ok(stateMachine.State)` (state unchanged). Other exception types from user entry/exit/transition actions propagate untouched. Independent of Stateless's exception message format. |
 
 ### `LazyStateMachine<TState, TTrigger>`
 
@@ -73,15 +75,12 @@ public static Result<TState> FireResult<TState, TTrigger>(
 
 ## Behavioral notes
 
-- `StateMachineExtensions.FireResult` does **not** make Stateless thread-safe. Concurrent use of the same `StateMachine<TState, TTrigger>` instance still requires external synchronization.
+- `StateMachineExtensions.FireResult` does **not** make Stateless thread-safe. Concurrent use of the same `StateMachine<TState, TTrigger>` instance still requires external synchronization. Because Stateless is single-threaded by contract, the `CanFire`+`Fire` pre-check pattern is race-free when used as documented.
 - `StateMachineExtensions.FireResult` does not null-check `stateMachine`; a `null` receiver will fail before any Trellis error conversion occurs.
 - `LazyStateMachine<TState, TTrigger>` is also **not** thread-safe. Its lazy initialization uses `_machine ??= CreateMachine()` with no locking.
-- Invalid-transition conversion is intentionally narrow. The caught exception must:
-  - be an `InvalidOperationException`;
-  - have `exception.Source == typeof(StateMachine<,>).Assembly.GetName().Name`; and
-  - have a message that either starts with `"No valid leaving transitions are permitted from state '"` or contains `" is valid for transition from state '"`.
-- Invalid transitions become `Error.Domain(exception.Message, code: "state.machine.invalid.transition", instance: null)`.
-- Exceptions thrown by user entry, exit, transition, guard, accessor, mutator, or configuration code are not swallowed unless they satisfy the exact invalid-transition filter above.
+- Invalid-transition detection uses `StateMachine.CanFire(trigger)` (which honors `PermitIf`/`IgnoreIf` guards) — no message-string parsing, so it is resilient to Stateless library upgrades.
+- When `CanFire` returns `false`, `Fire` is still invoked so any user-configured `OnUnhandledTrigger` callback runs. If the default unhandled-trigger handler throws `InvalidOperationException`, that path is translated to `Error.UnprocessableContent.ForRule("state.machine.invalid.transition", $"Trigger '{trigger}' is not permitted from state '{stateMachine.State}'.")` (HTTP 422). A custom handler that swallows the trigger results in `Result.Ok(stateMachine.State)` with state unchanged.
+- Exceptions thrown by user entry, exit, transition, guard, accessor, mutator, or configuration code are not swallowed.
 - `LazyStateMachine<TState, TTrigger>` exists to defer state-machine construction until after entity state is available, which is useful when ORMs materialize an object before populating its state properties.
 
 ## Code examples
@@ -91,7 +90,7 @@ public static Result<TState> FireResult<TState, TTrigger>(
 ```csharp
 using Stateless;
 using Trellis;
-using Trellis.Stateless;
+using Trellis.StateMachine;
 
 enum OrderState { Draft, Submitted, Cancelled }
 enum OrderTrigger { Submit, Cancel }
@@ -110,7 +109,7 @@ Result<OrderState> invalidResult = machine.FireResult(OrderTrigger.Submit);
 ```csharp
 using Stateless;
 using Trellis;
-using Trellis.Stateless;
+using Trellis.StateMachine;
 
 enum DocumentState { Draft, Published }
 enum DocumentTrigger { Publish }
@@ -129,5 +128,12 @@ StateMachine<DocumentState, DocumentTrigger> machine = lazyMachine.Machine;
 
 ## Cross-references
 
-- [trellis-api-results.md](trellis-api-results.md)
-- [trellis-api-ddd.md](trellis-api-ddd.md)
+- [trellis-api-core.md](trellis-api-core.md)
+- [trellis-api-core.md](trellis-api-core.md)
+
+## Breaking changes from v1
+
+- **Package renamed:** `Trellis.Stateless` → `Trellis.StateMachine` (ADR-002 §9). Vendor independence in the *name*, not the *implementation* — the underlying [Stateless](https://github.com/dotnet-state-machine/stateless) library is still referenced directly, and `StateMachine<TState, TTrigger>` from the `Stateless` namespace remains visible in user code.
+- **Namespace renamed:** `Trellis.Stateless` → `Trellis.StateMachine`. Replace `using Trellis.Stateless;` with `using Trellis.StateMachine;`.
+- **Public surface is otherwise identical:** `StateMachineExtensions.FireResult<TState, TTrigger>(...)` and `LazyStateMachine<TState, TTrigger>` are unchanged.
+- **No metapackage redirect.** Clean cut at v2.0.0 — the old `Trellis.Stateless` package is not shipped in v2 and there is no shim. Update your `PackageReference` directly.

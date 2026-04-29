@@ -16,7 +16,7 @@ internal class FakeRepositoryAdapter : ITodoRepository
     public async Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken)
     {
         var result = await _repo.GetByIdAsync(id, cancellationToken);
-        return result.IsSuccess ? Maybe.From(result.Value) : Maybe<TodoItem>.None;
+        return result.TryGetValue(out var todo) ? Maybe.From(todo) : Maybe<TodoItem>.None;
     }
 
     public Task<IReadOnlyList<TodoItem>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken)
@@ -25,15 +25,15 @@ internal class FakeRepositoryAdapter : ITodoRepository
         return Task.FromResult<IReadOnlyList<TodoItem>>(items);
     }
 
-    public async Task<Result<Unit>> SaveAsync(TodoItem todo, CancellationToken cancellationToken)
+    public async Task<Result> SaveAsync(TodoItem todo, CancellationToken cancellationToken)
     {
         var result = await _repo.SaveAsync(todo, cancellationToken);
-        return result.Map(_ => default(Unit));
+        return result.IsSuccess ? Result.Ok() : Result.Fail(result.Error);
     }
 
-    public async Task<Result<Unit>> DeleteAsync(TodoId id, CancellationToken cancellationToken)
+    public async Task<Result> DeleteAsync(TodoId id, CancellationToken cancellationToken)
     {
         var result = await _repo.DeleteAsync(id, cancellationToken);
-        return result.Map(_ => default(Unit));
+        return result.IsSuccess ? Result.Ok() : Result.Fail(result.Error);
     }
 }

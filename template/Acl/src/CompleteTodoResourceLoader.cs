@@ -20,6 +20,6 @@ internal class CompleteTodoResourceLoader : ResourceLoaderById<CompleteTodoComma
         await _context.TodoItems
             .Where(t => t.Id == id)
             .FirstOrDefaultResultAsync(
-                Error.NotFound($"Todo item {id.Value} not found."),
+                new Error.NotFound(new ResourceRef("Todo", id.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = $"Todo item {id.Value} not found." },
                 cancellationToken);
 }
