@@ -1,4 +1,4 @@
-# Trellis Cross-Package Cookbook
+﻿# Trellis Cross-Package Cookbook
 
 - **Audience:** AI coding agents (and humans) writing Trellis code from documentation alone.
 - **Purpose:** End-to-end recipes that cross package boundaries — DDD, Mediator, FluentValidation, EF Core, ASP.NET Core, Authorization, State Machine, Testing, Analyzers — using the *exact* public surface listed in the per-package API references.
@@ -33,6 +33,16 @@ Conventions used throughout:
 - `Result.Ok` / `Result.Fail` are *the* construction APIs. `default(Result<T>)` is a typed failure; do not rely on it as success.
 - Every async pipeline uses `*Async` extensions; mixing sync chain methods with `Task<Result<T>>` triggers `TRLS009`.
 - Examples reference an `OrderId : RequiredGuid<OrderId>` value object and an `Order` aggregate. Substitute your own types without changing the structure.
+
+Known non-APIs and corrected assumptions:
+
+| Do not write | Correct source-backed statement |
+|---|---|
+| `WithDocumentPerVersion()` | No Trellis API with this name exists. |
+| `MapScalarApiReference()` | Sample-app helper only; not a Trellis framework API. |
+| Place `UseScalarValueValidation()` anywhere | Add it before routing/endpoints that deserialize request bodies. |
+| Mutate `IAuthorize.RequiredPermissions` | `RequiredPermissions` is an `IReadOnlyList<string>`. |
+| `IValidate.Validate()` returns `Result` | The declared return type is `IResult`. |
 
 ## Task -> recipe lookup
 
@@ -108,7 +118,7 @@ public partial class OrderStatus : RequiredEnum<OrderStatus>
 }
 
 // Repository contract — uses Maybe<T> for "may legitimately find nothing"
-// (per ADR-002); reserve Result<T> for failures the caller can act on.
+// Reserve Result<T> for failures the caller can act on.
 public interface IOrderRepository
 {
     Task<Maybe<Order>> FindAsync(OrderId id, CancellationToken ct);
@@ -143,22 +153,36 @@ public sealed partial class CurrencyCode : RequiredString<CurrencyCode>;
 ```csharp
 using FluentValidation;
 using Mediator;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Trellis;
+using Trellis.Asp;
 using Trellis.EntityFrameworkCore;
 using Trellis.FluentValidation;
 using Trellis.Mediator;
+using Trellis.Primitives;
 
-public sealed record PlaceOrderCommand(Guid OrderId, decimal Amount, string Currency)
-    : ICommand<Result<OrderId>>;
+public sealed record PlaceOrderRequest(Guid OrderId, decimal Amount, string Currency);
+
+public sealed record PlaceOrderCommand(OrderId OrderId, Money Total)
+    : ICommand<Result<OrderId>>
+{
+    public static Result<PlaceOrderCommand> TryCreate(PlaceOrderRequest request) =>
+        Result.Combine(
+                OrderId.TryCreate(request.OrderId, nameof(request.OrderId)),
+                MonetaryAmount.TryCreate(request.Amount, nameof(request.Amount)),
+                CurrencyCode.TryCreate(request.Currency, nameof(request.Currency)))
+            .Map((orderId, amount, currency) =>
+                new PlaceOrderCommand(orderId, Money.Create(amount.Value, currency.Value)));
+}
 
 public sealed class PlaceOrderValidator : AbstractValidator<PlaceOrderCommand>
 {
     public PlaceOrderValidator()
     {
-        RuleFor(x => x.OrderId).NotEmpty();
-        RuleFor(x => x.Amount).GreaterThan(0);
-        RuleFor(x => x.Currency).Length(3);
+        RuleFor(x => x.Total.Amount)
+            .LessThanOrEqualTo(10_000m)
+            .WithMessage("Orders over 10,000 require manual approval.");
     }
 }
 
@@ -166,12 +190,22 @@ public sealed class PlaceOrderHandler(IOrderRepository repo)
     : ICommandHandler<PlaceOrderCommand, Result<OrderId>>
 {
     public ValueTask<Result<OrderId>> Handle(PlaceOrderCommand cmd, CancellationToken cancellationToken) =>
-        OrderId.TryCreate(cmd.OrderId)
-            .BindZip(_ => CurrencyCode.TryCreate(cmd.Currency).Map(c => new Money(cmd.Amount, c)))
-            .Bind((orderId, money) => Order.Create(orderId, money))
+        Order.Create(cmd.OrderId, cmd.Total)
             .Tap(repo.Add)
             .Map(o => o.Id)
             .AsValueTask();
+}
+
+[ApiController]
+[Route("orders")]
+public sealed class OrdersController(ISender sender) : ControllerBase
+{
+    [HttpPost]
+    public ValueTask<ActionResult<OrderId>> Place([FromBody] PlaceOrderRequest request, CancellationToken ct) =>
+        PlaceOrderCommand.TryCreate(request)
+            .BindAsync(command => sender.Send(command, ct))
+            .ToHttpResponseAsync()
+            .AsActionResultAsync<OrderId>();
 }
 
 // Composition root
@@ -186,7 +220,9 @@ public static class OrdersDi
 }
 ```
 
-**What it shows.** The mediator pipeline already runs `ValidationBehavior<TMessage, TResponse>` before the handler — `AddTrellisFluentValidation` plugs every `IValidator<T>` into it via the open-generic `IMessageValidator<T>` adapter. `AddTrellisUnitOfWork<TContext>` registers `TransactionalCommandBehavior<,>` *after* the others, so it lands innermost and commits only when the handler returns success. The handler itself is pure: no `try`/`catch`, no `await db.SaveChangesAsync()` — that's the unit of work's job.
+**What it shows.** The mediator pipeline already runs `ValidationBehavior<TMessage, TResponse>` before the handler — `AddTrellisFluentValidation` plugs every `IValidator<T>` into it via the open-generic `IMessageValidator<T>` adapter. `AddTrellisUnitOfWork<TContext>` registers `TransactionalCommandBehavior<,>` *after* the others, so it lands innermost and commits only when the handler returns success. The handler itself is pure: no `try`/`catch`, no primitive parsing, no `await db.SaveChangesAsync()` — that's the unit of work's job.
+
+> **Validation ownership.** Primitive→VO conversion happens at the transport seam. FluentValidation validates VO-shaped commands for cross-field rules and business invariants. Handlers receive value-object-shaped commands and must not parse primitives. See [Recipe 18](#recipe-18--dto-primitives-to-value-object-command-no-test-only-unwrap) for the canonical controller-seam adapter.
 
 **Anti-pattern → fix (TRLS010).**
 
@@ -212,6 +248,7 @@ public static class OrdersDi
 ```csharp
 using Trellis;
 
+// Paging cursor and limit are protocol/query-string controls validated at the transport seam.
 public sealed record ListOrdersQuery(string? Cursor, int Limit) : IQuery<Result<Page<OrderListItem>>>;
 
 public sealed record OrderListItem(Guid Id, decimal Amount, string Currency);
@@ -274,7 +311,10 @@ var app = builder.Build();
 
 app.MapGet("/orders/{id:guid}", async (Guid id, IMediator mediator, CancellationToken ct) =>
 {
-    Result<Order> result = await mediator.Send(new GetOrderQuery(id), ct);
+    Result<OrderId> orderId = OrderId.TryCreate(id, nameof(id));
+    if (!orderId.IsSuccess) return orderId.Error.ToHttpResponse();
+
+    Result<Order> result = await mediator.Send(new GetOrderQuery(orderId.Value), ct);
 
     return result.ToHttpResponse(opts => opts
         .WithETag(o => o.ETag)                         // strong ETag from aggregate
@@ -306,7 +346,10 @@ public sealed class OrdersController(IMediator mediator) : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<OrderDto>> Get(Guid id, CancellationToken ct)
     {
-        Result<Order> result = await mediator.Send(new GetOrderQuery(id), ct);
+        Result<OrderId> orderId = OrderId.TryCreate(id, nameof(id));
+        if (!orderId.IsSuccess) return orderId.Error.ToHttpResponse().AsActionResult<OrderDto>();
+
+        Result<Order> result = await mediator.Send(new GetOrderQuery(orderId.Value), ct);
 
         return result
             .ToHttpResponse(
@@ -372,7 +415,7 @@ public sealed record DeleteOrderCommand(OrderId OrderId) : ICommand<Result>, IAu
     public IReadOnlyList<string> RequiredPermissions => ["orders:delete"];
 }
 
-public sealed record UpdateOrderCommand(OrderId OrderId, decimal NewAmount)
+public sealed record UpdateOrderCommand(OrderId OrderId, Money NewTotal)
     : ICommand<Result>, IAuthorizeResource<Order>, IIdentifyResource<Order, OrderId>
 {
     // Typed VO carried straight through — no parse, no throw.
@@ -581,6 +624,7 @@ unproc.Rules.Should().ContainSingle().Which.ReasonCode.Should().Be("state.machin
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Trellis;
+using Trellis.Primitives;
 using Trellis.Testing;
 using Xunit;
 
@@ -592,22 +636,22 @@ public class PlaceOrderHandlerTests
         var repo = new InMemoryOrderRepository();
         var sut  = new PlaceOrderHandler(repo);
 
-        var result = await sut.Handle(
-            new PlaceOrderCommand(Guid.NewGuid(), 100m, "USD"),
-            CancellationToken.None);
+        var command = new PlaceOrderCommand(
+            OrderId.TryCreate(Guid.NewGuid()).Unwrap(),
+            Money.TryCreate(100m, "USD").Unwrap());
+
+        var result = await sut.Handle(command, CancellationToken.None);
 
         result.Should().BeSuccess();
         result.Should().HaveValue(repo.Last().Id);                  // structural equality on Result<T>
     }
 
     [Fact]
-    public async Task PlaceOrder_fails_with_validation_when_currency_invalid()
+    public void PlaceOrder_request_adapter_fails_when_currency_invalid()
     {
-        var sut = new PlaceOrderHandler(new InMemoryOrderRepository());
+        var request = new PlaceOrderRequest(Guid.NewGuid(), 100m, "US"); // 2 chars, not 3
 
-        var result = await sut.Handle(
-            new PlaceOrderCommand(Guid.NewGuid(), 100m, "US"),       // 2 chars, not 3
-            CancellationToken.None);
+        var result = PlaceOrderCommand.TryCreate(request);
 
         result.Should().BeFailureOfType<Error.UnprocessableContent>()
             .Which.Should().HaveFieldError("currency");
@@ -1074,7 +1118,7 @@ services.AddTrellisAsp();
 services.AddControllers();
 ```
 
-> A `MaybeCompositeValueObjectJsonConverterFactory` to make Pattern B unnecessary is tracked in `BACKLOG.md` under *Open — Framework Features*.
+> A future `MaybeCompositeValueObjectJsonConverterFactory` could make Pattern B unnecessary; until then, nullable transport plus controller-seam adaptation is the supported pattern.
 
 ---
 
@@ -1415,7 +1459,7 @@ client.GetAsync($"/orders/{id}", ct)
 - **Do not mix sync chain methods with async lambdas.** `result.Map(async v => …)` triggers `TRLS009`; use `MapAsync`. The fix provider can apply this rewrite automatically.
 - **Construct errors via the closed ADT.** `new Error.NotFound(ResourceRef.For<Order>(id))` — never `new Error("not_found", "...")`, which won't compile against the abstract base record.
 - **Use `Result.Combine` (or `EnsureAll`) for accumulating validation.** Manual `IsSuccess` checks across multiple results trigger `TRLS008`.
-- **Aggregate per-item Results with `Traverse` / `Sequence`.** When you have a collection and a per-item function returning `Result<T>`, use `items.Traverse(item => Compute(item))` to lift it into `Result<IReadOnlyList<T>>`. When you already have an `IEnumerable<Result<T>>` (e.g., from a `Select`), call `.Sequence()` instead. Both short-circuit on the first failure (matching ADR-002 §3.6 — there is no `AggregateError`). For per-field validation aggregation, use the `Validate` builder which returns a single `Error.UnprocessableContent` carrying every field violation.
+- **Aggregate per-item Results with `Traverse` / `Sequence`.** When you have a collection and a per-item function returning `Result<T>`, use `items.Traverse(item => Compute(item))` to lift it into `Result<IReadOnlyList<T>>`. When you already have an `IEnumerable<Result<T>>` (e.g., from a `Select`), call `.Sequence()` instead. Both short-circuit on the first failure; there is no aggregate-error carrier. For per-field validation aggregation, use the `Validate` builder which returns a single `Error.UnprocessableContent` carrying every field violation.
 - **Use `Error.UnprocessableContent.ForField` / `.ForRule` for single-violation 422s.** The most common shape (every primitive `TryCreate`, every value-object invariant, every `RequiredEnum`/`RequiredString` failure) is a single `FieldViolation` or a single `RuleViolation`. Use the factories instead of the verbose constructor: `Error.UnprocessableContent.ForField("email", "invalid_format", "must contain @")` over `new Error.UnprocessableContent(EquatableArray.Create(new FieldViolation(InputPointer.ForProperty("email"), "invalid_format") { Detail = "must contain @" }))`. There is also `ForField(InputPointer field, …)` for nested/array pointers (e.g. `new InputPointer("/items/0/quantity")`) or `InputPointer.Root` for whole-body violations, and `ForRule(reasonCode, detail)` for global rules. For aggregating multiple per-field violations into one error (e.g. composite VO `TryCreate`), keep the manual constructor with an `EquatableArray<FieldViolation>` or use the `Validate` builder.
 - **`InputPointer.Root` for whole-body violations.** Use `InputPointer.ForProperty(name)` for field-level violations and `InputPointer.Root` when the rule is object-level.
 - **Only the `Trellis` namespace is auto-imported.** The template's implicit usings include `Trellis` (which exposes `Result`, `Result<T>`, `Error`, `Maybe<T>`, `RequiredString<T>`, `RequiredGuid<T>`, `RequiredInt<T>`, `RequiredDecimal<T>`, `RequiredDateTime<T>`, etc.). Every other Trellis namespace requires an explicit `using` per file — e.g. `using Trellis.Primitives;` for `Money` / `EmailAddress` / `PhoneNumber` / `MonetaryAmount` / `CurrencyCode` / `CountryCode` / etc., `using Trellis.StateMachine;` for `StateMachine<TState, TTrigger>`, `using Trellis.Authorization;` for permission types. This is intentional: implicit usings cannot be added at the template level without breaking services that don't reference the package.

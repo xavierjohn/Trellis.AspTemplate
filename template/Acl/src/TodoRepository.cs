@@ -28,15 +28,16 @@ internal class TodoRepository : ITodoRepository
         if (entry.State == EntityState.Detached)
             _context.TodoItems.Add(todo);
 
-        return await _context.SaveChangesResultUnitAsync(cancellationToken);
+        return await Task.FromResult(Result.Ok());
     }
 
     public async Task<Result> DeleteAsync(TodoId id, CancellationToken cancellationToken)
     {
         var maybe = await FindByIdAsync(id, cancellationToken);
-        return await maybe
+        var result = maybe
             .ToResult(new Error.NotFound(new ResourceRef("Todo", id.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = $"Todo {id} not found." })
-            .Tap(todo => _context.TodoItems.Remove(todo))
-            .BindAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
+            .Tap(todo => _context.TodoItems.Remove(todo));
+
+        return result.AsUnit();
     }
 }

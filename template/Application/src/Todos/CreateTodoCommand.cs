@@ -1,5 +1,6 @@
 ﻿namespace TodoSample.Application.Todos;
 
+using FluentValidation;
 using Mediator;
 using TodoSample.Domain;
 using Trellis.Authorization;
@@ -14,6 +15,19 @@ public sealed record CreateTodoCommand(
 {
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosCreate];
+}
+
+/// <summary>
+/// FluentValidation example for command-level rules over already-validated value objects.
+/// </summary>
+public sealed class CreateTodoCommandValidator : AbstractValidator<CreateTodoCommand>
+{
+    public CreateTodoCommandValidator()
+    {
+        // Wiring placeholder: add command-level or cross-field rules here after value objects are built.
+        RuleFor(command => command.Title).NotNull();
+        RuleFor(command => command.DueDate).NotNull();
+    }
 }
 
 /// <summary>

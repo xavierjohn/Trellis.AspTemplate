@@ -7,7 +7,7 @@ using Trellis.Authorization;
 /// <summary>
 /// Completes a todo item. Only the creator can complete their own todo.
 /// </summary>
-public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>
+public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>, IIdentifyResource<TodoItem, TodoId>
 {
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosComplete];
@@ -16,6 +16,9 @@ public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoIt
     public IResult Authorize(Actor actor, TodoItem resource) =>
         Result.Ensure(actor.IsOwner(resource.CreatedByActorId),
             new Error.Forbidden("todo.complete.creator-only", new ResourceRef("Todo", resource.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = "Only the creator can complete this todo." });
+
+    /// <inheritdoc />
+    public TodoId GetResourceId() => TodoId;
 }
 
 /// <summary>

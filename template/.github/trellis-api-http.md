@@ -1,4 +1,4 @@
-# Trellis.Http &mdash; API Reference
+﻿# Trellis.Http &mdash; API Reference
 
 **Package:** `Trellis.Http`
 **Namespace:** `Trellis.Http`
@@ -6,7 +6,7 @@
 
 See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using this package.
 
-> **v3 surface (ADR-003).** Bare `ToResultAsync()` is strict by default: non-2xx responses become typed Trellis failures instead of remaining on the success track.
+> Bare `ToResultAsync()` is strict by default: non-2xx responses become typed Trellis failures instead of remaining on the success track.
 
 ## Type
 
@@ -82,7 +82,7 @@ public Task<Result<TodoDto>> GetTodoWithProblemDetailsAsync(HttpClient client, G
     client.GetAsync($"/todos/{id}", ct)
         .ToResultAsync(async (response, token) =>
         {
-            // Read RFC 7807 problem-details body to synthesize a richer error.
+            // Read RFC 9457 problem-details body to synthesize a richer error.
             var problem = await response.Content
                 .ReadFromJsonAsync<ProblemDetails>(cancellationToken: token);
             return problem is null
@@ -104,7 +104,7 @@ public Task<Result<Maybe<TodoDto>>> FindTodoAsync(HttpClient client, Guid id, Ca
 
 The v1 surface (60+ overloads across two static classes) has been collapsed into a small canonical method set. There are no shims or compatibility redirects: this is a clean cut, taken pre-GA.
 
-| v1 API | v2 replacement |
+| Previous API | Current replacement |
 | --- | --- |
 | `HandleNotFound`, `HandleNotFoundAsync` (sync, `Result<HRM>`, `Task<Result<HRM>>` overloads) | `HandleNotFoundAsync(this Task<HttpResponseMessage>, Error.NotFound)` |
 | `HandleConflict*` | `HandleConflictAsync(this Task<HttpResponseMessage>, Error.Conflict)` |

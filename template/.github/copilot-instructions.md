@@ -6,7 +6,7 @@ This template builds ASP.NET Core services on the Trellis framework for .NET 10.
 
 **STOP. Do not write or generate any code until you have read the API reference files listed below.** These files document the exact method signatures, overloads, conventions, and EF Core mapping rules. Guessing based on type names will produce code that compiles but fails at runtime (e.g., adding explicit EF `Property()` configuration on types that Trellis conventions already handle).
 
-Read **every** file relevant to your implementation. For a typical service using aggregates, EF Core, and authorization, that means reading at least: `trellis-api-core.md`, `trellis-api-primitives.md`, `trellis-api-efcore.md`, `trellis-api-asp.md`, `trellis-api-authorization.md`, `trellis-api-statemachine.md`, and `trellis-api-testing-reference.md`.
+Read **every** file relevant to your implementation. For a typical service using aggregates, EF Core, and authorization, that means reading at least: `trellis-api-core.md`, `trellis-api-primitives.md`, `trellis-api-efcore.md`, `trellis-api-asp.md`, `trellis-api-authorization.md`, `trellis-api-statemachine.md`, `trellis-api-servicedefaults.md`, `trellis-api-cookbook.md`, and `trellis-api-testing-reference.md`.
 
 | When working on... | Read first |
 |---|---|
@@ -21,6 +21,12 @@ Read **every** file relevant to your implementation. For a typical service using
 | `LazyStateMachine<TState, TTrigger>` and `FireResult()` | `.github/trellis-api-statemachine.md` |
 | Testing helpers, `FakeRepository`, `TestActorProvider`, assertions, `Unwrap()` | `.github/trellis-api-testing-reference.md` |
 | Analyzer diagnostics `TRLS001`–`TRLS022` and generator diagnostics | `.github/trellis-api-analyzers.md` |
+| Cross-package end-to-end recipes spanning DDD, Mediator, FluentValidation, EF Core, ASP.NET Core, authorization, state machine, testing | `.github/trellis-api-cookbook.md` |
+| `services.AddTrellis(...)` composition root, `TrellisServiceBuilder` module ordering, `UseEntityFrameworkUnitOfWork<TContext>()` last | `.github/trellis-api-servicedefaults.md` |
+| `ServiceLevelIndicator` SLI emission for console/worker/library code (no ASP.NET dependency) | `.github/trellis-api-sli.md` |
+| ASP.NET Core SLI middleware, `[ServiceLevelIndicator]` attribute, customer-resource-id tagging, request enrichment | `.github/trellis-api-sli-asp.md` |
+| `http.api.version` SLI dimension when using `Asp.Versioning` | `.github/trellis-api-sli-apiversioning.md` |
+| ASP.NET Core integration tests via `WebApplicationFactory`, `CreateClientWithActor`, MSAL/Entra tokens, `.http` replay | `.github/trellis-api-testing-aspnetcore.md` |
 | Scalar vs composite value-object classification | `.github/trellis-value-object-taxonomy.md` |
 
 ## Critical Rules
@@ -321,7 +327,7 @@ private Order() : base(default!)
 - **Reference:** See `.github/trellis-api-statemachine.md §LazyStateMachine<TState, TTrigger>` and `.github/trellis-api-statemachine.md §StateMachineExtensions`.
 ### Follow Trellis EF Core conventions exactly
 
-- **Rule:** 🔴 MUST use `ApplyTrellisConventions`, `AddTrellisInterceptors`, `SaveChangesResultUnitAsync`, `partial Maybe<T>` properties, `HasTrellisIndex`, and EF materialization boilerplate exactly as Trellis expects.
+- **Rule:** 🔴 MUST use `ApplyTrellisConventions`, `AddTrellisInterceptors`, `AddTrellisUnitOfWork<TContext>()`, `partial Maybe<T>` properties, `HasTrellisIndex`, and EF materialization boilerplate exactly as Trellis expects.
 - **Rationale:** Trellis persistence relies on conventions and generators; overriding them with manual EF patterns silently breaks mapping, timestamps, or generated backing fields.
 - **Correct:**
 ```csharp
@@ -347,7 +353,7 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
 
 builder.HasTrellisIndex(x => new { x.Name, x.SubmittedAt });
 
-return await _context.SaveChangesResultUnitAsync(cancellationToken);
+services.AddTrellisUnitOfWork<AppDbContext>();
 ```
 - **Incorrect:**
 ```csharp
@@ -487,7 +493,7 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 |---|---|---|
 | Conventions | `ApplyTrellisConventions(...)` | Manual `HasConversion()` / `OwnsOne()` for Trellis-supported types |
 | Interceptors | `AddTrellisInterceptors()` | Reimplement timestamp or ETag plumbing |
-| Save changes in repositories | `SaveChangesResultUnitAsync()` | Bare `SaveChangesAsync()` |
+| Commit EF changes | `AddTrellisUnitOfWork<TContext>()`; repositories stage changes | Calling `SaveChangesAsync()` from handlers |
 | Optional lookup | `FirstOrDefaultMaybeAsync(...)` | `FirstOrDefaultAsync(...)` + `null` |
 | Required lookup | `FirstOrDefaultResultAsync(..., new Error.NotFound(new ResourceRef(...)))` | Returning `null` or throwing |
 | `Maybe<T>` comparisons in LINQ | `WhereLessThan`, `WhereHasValue`, `WhereEquals`, etc. | Direct `Value` access in LINQ |
@@ -505,7 +511,7 @@ Study these files before replacing the Todo sample.
 | Specification with `.And()` composition | `template/Domain/src/Specifications/OverdueTodoSpecification.cs` |
 | Always-valid command with private constructor + `TryCreate` | `template/Application/src/Todos/UpdateTodoCommand.cs` |
 | `Result.Ensure` authorization check | `template/Application/src/Todos/CompleteTodoCommand.cs` |
-| `IAuthorizeResource<T>` with `SharedResourceLoaderById` or `ResourceLoaderById` | `template/Application/src/Todos/CompleteTodoCommand.cs`, `template/Acl/src/CompleteTodoResourceLoader.cs` |
+| `IAuthorizeResource<T>` with `IIdentifyResource<TResource, TId>` + `SharedResourceLoaderById<TResource, TId>` | `template/Application/src/Todos/CompleteTodoCommand.cs`, `template/Acl/src/TodoItemResourceLoader.cs` |
 | Repository returning `Maybe<T>` | `template/Application/src/Todos/ITodoRepository.cs` |
 | Handlers returning domain types and controller DTO mapping | `template/Application/src/Todos/`, `template/Api/src/2026-03-26/Models/TodoResponse.cs` |
 | `TimeProvider` for testable time validation | `template/Application/src/Todos/UpdateTodoCommand.cs` |
@@ -576,7 +582,13 @@ services.AddScoped<IActorProvider, HttpActorProvider>();
 │   ├── trellis-api-statemachine.md
 │   ├── trellis-api-fluentvalidation.md
 │   ├── trellis-api-analyzers.md
+│   ├── trellis-api-cookbook.md
+│   ├── trellis-api-servicedefaults.md
+│   ├── trellis-api-sli.md
+│   ├── trellis-api-sli-asp.md
+│   ├── trellis-api-sli-apiversioning.md
 │   ├── trellis-api-testing-reference.md
+│   ├── trellis-api-testing-aspnetcore.md
 │   └── trellis-value-object-taxonomy.md
 ├── Domain/
 │   ├── src/
