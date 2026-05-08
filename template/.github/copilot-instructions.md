@@ -6,28 +6,34 @@ This template builds ASP.NET Core services on the Trellis framework for .NET 10.
 
 **STOP. Do not write or generate any code until you have read the API reference files listed below.** These files document the exact method signatures, overloads, conventions, and EF Core mapping rules. Guessing based on type names will produce code that compiles but fails at runtime (e.g., adding explicit EF `Property()` configuration on types that Trellis conventions already handle).
 
-Read **every** file relevant to your implementation. For a typical service using aggregates, EF Core, and authorization, that means reading at least: `trellis-api-core.md`, `trellis-api-primitives.md`, `trellis-api-efcore.md`, `trellis-api-asp.md`, `trellis-api-authorization.md`, `trellis-api-statemachine.md`, `trellis-api-servicedefaults.md`, `trellis-api-cookbook.md`, and `trellis-api-testing-reference.md`.
+For a typical service using aggregates, EF Core, controllers, and authorization, read at least: `trellis-api-core.md`, `trellis-api-primitives.md`, `trellis-api-efcore.md`, `trellis-api-asp.md`, `trellis-api-asp-apiversioning.md`, `trellis-api-authorization.md`, `trellis-api-mediator.md`, `trellis-api-statemachine.md`, `trellis-api-servicedefaults.md`, `trellis-api-cookbook.md`, and `trellis-api-testing-reference.md`. Skim `trellis-api-analyzers.md` to know which compile-time rules apply to your code.
 
-| When working on... | Read first |
-|---|---|
-| `Result<T>`, `Maybe<T>`, `Error`, `Bind`, `Map`, `Tap`, `Ensure`, `Combine`, `ParallelAsync`, aggregates, entities, value objects, specifications, ETag checks | `.github/trellis-api-core.md` |
-| `RequiredString<T>`, `RequiredGuid<T>`, `RequiredEnum<T>`, built-in primitives | `.github/trellis-api-primitives.md` |
-| MVC/Minimal API result mappers (`ToHttpResponse` / `ToHttpResponseAsync` / `AsActionResult`), `ETagHelper`, scalar binding, validation middleware | `.github/trellis-api-asp.md` |
-| EF Core conventions, interceptors, `HasTrellisIndex`, `FirstOrDefaultMaybeAsync` | `.github/trellis-api-efcore.md` |
-| Actor-based authorization, `IAuthorize`, resource authorization | `.github/trellis-api-authorization.md` |
-| FluentValidation bridge | `.github/trellis-api-fluentvalidation.md` |
-| `HttpClient` result extensions | `.github/trellis-api-http.md` |
-| Mediator pipeline behaviors | `.github/trellis-api-mediator.md` |
-| `LazyStateMachine<TState, TTrigger>` and `FireResult()` | `.github/trellis-api-statemachine.md` |
-| Testing helpers, `FakeRepository`, `TestActorProvider`, assertions, `Unwrap()` | `.github/trellis-api-testing-reference.md` |
-| Analyzer diagnostics `TRLS001`–`TRLS022` and generator diagnostics | `.github/trellis-api-analyzers.md` |
-| Cross-package end-to-end recipes spanning DDD, Mediator, FluentValidation, EF Core, ASP.NET Core, authorization, state machine, testing | `.github/trellis-api-cookbook.md` |
-| `services.AddTrellis(...)` composition root, `TrellisServiceBuilder` module ordering, `UseEntityFrameworkUnitOfWork<TContext>()` last | `.github/trellis-api-servicedefaults.md` |
-| `ServiceLevelIndicator` SLI emission for console/worker/library code (no ASP.NET dependency) | `.github/trellis-api-sli.md` |
-| ASP.NET Core SLI middleware, `[ServiceLevelIndicator]` attribute, customer-resource-id tagging, request enrichment | `.github/trellis-api-sli-asp.md` |
-| `http.api.version` SLI dimension when using `Asp.Versioning` | `.github/trellis-api-sli-apiversioning.md` |
-| ASP.NET Core integration tests via `WebApplicationFactory`, `CreateClientWithActor`, MSAL/Entra tokens, `.http` replay | `.github/trellis-api-testing-aspnetcore.md` |
-| Scalar vs composite value-object classification | `.github/trellis-value-object-taxonomy.md` |
+### Trellis package catalog
+
+Every Trellis NuGet package ships an AI-targeted reference markdown. Each package is **scoped** — only some belong on each layer (`Trellis.Asp` is API-only, `Trellis.Core` is everywhere, `Trellis.EntityFrameworkCore` is Acl-only, etc.). Use the table to discover the surface; read the linked file before calling into it.
+
+| Package | What it provides | Reference |
+|---|---|---|
+| `Trellis.Core` | `Result<T>`, `Maybe<T>`, `Error` types, ROP combinators (`Bind` / `Map` / `Tap` / `Ensure` / `Combine` / `ParallelAsync` / `Match`), aggregates (`Aggregate<TId>`), entities (`Entity<TId>`), value-object base types, specifications, `EntityTagValue` / `OptionalETag` / `RequireETag`, domain events. The base abstraction every other Trellis package builds on. | `.github/trellis-api-core.md` |
+| `Trellis.Primitives` | Built-in scalar value-object base classes — `RequiredString<T>`, `RequiredGuid<T>`, `RequiredInt<T>`, `RequiredDecimal<T>`, `RequiredLong<T>`, `RequiredBool<T>`, `RequiredDateTime<T>`, `RequiredEnum<T>` — plus shipped concrete scalars like `Money`, `EmailAddress`, `PhoneNumber`. Use these instead of raw primitives for any domain identifier or measured value. | `.github/trellis-api-primitives.md` |
+| `Trellis.Mediator` | Mediator pipeline behaviors (exception, tracing, logging, authorization, resource authorization, validation), `AddTrellisBehaviors`, `AddResourceAuthorization` (explicit + assembly-scanning overloads). The Application layer's request/response pipeline. | `.github/trellis-api-mediator.md` |
+| `Trellis.Authorization` | Actor abstractions, `IAuthorize` (static permissions), `IAuthorizeResource<TResource>` (resource-bound auth), `IIdentifyResource<TResource, TId>` + `SharedResourceLoaderById<TResource, TId>` (one loader per resource type). | `.github/trellis-api-authorization.md` |
+| `Trellis.FluentValidation` | FluentValidation bridge: `AddTrellisFluentValidation` registers `FluentValidationMessageValidatorAdapter<TMessage>` so FluentValidation rules participate in the Mediator `ValidationBehavior` pipeline. | `.github/trellis-api-fluentvalidation.md` |
+| `Trellis.StateMachine` | `LazyStateMachine<TState, TTrigger>` over Stateless, `FireResult` returning `Result<TState>`. Use for aggregate state transitions; never put business mutations inside Stateless configuration. | `.github/trellis-api-statemachine.md` |
+| `Trellis.EntityFrameworkCore` | EF Core integration: `MaybeConvention`, `MoneyConvention`, `CompositeValueObjectConvention`, `ApplyTrellisConventions(...)` / source-generated `ApplyTrellisConventionsFor<TContext>()`, `AddTrellisInterceptors`, `RepositoryBase<T,TId>` (`Add` / `Remove` / `RemoveByIdAsync`), `HasTrellisIndex`, `FirstOrDefaultMaybeAsync`, `SaveChangesResultAsync`, `AddTrellisUnitOfWork<TContext>()` (`TransactionalCommandBehavior`). Acl layer only. | `.github/trellis-api-efcore.md` |
+| `Trellis.Http` | Typed `HttpClient` result extensions: `SendResultAsync`, `ReadJsonAsync`, status-mapping helpers. For consuming external HTTP APIs from inside the service. | `.github/trellis-api-http.md` |
+| `Trellis.Asp` | ASP.NET Core integration: `result.ToHttpResponse(...)` / `ToHttpResponseAsync` / `AsActionResult<T>`, `HttpResponseOptionsBuilder<T>` (`WithETag`, `WithLastModified`, `Vary`, `Created` / `CreatedAtRoute` / `CreatedAtAction`, `EvaluatePreconditions`, `HonorPrefer`, `WithRange`, `WithErrorMapping`, `WithRouteValueResolver`), actor providers (`ClaimsActorProvider`, `EntraActorProvider`, `DevelopmentActorProvider`, `CachingActorProvider`), scalar value validation middleware. Api layer only. | `.github/trellis-api-asp.md` |
+| `Trellis.Asp.ApiVersioning` | API-version-aware `Location` headers: `CreatedAtVersionedRoute(...)` extensions on `HttpResponseOptionsBuilder<T>` that auto-inject `?api-version=…` per request. Use **instead of** `CreatedAtRoute` whenever the controller carries `[ApiVersion]`. Handles `[ApiVersionNeutral]`, URL-segment versioning, and multi-version actions. | `.github/trellis-api-asp-apiversioning.md` |
+| `Trellis.ServiceDefaults` | Composition root: `services.AddTrellis(...)` and `TrellisServiceBuilder` module ordering. `AddTrellisUnitOfWork<TContext>()` must run **after** all other behavior registrations so it lands innermost. | `.github/trellis-api-servicedefaults.md` |
+| `Trellis.ServiceLevelIndicators` | SLI emission for console/worker/library code with no ASP.NET dependency. The base `ServiceLevelIndicator` API. | `.github/trellis-api-sli.md` |
+| `Trellis.ServiceLevelIndicators.Asp` | ASP.NET Core SLI middleware: `[ServiceLevelIndicator]` attribute, `app.UseServiceLevelIndicator()`, customer-resource-id tagging, request enrichment. | `.github/trellis-api-sli-asp.md` |
+| `Trellis.ServiceLevelIndicators.Asp.ApiVersioning` | Adds the `http.api.version` SLI dimension when `Asp.Versioning` is configured. Tags `Neutral` for `[ApiVersionNeutral]` endpoints, `Unspecified` for endpoints with no version metadata, the version string otherwise. | `.github/trellis-api-sli-apiversioning.md` |
+| `Trellis.Testing` | `FakeRepository<T,TId>`, `TestActorProvider`, `Result<T>` / `Maybe<T>` assertions, `Unwrap()` test helpers (test-only; never use in production). | `.github/trellis-api-testing-reference.md` |
+| `Trellis.Testing.AspNetCore` | `WebApplicationFactory` extensions, `CreateClientWithActor`, MSAL/Entra token plumbing, `.http` replay helpers. For end-to-end MVC/Minimal API integration tests. | `.github/trellis-api-testing-aspnetcore.md` |
+| `Trellis.Analyzers` | Roslyn analyzers `TRLS001`–`TRLS023` and code fixes; generator diagnostics `TRLS031`–`TRLS039`. Surfaces compile-time mistakes (unsafe `Maybe.Value`, sentinel `default(Result)`, missing api-version on `CreatedAtRoute`, etc.). | `.github/trellis-api-analyzers.md` |
+| **Cross-cutting docs (not packages)** | | |
+| Cookbook | Cross-package end-to-end recipes spanning DDD, Mediator, FluentValidation, EF Core, ASP.NET Core, authorization, state machine, testing. Patterns Index at the top of the file. | `.github/trellis-api-cookbook.md` |
+| Value-object taxonomy | Scalar vs composite value-object classification rules — when to use `IScalarValue<T,TPrimitive>` vs `[OwnedEntity]`. | `.github/trellis-value-object-taxonomy.md` |
 
 ## Critical Rules
 
@@ -258,17 +264,36 @@ public interface ITodoRepository
 ### Keep handlers on the ROP track
 
 - **Rule:** 🔴 MUST compose handler flows with `Bind`, `BindAsync`, `CheckAsync`, `Map`, and related result combinators. Do not unwrap and branch imperatively unless branching materially improves readability.
-- **Rationale:** ROP chains preserve failure propagation and keep success paths explicit.
-- **Correct:**
+- **Rule:** 🔴 MUST stage persistence with `repo.Add(...)` / `repo.Remove(...)` and let `TransactionalCommandBehavior` (registered by `AddTrellisUnitOfWork<TContext>()`) commit on handler success. Never call a `repo.SaveAsync(...)` from a production handler — `SaveAsync` is the `FakeRepository` test convenience and is **not** part of `RepositoryBase<T,TId>`. Mutations to a tracked aggregate (e.g. `todo.Update(...)`, `order.Submit()`) require **no** explicit save call: EF tracks the change, the unit-of-work commits.
+- **Rationale:** ROP chains preserve failure propagation and keep success paths explicit. The unit-of-work pattern guarantees a single commit per command and lets `FakeRepository<T,TId>` shape-match your custom interface directly (no test adapter for the save path).
+- **Correct (insert):**
 ```csharp
 using Trellis;
 
-public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken) =>
-    await _orderRepository.GetByIdAsync(command.OrderId, cancellationToken)
-        .BindAsync(order => order.Submit())
-        .BindAsync(order => _orderRepository.SaveAsync(order, cancellationToken).MapAsync(_ => order));
+public async ValueTask<Result<Order>> Handle(CreateOrderCommand command, CancellationToken cancellationToken)
+{
+    var actor = await _actorProvider.GetCurrentActorAsync(cancellationToken);
+    return Order.TryCreate(command.CustomerId, command.LineItems, actor.Id, _timeProvider)
+        .Tap(_repository.Add); // stage; UoW commits on handler success
+}
 ```
-- **Incorrect:**
+- **Correct (mutate existing):**
+```csharp
+public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken)
+{
+    var maybe = await _orderRepository.FindByIdAsync(command.OrderId, cancellationToken);
+    return maybe
+        .ToResult(new Error.NotFound(new ResourceRef("Order", command.OrderId.ToString(System.Globalization.CultureInfo.InvariantCulture))))
+        .Bind(order => order.Submit(_timeProvider).Map(_ => order));
+        // No save call: the loaded aggregate is tracked; UoW commits on handler success.
+}
+```
+- **Correct (delete):**
+```csharp
+public ValueTask<Result<Unit>> Handle(DeleteOrderCommand command, CancellationToken cancellationToken) =>
+    new(_orderRepository.RemoveByIdAsync(command.OrderId, cancellationToken));
+```
+- **Incorrect (calls `SaveAsync` from a production handler — anti-pattern):**
 ```csharp
 public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken)
 {
@@ -281,11 +306,31 @@ public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, Cancell
     if (submitResult.IsFailure)
         return submitResult.Error;
 
-    await _orderRepository.SaveAsync(order, cancellationToken);
+    await _orderRepository.SaveAsync(order, cancellationToken); // ❌ — IRepository.SaveAsync should not exist
     return order;
 }
 ```
-- **Reference:** See `.github/trellis-api-core.md`, `.github/trellis-api-mediator.md`.
+- **Reference:** See `.github/trellis-api-core.md`, `.github/trellis-api-mediator.md`, `.github/trellis-api-cookbook.md` Recipe 16 (handler → `Add` → `TransactionalCommandBehavior`).
+
+> **Multi-aggregate orchestration example.** When a single command needs to mutate two or more aggregates, the handler loads each aggregate via its repository, calls a method on each that mutates only that aggregate, and stages any inserts. Each domain method stays inside its own aggregate's transactional consistency boundary; the handler — which lives in the Application layer, *inside* the bounded context — owns the cross-aggregate coordination. `TransactionalCommandBehavior` commits both aggregates in one EF `SaveChangesAsync`.
+>
+> ```csharp
+> using Trellis;
+>
+> public async ValueTask<Result<Order>> Handle(ReturnOrderCommand command, CancellationToken cancellationToken) =>
+>     await Result.ParallelAsync(
+>             _orderRepository.FindByIdAsync(command.OrderId, cancellationToken)
+>                 .ToResultAsync(new Error.NotFound(new ResourceRef("Order", command.OrderId.ToString(System.Globalization.CultureInfo.InvariantCulture)))),
+>             _productRepository.GetByIdsAsync(command.ProductIds, cancellationToken))
+>         .WhenAllAsync()
+>         .BindAsync((order, products) =>
+>             order.Return(command.Reason, _timeProvider)               // Order mutates only Order state + ReturnedAt
+>                 .Bind(_ => products.Traverse(p => p.ReleaseStock(...)))  // Each Product mutates only its own stock
+>                 .Map(_ => order));
+>         // No SaveAsync calls: both aggregates are tracked; UoW commits on handler success.
+> ```
+>
+> **Anti-pattern:** `order.Return(IEnumerable<Product> products, ...)` that calls `p.ReleaseStock()` inside `Order.Return`. This makes Order know about Product invariants, conflates two aggregates' transactional scopes, and forces consumers to mock Product to unit-test Order. **Anti-pattern:** the same orchestration in a controller or middleware — that leaks a domain concern outside the bounded context.
 
 ### Use `LazyStateMachine<TState, TTrigger>` in aggregates
 
@@ -480,6 +525,7 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 | Straight-through handler flow | `Bind` / `BindAsync` / `CheckAsync` / `Map` | Imperative unwrapping |
 | Complex branching where chaining harms readability | Short explicit branching that still returns `Result<T>` | Deep nested `if` blocks everywhere |
 | Two or more independent async fetches | `Result.ParallelAsync(...).WhenAllAsync()` | Sequential awaits |
+| **Mutation spans multiple aggregates** | **Orchestrate in the application-layer command handler; each aggregate exposes a method that mutates only itself** | **(A) An aggregate method that takes other aggregates and mutates them; (B) Cross-aggregate orchestration in API controllers or middleware.** Rationale: aggregate = transactional consistency boundary; cross-aggregate coordination is a domain concern executed at the application orchestration tier (which is inside the bounded context). |
 | Save that returns non-generic `Result` | `BindAsync` or `CheckAsync` | `TapAsync` when the save can fail |
 | DTO mapping | Controller result mappers | Handler returns DTOs |
 | POST create response | `ToHttpResponseAsync(body, opts => opts.CreatedAtRoute(...))` | `Ok(...)` |
@@ -529,14 +575,16 @@ Study these files before replacing the Todo sample.
 | Layer | Can depend on | Cannot depend on | Contains |
 |---|---|---|---|
 | Domain | Trellis packages only (`Results`, `Primitives`, `DDD`, `Stateless`, `Authorization`) | EF Core, ASP.NET Core, Mediator | Aggregates, entities, value objects, domain events, specifications, permission constants |
-| Application | Domain, Mediator, `Trellis.Mediator` | ASP.NET Core, EF Core providers | Commands, queries, handlers, repository interfaces |
+| Application | Domain, Mediator, `Trellis.Mediator` | ASP.NET Core, EF Core providers | Commands, queries, handlers, repository interfaces, **cross-aggregate orchestration** |
 | Acl | Application, `Trellis.EntityFrameworkCore`, EF Core provider | API types | `DbContext`, entity configurations, repository implementations, migrations, resource loaders |
 | Api | Application, Acl, `Trellis.Asp` | Domain persistence implementation details | Controllers/endpoints, DTOs, `Program.cs`, `IActorProvider` |
 
-- **Incorrect:** Let Domain reference EF Core or ASP.NET Core, place repository implementations in Application, or return DTOs from handlers.
+- **Incorrect:** Let Domain reference EF Core or ASP.NET Core, place repository implementations in Application, return DTOs from handlers, or place cross-aggregate orchestration in API controllers/middleware.
 - **Reference:** See `.github/trellis-api-core.md`, `.github/trellis-api-asp.md`, `.github/trellis-api-efcore.md`.
 
 > **Why “Acl”?** ACL stands for Anti-Corruption Layer. It adapts external systems (SQL Server, message queues, other services) to the domain model and avoids overloading the word “Infrastructure”.
+
+> **Domain library boundary.** Domain.dll **and** Application.dll together constitute the bounded context — i.e., the domain library. The Application layer is the *orchestration tier of the domain*, not infrastructure. This is why cross-aggregate orchestration belongs in command handlers, not in API controllers, middleware, or aggregate methods that take other aggregates as parameters. See "Handler and controller decisions" → "Mutation spans multiple aggregates" for the canonical pattern.
 
 ### Composition root and registration rules
 
@@ -574,6 +622,7 @@ services.AddScoped<IActorProvider, HttpActorProvider>();
 │   ├── copilot-instructions.md
 │   ├── trellis-api-core.md
 │   ├── trellis-api-asp.md
+│   ├── trellis-api-asp-apiversioning.md
 │   ├── trellis-api-primitives.md
 │   ├── trellis-api-efcore.md
 │   ├── trellis-api-mediator.md

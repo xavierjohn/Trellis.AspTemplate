@@ -18,6 +18,7 @@ TrellisAspTemplate/
 │   │   ├── copilot-instructions.md   ← AI instructions for template users
 │   │   ├── trellis-api-core.md       ← Result, Maybe, Error, DDD types (Aggregate, Entity, ValueObject)
 │   │   ├── trellis-api-asp.md        ← Response mappers, ETag helpers
+│   │   ├── trellis-api-asp-apiversioning.md ← Version-aware Location headers (CreatedAtVersionedRoute)
 │   │   ├── trellis-api-primitives.md ← Built-in value objects
 │   │   ├── trellis-api-efcore.md     ← EF Core conventions
 │   │   ├── trellis-api-mediator.md   ← Pipeline behaviors
