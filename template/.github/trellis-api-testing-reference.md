@@ -1,4 +1,12 @@
-﻿# Trellis.Testing — API Reference
+﻿---
+package: Trellis.Testing
+namespaces: [Trellis.Testing]
+types: ["FakeRepository<TAggregate, TId>", "FakeSharedResourceLoader<TResource, TId>", TestActorProvider, TestActorScope, "ResultAssertions<TValue>", ResultAssertionsExtensions, ResultAssertionsAsyncExtensions, "MaybeAssertions<T>", MaybeAssertionsExtensions, ErrorAssertions, ErrorAssertionsExtensions, ValidationErrorAssertions, ValidationErrorAssertionsExtensions, UnwrapExtensions, UnwrapFailedException, AggregateTestMutator]
+version: v3
+last_verified: 2026-05-06
+audience: [llm]
+---
+# Trellis.Testing — API Reference
 
 - **Package:** `Trellis.Testing`
 - **Namespace:** `Trellis.Testing`
@@ -7,6 +15,30 @@
 See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using this package.
 
 > **ASP.NET Core integration test helpers** (WebApplicationFactory, DI replacement, fake time, MSAL tokens, and `.http` replay) are in a separate package: [`Trellis.Testing.AspNetCore`](trellis-api-testing-aspnetcore.md).
+
+## Use this file when
+
+- You are writing unit/handler/domain tests for Trellis `Result`, `Maybe`, errors, or mediator handlers.
+- You need FluentAssertions extensions for success/failure/error-shape assertions.
+- You need test-only unwrap helpers, fake repositories, or test actor providers.
+
+## Patterns Index
+
+| Goal | Canonical API / pattern | See |
+|---|---|---|
+| Assert a generic result succeeded | `result.Should().BeSuccess()` / `.HaveValue(...)` | [`ResultAssertions<TValue>`](#resultassertionstvalue) |
+| Assert a result failed with a specific error case | `result.Should().BeFailureOfType<TError>()` | [`ResultAssertions<TValue>`](#resultassertionstvalue) |
+| Assert error code/detail | `.HaveErrorCode(...)`, `.HaveErrorDetail(...)`, `.HaveErrorDetailContaining(...)` | [`ResultAssertions<TValue>`](#resultassertionstvalue) |
+| Extract success value in tests only | `result.Unwrap()` | [Usage notes](#usage-notes) |
+| Extract error in tests only | `result.UnwrapError()` | [Usage notes](#usage-notes) |
+| Provide an actor in handler tests | `TestActorProvider` | [`TestActorProvider`](#testactorprovider) |
+| Stub repository behavior | `FakeRepository<TAggregate,TId>` | [`FakeRepository<TAggregate,TId>`](#fakerepositorytaggregate-tid) |
+
+## Common traps
+
+- `Unwrap()` and `UnwrapError()` are test helpers. Do not copy them into production code or documentation snippets for application logic.
+- Test both the success path and the expected error branch; a compiling handler that never asserts failure semantics can still miss Trellis behavior.
+- ASP.NET Core integration helpers are in [trellis-api-testing-aspnetcore.md](trellis-api-testing-aspnetcore.md), not this package.
 
 ## Types
 
@@ -81,49 +113,8 @@ public class ResultAssertions<TValue> : ReferenceTypeAssertions<Result<TValue>, 
 }
 ```
 
-#### `NonGenericResultAssertionsExtensions`
-```csharp
-public static class NonGenericResultAssertionsExtensions
-{
-    public static NonGenericResultAssertions Should(this Result result);
-}
-```
-
-#### `NonGenericResultAssertions`
-```csharp
-public class NonGenericResultAssertions : ReferenceTypeAssertions<Result, NonGenericResultAssertions>
-{
-    public NonGenericResultAssertions(Result result);
-
-    public AndConstraint<NonGenericResultAssertions> BeSuccess(
-        string because = "",
-        params object[] becauseArgs);
-
-    public AndWhichConstraint<NonGenericResultAssertions, Error> BeFailure(
-        string because = "",
-        params object[] becauseArgs);
-
-    public AndWhichConstraint<NonGenericResultAssertions, TError> BeFailureOfType<TError>(
-        string because = "",
-        params object[] becauseArgs)
-        where TError : Error;
-
-    public AndConstraint<NonGenericResultAssertions> HaveErrorCode(
-        string expectedCode,
-        string because = "",
-        params object[] becauseArgs);
-
-    public AndConstraint<NonGenericResultAssertions> HaveErrorDetail(
-        string expectedDetail,
-        string because = "",
-        params object[] becauseArgs);
-
-    public AndConstraint<NonGenericResultAssertions> HaveErrorDetailContaining(
-        string substring,
-        string because = "",
-        params object[] becauseArgs);
-}
-```
+#### `UnwrapError(this Result<Unit>)`
+The `UnwrapError` extension also has a `Result<Unit>`-specific overload at `Trellis.Testing.UnwrapExtensions.UnwrapError(this Result<Unit>)` for tests asserting on no-payload results.
 
 #### `ResultAssertionsAsyncExtensions`
 ```csharp
@@ -289,7 +280,7 @@ public static class UnwrapExtensions
 
     public static Error UnwrapError<T>(this Result<T> result);
 
-    public static Error UnwrapError(this Result result);
+    public static Error UnwrapError(this Result<Unit> result);
 
     public static T Unwrap<T>(this Maybe<T> maybe)
         where T : notnull;
@@ -314,6 +305,7 @@ public sealed class UnwrapFailedException : Exception
 ```csharp
 public static class AggregateTestMutator
 {
+    [RequiresUnreferencedCode("Uses reflection to set source-generated backing fields. Not AOT-compatible — test-only.")]
     public static TEntity SetMaybeField<TEntity, TValue>(
         this TEntity entity,
         Expression<Func<TEntity, Maybe<TValue>>> propertySelector,
@@ -321,6 +313,7 @@ public static class AggregateTestMutator
         where TEntity : class
         where TValue : notnull;
 
+    [RequiresUnreferencedCode("Uses reflection to set source-generated backing fields. Not AOT-compatible — test-only.")]
     public static TEntity ClearMaybeField<TEntity, TValue>(
         this TEntity entity,
         Expression<Func<TEntity, Maybe<TValue>>> propertySelector)
@@ -328,6 +321,8 @@ public static class AggregateTestMutator
         where TValue : notnull;
 }
 ```
+
+> **AOT/trim incompatibility.** `AggregateTestMutator` uses reflection to set source-generated `Maybe<T>` backing fields. Both methods carry `[RequiresUnreferencedCode]`; AOT-published consumers will receive IL2026 / IL3050 warnings at the call site. The helpers are intentionally test-only — do not call them from production code.
 
 #### `FakeRepository<TAggregate, TId>`
 ```csharp
@@ -343,27 +338,50 @@ public class FakeRepository<TAggregate, TId>
     public Task<Result<TAggregate>> GetByIdAsync(TId id, CancellationToken cancellationToken = default);
     public Task<Maybe<TAggregate>> FindByIdAsync(TId id, CancellationToken cancellationToken = default);
 
+    // Read surface mirroring RepositoryBase<TAggregate, TId>. Use these from test
+    // repository adapters that expose specification-based queries.
+    public Task<IReadOnlyList<TAggregate>> QueryAsync(
+        Specification<TAggregate> specification,
+        CancellationToken cancellationToken = default);
+    public Task<bool> ExistsAsync(TId id, CancellationToken cancellationToken = default);
+    public Task<bool> ExistsAsync(
+        Specification<TAggregate> specification,
+        CancellationToken cancellationToken = default);
+    public Task<int> CountAsync(
+        Specification<TAggregate> specification,
+        CancellationToken cancellationToken = default);
+
     // Setup surface — mirrors RepositoryBase<TAggregate, TId>. Use these in handlers and
     // in test setup so the same IRepository contract works in both the EF and fake paths.
+    // Both Add and Remove (and DeleteAsync below) capture aggregate.UncommittedEvents()
+    // into PublishedEvents and call AcceptChanges, so deletion-related domain events
+    // are observable through PublishedEvents.
     public void Add(TAggregate aggregate);
     public void Remove(TAggregate aggregate);
-    public Task<Result> RemoveByIdAsync(TId id, CancellationToken cancellationToken = default);
+    public Task<Result<Unit>> RemoveByIdAsync(TId id, CancellationToken cancellationToken = default);
 
     // Result-shape surface — only on the fake. Reserve for tests that explicitly assert
     // on Result-of-save shape (e.g., conflict-result handling). NOT part of RepositoryBase.
-    public Task<Result> SaveAsync(TAggregate aggregate, CancellationToken cancellationToken = default);
-    public Task<Result> DeleteAsync(TId id, CancellationToken cancellationToken = default);
+    public Task<Result<Unit>> SaveAsync(TAggregate aggregate, CancellationToken cancellationToken = default);
+    public Task<Result<Unit>> DeleteAsync(TId id, CancellationToken cancellationToken = default);
 
     public void Clear();
     public bool Exists(TId id);
     public TAggregate? Get(TId id);
     public IEnumerable<TAggregate> GetAll();
 
+    // Predicate/specification-based local helpers. Prefer the RepositoryBase-shaped
+    // QueryAsync/ExistsAsync/CountAsync above when building same-contract test adapters;
+    // these remain available for legacy test code and ad-hoc Func-based filtering.
     public Task<Maybe<TAggregate>> FindAsync(Func<TAggregate, bool> predicate);
     public Task<IReadOnlyList<TAggregate>> WhereAsync(Func<TAggregate, bool> predicate);
     public Task<IReadOnlyList<TAggregate>> WhereAsync(Specification<TAggregate> specification);
 }
 ```
+
+> **Cancellation token observability.** All `*Async` methods on `FakeRepository<TAggregate, TId>` accept a `CancellationToken` parameter for source-compat with `RepositoryBase<TAggregate, TId>` but **do not observe it** — the fake completes synchronously. Tests that rely on cancellation behavior need a different test double; this fake intentionally trades cancellation-observability for the simpler synchronous semantics that DDD aggregate tests typically need.
+
+> **Null guards.** `Add`, `Remove`, `SaveAsync`, `WithUniqueConstraint`, `QueryAsync`, `ExistsAsync(Specification<TAggregate>)`, `CountAsync`, `FindAsync`, and `WhereAsync` all `ArgumentNullException.ThrowIfNull(...)` their reference-type parameters. `GetByIdAsync`, `FindByIdAsync`, `RemoveByIdAsync`, `DeleteAsync`, and `ExistsAsync(TId)` rely on the `TId : notnull` constraint at compile time.
 
 #### `FakeSharedResourceLoader<TResource, TId>`
 ```csharp
@@ -418,10 +436,10 @@ public sealed class TestActorScope : IAsyncDisposable, IDisposable
 - **Setup surface** (mirrors `RepositoryBase<TAggregate, TId>` in `Trellis.EntityFrameworkCore`) — use these from handlers and test setup so the same `IRepository` contract works in both worlds:
   - `void Add(TAggregate)` — stages an insert; in the fake, immediately visible. Throws `InvalidOperationException` on unique-constraint violation (setup mistakes should fail loud at the call site).
   - `void Remove(TAggregate)` — stages a delete; no-op if the aggregate is not in the store.
-  - `Task<Result> RemoveByIdAsync(TId)` — looks up by ID and removes; returns `Error.NotFound` if missing.
+  - `Task<Result<Unit>> RemoveByIdAsync(TId)` — looks up by ID and removes; returns `Error.NotFound` if missing.
 - **Result-shape surface** (only on the fake — `RepositoryBase` does not expose these) — use only when the test specifically asserts on the `Result` of the persistence call:
-  - `Task<Result> SaveAsync(TAggregate)` — returns `Error.Conflict` on unique-constraint violation. Use to test conflict-handling code paths.
-  - `Task<Result> DeleteAsync(TId)` — returns `Error.NotFound` on missing. Use to test not-found handling. (`RemoveByIdAsync` is the staging-API-named alias.)
+  - `Task<Result<Unit>> SaveAsync(TAggregate)` — returns `Error.Conflict` on unique-constraint violation. Use to test conflict-handling code paths.
+  - `Task<Result<Unit>> DeleteAsync(TId)` — returns `Error.NotFound` on missing. Use to test not-found handling. (`RemoveByIdAsync` is the staging-API-named alias.)
 - `WithUniqueConstraint(Func<TAggregate, object?> propertySelector)` — fluent constraint registration; checked eagerly by `Add` (throws) and at-call by `SaveAsync` (returns `Result`).
 - `Clear()`, `Exists(TId id)`, `Get(TId id)`, `GetAll()`, `Count` — direct inspection helpers
 - `GetByIdAsync` / `DeleteAsync` / `RemoveByIdAsync` return `Error.NotFound` details in the format:

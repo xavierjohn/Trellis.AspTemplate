@@ -1,10 +1,43 @@
-﻿# Trellis.Authorization — API Reference
+﻿---
+package: Trellis.Authorization
+namespaces: [Trellis.Authorization]
+types: [IActorProvider, ActorContext, Actor, Permission, AuthorizeAttribute, IAuthorizationRequirement, IResourceAuthorizationHandler]
+version: v3
+last_verified: 2026-05-01
+audience: [llm]
+---
+# Trellis.Authorization — API Reference
 
 **Package:** `Trellis.Authorization`
 **Namespace:** `Trellis.Authorization`
 **Purpose:** Domain-layer authorization primitives — actor identity / permission / attribute model and the contracts used by the mediator's authorization behavior to perform static (permission) and resource-based authorization. This package contains no ASP.NET Core dependencies; the `IActorProvider` implementations and DI helpers ship in `Trellis.Asp` (see [`trellis-api-asp.md`](trellis-api-asp.md), namespace `Trellis.Asp.Authorization`).
 
 See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using this package.
+
+## Use this file when
+
+- You are modeling actors, permissions, forbidden permissions, or actor attributes without ASP.NET dependencies.
+- You are implementing static permission authorization through `IAuthorize`.
+- You are implementing resource-based authorization through `IAuthorizeResource<TResource>` and want the canonical guard shape.
+
+## Patterns Index
+
+| Goal | Canonical API / pattern | See |
+|---|---|---|
+| Represent the current user/service | `Actor` | [`Actor`](#actor) |
+| Check granted permissions with explicit deny override | `actor.HasPermission(...)`, `HasAllPermissions(...)`, `HasAnyPermission(...)` | [`Actor`](#actor) |
+| Resolve actor for a request/message | `IActorProvider.GetCurrentActorAsync(...)` | [`IActorProvider`](#iactorprovider) |
+| Require static permissions on a message | Implement `IAuthorize.RequiredPermissions` | [`IAuthorize`](#iauthorize) |
+| Authorize against a loaded resource | Implement `IAuthorizeResource<TResource>.Authorize(actor, resource)` | [`IAuthorizeResource<TResource>`](#iauthorizeresourcetresource) |
+| Write owner/admin resource guards | `Result.Ensure(condition, new Error.Forbidden(...))` | [`IAuthorizeResource<TResource>`](#iauthorizeresourcetresource), [Core `Result.Ensure`](trellis-api-core.md#public-static-partial-class-result) |
+| Identify a resource by id for shared loading | `IIdentifyResource<TResource, TId>` | [`IIdentifyResource<TResource, TId>`](#iidentifyresourcetresource-tid) |
+
+## Common traps
+
+- `Trellis.Authorization` is domain/application-layer only. ASP.NET actor providers are documented in [trellis-api-asp.md](trellis-api-asp.md#namespace-trellisaspauthorization).
+- Prefer `Result.Ensure` for boolean authorization guards so generated code uses the same ROP primitive as the rest of Trellis.
+- Do not mutate `RequiredPermissions`; expose the complete permission list as an immutable/read-only collection.
+- The DI registration extension `AddResourceAuthorization(...)` lives in `Trellis.Mediator` (`namespace Trellis.Mediator`), not in `Trellis.Authorization`. Wiring an `IAuthorizeResource<TResource>` therefore typically requires both `using Trellis.Authorization;` (for the interfaces) and `using Trellis.Mediator;` (for the DI extension). The compile error if the second is missing is `CS1061: 'IServiceCollection' does not contain a definition for 'AddResourceAuthorization' and no accessible extension method 'AddResourceAuthorization' accepting a first argument of type 'IServiceCollection' could be found` — see [trellis-api-mediator.md](trellis-api-mediator.md#servicecollectionextensions).
 
 ## Types
 
@@ -15,14 +48,16 @@ See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using t
 **Declaration**
 
 ```csharp
-public sealed record Actor
+public sealed class Actor : IEquatable<Actor>
 ```
+
+`Actor` is an authorization-layer **entity**. Equality / `GetHashCode` / `==` / `!=` are based on the `Id` property only — two `Actor` instances with the same `Id` represent the same principal even when their `Permissions`, `ForbiddenPermissions`, or `Attributes` differ (those are point-in-time state about the principal, not part of identity). Mirrors `Trellis.Entity<TId>` semantics without inheriting the full `IAggregate` surface.
 
 **Constructors**
 
 | Signature | Description |
 | --- | --- |
-| `public Actor(string id, IReadOnlySet<string> permissions, IReadOnlySet<string> forbiddenPermissions, IReadOnlyDictionary<string, string> attributes)` | Snapshots the supplied state into frozen collections (ordinal comparison). Throws `ArgumentException` for null/whitespace `id`. |
+| `public Actor(string id, IReadOnlySet<string> permissions, IReadOnlySet<string> forbiddenPermissions, IReadOnlyDictionary<string, string> attributes)` | Snapshots the supplied state into frozen collections (ordinal comparison). Throws `ArgumentException` when `id` is null/whitespace; throws `ArgumentNullException` when `permissions`, `forbiddenPermissions`, or `attributes` is null. |
 
 **Fields**
 
@@ -45,7 +80,7 @@ public sealed record Actor
 | --- | --- | --- |
 | `public static Actor Create(string id, IReadOnlySet<string> permissions)` | `Actor` | Creates an actor with empty `ForbiddenPermissions` and empty `Attributes`. |
 | `public bool HasPermission(string permission)` | `bool` | Returns `true` only when `permission` is in `Permissions` and not in `ForbiddenPermissions`. |
-| `public bool HasPermission(string permission, string scope)` | `bool` | Checks the scoped permission `${permission}:${scope}` (deny-aware). |
+| `public bool HasPermission(string permission, string scope)` | `bool` | Checks the scoped permission composed as `permission` + `':'` + `scope` (deny-aware). Throws `ArgumentNullException` when either argument is null. |
 | `public bool HasAllPermissions(IEnumerable<string> permissions)` | `bool` | `true` when every entry passes `HasPermission`. |
 | `public bool HasAnyPermission(IEnumerable<string> permissions)` | `bool` | `true` when at least one entry passes `HasPermission`. |
 | `public bool IsOwner(string resourceOwnerId)` | `bool` | Compares `Id` and `resourceOwnerId` with `StringComparison.Ordinal`. |
@@ -84,7 +119,7 @@ public interface IActorProvider
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Actor>` | Returns the current authenticated actor. Implementations should throw `InvalidOperationException` (or equivalent) when the request is unauthenticated or the actor cannot be resolved. Register as scoped. |
+| `Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Actor>` | Returns the current authenticated actor. Implementations must throw `InvalidOperationException` (or a more specific subclass) when the request is unauthenticated or the actor cannot be resolved. Register as scoped. |
 
 ### `IAuthorize`
 
@@ -98,7 +133,7 @@ Marker for commands/queries enforcing static (permission-only) authorization. Th
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `RequiredPermissions` | `IReadOnlyList<string>` | Permissions every caller must hold. |
+| `RequiredPermissions` | `IReadOnlyList<string>` | Permissions every caller must hold. Duplicates and order are ignored — the check is set-like under AND-semantics. |
 
 ### `IAuthorizeResource<TResource>`
 
@@ -168,6 +203,8 @@ public abstract class SharedResourceLoaderById<TResource, TId>
 
 A single loader shared across every command that authorizes against the same `TResource`. When a command implements both `IAuthorizeResource<TResource>` and `IIdentifyResource<TResource, TId>` the pipeline bridges to this shared loader automatically. Explicit `IResourceLoader<TMessage, TResource>` registrations win over the shared loader.
 
+`Trellis.Mediator.ServiceCollectionExtensions.AddResourceAuthorization(...)` registers all concrete `SharedResourceLoaderById<TResource, TId>` implementations as **scoped** — safe to depend on a `DbContext` or other scoped repository. Replace the registration after the scan completes if a different lifetime is required.
+
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public abstract Task<Result<TResource>> GetByIdAsync(TId id, CancellationToken cancellationToken)` | `Task<Result<TResource>>` | Load the resource by ID; return `Result.Fail` with `Error.NotFound` when missing. |
@@ -190,7 +227,7 @@ using Trellis.Authorization;
 
 public sealed partial class OrderId : RequiredGuid<OrderId>;
 
-public sealed record DeleteOrderCommand(OrderId OrderId) : ICommand<Result>, IAuthorize
+public sealed record DeleteOrderCommand(OrderId OrderId) : ICommand<Result<Unit>>, IAuthorize
 {
     public IReadOnlyList<string> RequiredPermissions { get; } = ["orders:delete"];
 }
@@ -210,14 +247,14 @@ public sealed partial class ActorId : RequiredString<ActorId>;
 public sealed record Order(OrderId Id, ActorId OwnerId);
 
 public sealed record CancelOrderCommand(OrderId OrderId)
-    : ICommand<Result>, IAuthorizeResource<Order>, IIdentifyResource<Order, OrderId>
+    : ICommand<Result<Unit>>, IAuthorizeResource<Order>, IIdentifyResource<Order, OrderId>
 {
     public OrderId GetResourceId() => OrderId;
 
     public IResult Authorize(Actor actor, Order order) =>
-        order.OwnerId.Value == actor.Id || actor.HasPermission("orders:cancel-any")
-            ? Result.Ok()
-            : Result.Fail(new Error.Forbidden("orders.cancel")
+        Result.Ensure(
+            order.OwnerId.Value == actor.Id || actor.HasPermission("orders:cancel-any"),
+            new Error.Forbidden("orders.cancel")
                 { Detail = "Only the owner can cancel this order." });
 }
 

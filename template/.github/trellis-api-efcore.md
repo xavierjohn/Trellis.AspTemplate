@@ -1,10 +1,62 @@
-﻿# Trellis.EntityFrameworkCore
+﻿---
+package: Trellis.EntityFrameworkCore
+namespaces: [Trellis.EntityFrameworkCore]
+types: [DbContextExtensions, DbContextOptionsBuilderExtensions, DbExceptionClassifier, "EfUnitOfWork<TContext>", EntityTimestampInterceptor, IUnitOfWork, MaybeEntityTypeBuilderExtensions, MaybeModelExtensions, MaybePropertyMapping, MaybeQueryableExtensions, MaybeQueryInterceptor, MaybeUpdateExtensions, ModelConfigurationBuilderExtensions, OwnedEntityAttribute, QueryableExtensions, "RepositoryBase<TAggregate,TId>", ScalarValueQueryInterceptor, "TransactionalCommandBehavior<TMessage,TResponse>", TrellisPersistenceMappingException, "TrellisScalarConverter<TModel,TProvider>", UnitOfWorkServiceCollectionExtensions]
+version: v3
+last_verified: 2026-05-06
+audience: [llm]
+---
+# Trellis.EntityFrameworkCore
 
 **Package:** `Trellis.EntityFrameworkCore` (bundles the `Trellis.EntityFrameworkCore.Generator.dll` source generator at `analyzers/dotnet/cs/` — installing `Trellis.EntityFrameworkCore` attaches the `Maybe<T>` / `[OwnedEntity]` generator automatically; there is no separate `Trellis.EntityFrameworkCore.Generator` NuGet package).
 **Namespace:** `Trellis.EntityFrameworkCore`  
 **Purpose:** EF Core conventions, interceptors, converters, and query/update helpers for Trellis aggregates, value objects, and `Maybe<T>`.
 
 See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using this package.
+
+## Patterns Index
+
+Use this table to find the canonical Trellis API for the most common EF Core tasks. Search this section first before writing custom expressions over `Maybe<T>` properties or hand-rolled `SaveChangesAsync` wrappers — the helpers below are interceptor-aware and analyzer-checked.
+
+| Goal | Use this | See |
+|---|---|---|
+| Filter an `IQueryable<T>` by a `Maybe<TInner>` property (`<`, `<=`, `>`, `>=`, `==`, `HasValue`, `None`) | `MaybeQueryableExtensions.WhereLessThan` / `WhereLessThanOrEqual` / `WhereGreaterThan` / `WhereGreaterThanOrEqual` / `WhereEquals` / `WhereHasValue` / `WhereNone` | [`MaybeQueryableExtensions`](#maybequeryableextensions) |
+| Order an `IQueryable<T>` by a `Maybe<TInner>` property | `OrderByMaybe` / `OrderByMaybeDescending` / `ThenByMaybe` / `ThenByMaybeDescending` | [`MaybeQueryableExtensions`](#maybequeryableextensions) |
+| Make `Maybe<T>.GetValueOrDefault(d)` and similar expressions translate in EF queries (alternative to the helpers above when you must write a raw expression) | Register `AddTrellisInterceptors()` on the `DbContextOptionsBuilder`. The `MaybeQueryInterceptor` rewrites supported `Maybe<T>` calls to SQL. Prefer the `WhereXxx` helpers above when available. | [`DbContextOptionsBuilderExtensions`](#dbcontextoptionsbuilderextensions), [`MaybeQueryInterceptor`](#maybequeryinterceptor) |
+| Index a `Maybe<T>` property (avoids TRLS016 by mapping to the storage member) | `entityTypeBuilder.HasTrellisIndex(x => x.M)` (or composite `x => new { x.M, x.Other }`) | [`MaybeEntityTypeBuilderExtensions`](#maybeentitytypebuilderextensions) |
+| Save changes and get a `Result<int>` / `Result<Unit>` instead of throwing | `db.SaveChangesResultAsync()` / `db.SaveChangesResultUnitAsync()` (analyzer TRLS015 enforces in non-UoW contexts) | [`DbContextExtensions`](#dbcontextextensions) |
+| Update a `Maybe<T>` property via EF Core `ExecuteUpdate` | `MaybeUpdateExtensions.SetMaybeValue(...)` (set Some) / `SetMaybeNone(...)` (clear) | [`MaybeUpdateExtensions`](#maybeupdateextensions) |
+| Mark a composite value object as EF-owned (replaces `OwnsOne`/`OwnsMany` boilerplate) | `[OwnedEntity]` on the value-object class. Init-only setters are flagged by TRLS022 — use `{ get; private set; }`. | [`OwnedEntityAttribute`](#ownedentityattribute) |
+| Wire Trellis EF conventions in `ConfigureConventions` (preferred — compile-time, no reflection) | `configurationBuilder.ApplyTrellisConventionsFor<TContext>()` (source-generated) | [`GeneratedTrellisConventions`](#generatedtrellisconventions-source-generated) |
+| Wire Trellis EF conventions via runtime assembly scan (fallback) | `configurationBuilder.ApplyTrellisConventions(typeof(TContext).Assembly)` | [`ModelConfigurationBuilderExtensions`](#modelconfigurationbuilderextensions) |
+| Wire `MaybeQueryInterceptor`, `EntityTimestampInterceptor`, ETag, and scalar-value interceptors in one call | `optionsBuilder.AddTrellisInterceptors()` (overloads accept a `TimeProvider`) | [`DbContextOptionsBuilderExtensions`](#dbcontextoptionsbuilderextensions) |
+| Inspect / debug discovered `Maybe<T>` mappings | `dbContext.GetMaybePropertyMappings()` / `dbContext.ToMaybeMappingDebugString()` | [`MaybeModelExtensions`](#maybemodelextensions) |
+| Project an aggregate to a DTO and unwrap `Maybe<T>` safely (avoids TRLS013) | Filter with `.Where(x => x.M.HasValue)` *before* the projection (TRLS013 recognises this exact prior-Where shape). For EF query composition over `Maybe<T>`, prefer `MaybeQueryableExtensions.WhereHasValue` / `WhereXxx` so the SQL is correct, then project. | [`MaybeQueryableExtensions`](#maybequeryableextensions) |
+| Classify an EF/DB exception | `DbExceptionClassifier.IsDuplicateKey(ex)` / `IsForeignKeyViolation(ex)` / `ExtractConstraintDetail(ex)`. To map DB exceptions to a Trellis `Error` automatically, use `db.SaveChangesResultAsync()` / `SaveChangesResultUnitAsync()` instead of catching and classifying by hand. | [`DbExceptionClassifier`](#dbexceptionclassifier), [`DbContextExtensions`](#dbcontextextensions) |
+| Wrap an aggregate-store repository with `Result<T>` returns | Inherit `RepositoryBase<TAggregate, TId>` | [`RepositoryBase<TAggregate, TId>`](#repositorybasetaggregate-tid) |
+| Stage commands in a unit of work and flush once per request | `IUnitOfWork` + `EfUnitOfWork<TContext>` + `TransactionalCommandBehavior<,>` (registered via `AddTrellisUnitOfWork<TContext>()`) | [`IUnitOfWork`](#iunitofwork), [`EfUnitOfWork<TContext>`](#efunitofworktcontext), [`TransactionalCommandBehavior<TMessage, TResponse>`](#transactionalcommandbehaviortmessage-tresponse) |
+
+## Common traps
+
+- Do not hide overdue/date predicates inside repositories when the domain needs a reusable concept. Put the predicate in a `Specification<T>` and let repositories consume it.
+- For EF `IQueryable` predicates over `Maybe<T>`, prefer `MaybeQueryableExtensions.WhereXxx` helpers over sentinel `GetValueOrDefault(...)` expressions when there is a matching helper.
+- Under `AddTrellisUnitOfWork<TContext>()`, repositories stage changes only; the mediator transaction behavior commits.
+- `[OwnedEntity]` classes should be `partial` and use `{ get; private set; }` for EF-owned properties.
+- **Do not compare `Maybe<T>` properties to `Maybe.From(value)` literals using the `==` / `!=` operator inside EF queries.** EF Core extracts the closed-expression operand to a `QueryParameterExpression` during expression-tree funcletization, which runs **before** `IQueryExpressionInterceptor.QueryCompilationStarting` (where `MaybeQueryInterceptor` runs), erasing the syntactic difference between `Maybe<T>.None` and `Maybe.From(value)`. The rewriter therefore conservatively converts any unrecognized `Maybe<T>`-typed operand to typed null, which means `c.Phone == Maybe.From(value)` translates to `_phone IS NULL` and silently miss-queries. Use `MaybeQueryableExtensions.WhereEquals(c => c.Phone, value)` for value comparisons; reserve the natural `==` operator for `Maybe<T>.None` comparisons (or migrate to `WhereNone`/`c.Phone.HasNoValue` for clarity). A future fix via `IEvaluatableExpressionFilterPlugin` (which runs before funcletization) is tracked as a follow-up.
+- **Do not project a bare `Maybe<T>` property in a `.Select(c => c.Phone)` clause inside EF queries.** `MaybeQueryInterceptor` rewrites bare `c.Phone` to `EF.Property<T?>(c, "_phone")`, which changes the projection's lambda return type from `Maybe<T>` to `T?` and produces an EF translation error. Project the storage value instead via `.Select(c => c.Phone.GetValueOrDefault(default))` (with `AddTrellisInterceptors()` registered) or fetch the entity and read `Phone` after materialization.
+
+### `Maybe<T>` query shape decision table
+
+Use this table before writing predicates over `Maybe<T>` so fake repositories, EF SQL translation, and analyzers agree.
+
+| Code location | Preferred shape | Required setup / caveat |
+|---|---|---|
+| Reusable `Specification<T>.ToExpression()` used by both EF and `FakeRepository<T,TId>` | Use a natural expression that does not duplicate fake-only logic, usually `x.M.GetValueOrDefault(sentinel) < value` or a parenthesized immediate guard `(x.M.HasValue && x.M.Value < value)`. | EF translation requires `ApplyTrellisConventions(...)` or `ApplyTrellisConventionsFor<TContext>()` plus `optionsBuilder.AddTrellisInterceptors()`. |
+| Ad-hoc EF `IQueryable<T>` filtering or ordering | Prefer `WhereHasValue`, `WhereNone`, `WhereEquals`, `WhereLessThan`, `WhereGreaterThanOrEqual`, `OrderByMaybe`, etc. | These helpers target the mapped storage member directly and do not require the `MaybeQueryInterceptor` for that specific predicate. |
+| Projection after filtering for presence | Filter first with `.Where(x => x.M.HasValue)` or `.WhereHasValue(x => x.M)`, then project the value. | This is the shape TRLS013 can recognize; projecting `.Value` before a presence filter is unsafe. |
+| `ExecuteUpdate` over `Maybe<T>` | Use `SetMaybeValue(...)` or `SetMaybeNone(...)`. | Composite owned `Maybe<T>` values are not supported by the scalar update helpers. |
+
+Never write a different predicate for `FakeRepository` than for EF. If a reusable concept matters to the domain, put it in a `Specification<T>` and run the same expression in both paths.
 
 ## Types
 
@@ -64,7 +116,7 @@ protected override void ConfigureConventions(ModelConfigurationBuilder configura
     configurationBuilder.ApplyTrellisConventionsFor<AppDbContext>();
 ```
 
-The generator walks every concrete `DbContext` in the current compilation, follows public `DbSet<T>` roots, recursively discovers reachable Trellis value objects through entity properties, unwraps `Maybe<T>`, nullable types, arrays, and common collection navigations, and emits explicit calls to `AddTrellisScalarConverter<TClr, TProvider>` plus `AddTrellisCoreConventions(...)`.
+The generator walks every concrete `DbContext` in the current compilation, follows instance `DbSet<T>` properties (any accessibility — `public`, `internal`, `private`, etc., as long as the entity type is accessible to the generator), recursively discovers reachable Trellis value objects through entity properties, unwraps `Maybe<T>`, nullable types, arrays, and common collection navigations, and emits explicit calls to `AddTrellisScalarConverter<TClr, TProvider>` plus `AddTrellisCoreConventions(...)`.
 
 Scope limits:
 
@@ -87,8 +139,8 @@ public static class DbContextExtensions
 | --- | --- | --- |
 | `public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, CancellationToken cancellationToken = default)` | `Task<Result<int>>` | Convenience overload for `SaveChangesResultAsync(context, true, cancellationToken)`. |
 | `public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<int>>` | Wraps `SaveChangesAsync`; maps `DbUpdateConcurrencyException` to `new Error.Conflict(null, "concurrency.modified")`, duplicate-key `DbUpdateException` to `new Error.Conflict(null, "duplicate.key")`, and foreign-key `DbUpdateException` to `new Error.Conflict(null, "referential.integrity")`. |
-| `public static Task<Result> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)` | `Task<Result>` | Saves changes and discards the row count. |
-| `public static Task<Result> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result>` | Saves changes with explicit `acceptAllChangesOnSuccess`. |
+| `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes and discards the row count. |
+| `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes with explicit `acceptAllChangesOnSuccess`. |
 
 ### `QueryableExtensions`
 
@@ -143,7 +195,7 @@ Abstract generic repository base class for EF Core aggregate persistence. Provid
 | --- | --- | --- |
 | `public virtual void Add(TAggregate aggregate)` | `void` | Stages a new aggregate for insertion. No-op if already tracked. |
 | `public virtual void Remove(TAggregate aggregate)` | `void` | Stages an aggregate for deletion. |
-| `public virtual Task<Result> RemoveByIdAsync(TId id, CancellationToken ct = default)` | `Task<Result>` | Looks up by ID via `DbSet.FindAsync` (avoids Include graphs) and stages for deletion. Returns not-found if absent. |
+| `public virtual Task<Result<Unit>> RemoveByIdAsync(TId id, CancellationToken ct = default)` | `Task<Result<Unit>>` | Looks up by ID via `DbSet.FindAsync` (avoids Include graphs) and stages for deletion. Returns not-found if absent. |
 
 #### Virtual Hooks
 
@@ -151,6 +203,7 @@ Abstract generic repository base class for EF Core aggregate persistence. Provid
 | --- | --- |
 | `protected virtual IQueryable<TAggregate> BuildFindByIdQuery()` | Override to add `.Include()` or filters to the find-by-ID query. Defaults to `DbSet`. |
 | `protected virtual IQueryable<TAggregate> BuildQueryBase()` | Override to add `.Include()` or filters to specification queries. Defaults to `DbSet.AsNoTracking()`. |
+| `public virtual Task<IReadOnlyList<TAggregate>> QueryAsync(Specification<TAggregate> spec, CancellationToken ct)` | Override the public method itself when you need to add `.OrderBy(...)` / paging / `.AsSplitQuery()` etc. on top of the spec. **Use the `override` keyword** — declaring a same-named method without `override` triggers `CS0108: hides inherited member`. Inherited from the public method table above. |
 
 #### Usage
 
@@ -179,7 +232,8 @@ Abstraction over the commit boundary for staged changes. Repositories stage chan
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `Task<Result> CommitAsync(CancellationToken ct = default)` | `Task<Result>` | Persists all staged changes. Surfaces concurrency, duplicate-key, and FK errors as `Error` instead of exceptions. |
+| `Task<Result<Unit>> CommitAsync(CancellationToken ct = default)` | `Task<Result<Unit>>` | Persists all staged changes. Surfaces concurrency, duplicate-key, and FK errors as `Error` instead of exceptions. Implementations must defer (return success without persisting) when called inside a nested `BeginScope` scope so a successful inner command does not commit a partially-completed outer command's staged changes. |
+| `IDisposable BeginScope()` | `IDisposable` | Begins a unit-of-work scope; nested scopes track depth so only the outermost scope's `CommitAsync` actually persists. The Trellis pipeline's `TransactionalCommandBehavior` wraps every command in a scope. Custom `IUnitOfWork` implementations are required to implement depth-aware scope tracking; `EfUnitOfWork<TContext>` does this with an internal counter. **Caveat:** if an inner command returns failure but the outer ignores it and returns success, the outer's commit will persist any changes the inner staged before failing — per-scope rollback of staged changes is not supported. |
 
 ### `EfUnitOfWork<TContext>`
 
@@ -188,12 +242,13 @@ public class EfUnitOfWork<TContext> : IUnitOfWork
     where TContext : DbContext
 ```
 
-EF Core implementation of `IUnitOfWork`. Delegates to `DbContextExtensions.SaveChangesResultUnitAsync` which maps `DbUpdateConcurrencyException` → `new Error.Conflict(null, "concurrency.modified")`, duplicate-key → `new Error.Conflict(null, "duplicate.key")`, and FK violations → `new Error.Conflict(null, "referential.integrity")`.
+EF Core implementation of `IUnitOfWork`. Delegates to `DbContextExtensions.SaveChangesResultUnitAsync` which maps `DbUpdateConcurrencyException` → `new Error.Conflict(null, "concurrency.modified")`, duplicate-key → `new Error.Conflict(null, "duplicate.key")`, and FK violations → `new Error.Conflict(null, "referential.integrity")`. Tracks scope depth via an internal counter; `CommitAsync` defers (returns success without persisting) when depth > 1.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public EfUnitOfWork(TContext context)` | — | Captures the resolved `TContext` instance. Registered as scoped by `AddTrellisUnitOfWork<TContext>()`. |
-| `public Task<Result> CommitAsync(CancellationToken cancellationToken = default)` | `Task<Result>` | Calls `context.SaveChangesResultUnitAsync(cancellationToken)`. |
+| `public EfUnitOfWork(TContext context)` | — | Captures the resolved `TContext` instance. Throws `ArgumentNullException` when `context` is null. Registered as scoped by `AddTrellisUnitOfWork<TContext>()`. |
+| `public Task<Result<Unit>> CommitAsync(CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | At depth 0/1, calls `context.SaveChangesResultUnitAsync(cancellationToken)`. At depth > 1 (inside a nested scope), returns `Result.Ok()` without touching the database. |
+| `public IDisposable BeginScope()` | `IDisposable` | Increments the scope-depth counter; the returned `IDisposable.Dispose()` decrements it. Thread-safe via `Interlocked`. |
 
 ### `TransactionalCommandBehavior<TMessage, TResponse>`
 
@@ -210,8 +265,8 @@ Pipeline behavior that auto-commits staged changes after a successful command ha
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public TransactionalCommandBehavior(IUnitOfWork unitOfWork)` | — | Captures the scoped `IUnitOfWork` resolved alongside the handler. |
-| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Awaits the inner handler. On success, calls `unitOfWork.CommitAsync(cancellationToken)`; if the commit reports an `Error`, returns `TResponse.CreateFailure(error)`. On handler failure, returns the failure as-is without committing. |
+| `public TransactionalCommandBehavior(IUnitOfWork unitOfWork)` | — | Captures the scoped `IUnitOfWork` resolved alongside the handler. Throws `ArgumentNullException` when `unitOfWork` is null. |
+| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Wraps the invocation in `using var scope = unitOfWork.BeginScope();` so a successful inner command's commit is deferred until the outermost scope unwinds. Awaits the inner handler; on success, calls `unitOfWork.CommitAsync(cancellationToken)`; if the commit reports an `Error`, returns `TResponse.CreateFailure(error)`. On handler failure, returns the failure as-is without committing. |
 
 ### `UnitOfWorkServiceCollectionExtensions`
 
@@ -358,8 +413,8 @@ public static class DbExceptionClassifier
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static bool IsDuplicateKey(DbUpdateException ex)` | `bool` | Detects duplicate-key violations across SQL Server, PostgreSQL, SQLite, and generic message-based fallbacks. |
-| `public static bool IsForeignKeyViolation(DbUpdateException ex)` | `bool` | Detects foreign-key violations across SQL Server, PostgreSQL, SQLite, and generic message-based fallbacks. |
+| `public static bool IsDuplicateKey(DbUpdateException ex)` | `bool` | Detects duplicate-key violations across SQL Server (errors 2601/2627), PostgreSQL (SQLSTATE 23505), SQLite (`UNIQUE constraint failed` / `PRIMARY KEY constraint failed`), MySQL/MariaDB (error 1062 or `Duplicate entry` message — works with both `MySql.Data.MySqlClient` and `MySqlConnector`), and generic message-based fallbacks. Provider exception types are detected by name, so consumers do not take a transitive dependency on any particular driver. SQLSTATE 23000 is intentionally **not** trusted on its own for MySQL because that code is reused for foreign-key violations. |
+| `public static bool IsForeignKeyViolation(DbUpdateException ex)` | `bool` | Detects foreign-key violations across SQL Server (error 547), PostgreSQL (SQLSTATE 23503), SQLite (`FOREIGN KEY constraint failed`), MySQL/MariaDB (errors 1451/1452 or `Cannot add or update a child row` / `Cannot delete or update a parent row` message), and generic message-based fallbacks. Provider exception types are detected by name. The MySQL message-prefix detection runs unconditionally rather than gated on SQLSTATE 23000 (which is shared with duplicate-key violations and so is unreliable on its own). |
 | `public static string? ExtractConstraintDetail(DbUpdateException ex)` | `string?` | Returns a logging-oriented detail string such as the PostgreSQL constraint name or the provider message. |
 
 ### `TrellisPersistenceMappingException`
@@ -424,7 +479,7 @@ public sealed class MaybeQueryInterceptor : IQueryExpressionInterceptor
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData)` | `Expression` | Rewrites query expressions so natural `Maybe<T>` access translates to mapped storage members. Supported patterns inside `Where`/`Select`/`Specification.ToExpression()`: `o.X.HasValue`, `o.X.HasNoValue`, `o.X.Value`, `o.X.GetValueOrDefault(d)`, `o.X == Maybe<T>.None`. See cookbook [Recipe 15](trellis-api-cookbook.md#recipe-15--specifications-with-maybet-the-fakereal-divergence-trap) for the Specification walkthrough. |
+| `public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData)` | `Expression` | Rewrites query expressions so natural `Maybe<T>` access translates to mapped storage members. Supported patterns inside `Where`/`Select`/`Specification.ToExpression()`: `o.X.HasValue`, `o.X.HasNoValue`, `o.X.Value`, `o.X.GetValueOrDefault(d)`, `o.X == Maybe<T>.None`. See cookbook [Recipe 8](trellis-api-cookbook.md#recipe-8--ef-core-maybepropertymapping-for-nullable-value-objects) for the Specification walkthrough. |
 
 ### `ScalarValueQueryInterceptor`
 
@@ -462,8 +517,8 @@ public static ModelConfigurationBuilder ApplyTrellisConventions(this ModelConfig
 ```csharp
 public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, CancellationToken cancellationToken = default)
 public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
-public static Task<Result> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)
-public static Task<Result> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)
+public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
 ```
 
 ### `QueryableExtensions`

@@ -1,4 +1,12 @@
-﻿# Trellis.Asp — API Reference
+﻿---
+package: Trellis.Asp
+namespaces: [Trellis.Asp, Trellis.Asp.Authorization, Trellis.Asp.ModelBinding, Trellis.Asp.Routing, Trellis.Asp.Validation]
+types: [TrellisHttpResult, ToHttpResponse, AsActionResult, HttpResponseOptionsBuilder<T>, ClaimsActorProvider, EntraActorProvider, DevelopmentActorProvider, CachingActorProvider]
+version: v3
+last_verified: 2026-05-01
+audience: [llm]
+---
+# Trellis.Asp — API Reference
 
 **Package:** `Trellis.Asp` (bundles the AOT-friendly `Trellis.AspSourceGenerator.dll` at `analyzers/dotnet/cs/` — installing `Trellis.Asp` attaches the generator automatically — and contains the ASP.NET actor providers formerly published as `Trellis.Asp.Authorization`).
 **Namespaces:** `Trellis.Asp`, `Trellis.Asp.Authorization`, `Trellis.Asp.ModelBinding`, `Trellis.Asp.Routing`, `Trellis.Asp.Validation`
@@ -7,6 +15,48 @@
 The single supported response verb is `result.ToHttpResponse(...)`. It returns `Microsoft.AspNetCore.Http.IResult` and works in both Minimal API and MVC hosts (.NET 7+ executes `IResult` natively in MVC). For typed `ActionResult<T>` signatures, chain `.AsActionResult<T>()`. Configure protocol semantics via the fluent `HttpResponseOptionsBuilder<T>` (`WithETag`, `WithLastModified`, `Vary`, `Created`/`CreatedAtRoute`/`CreatedAtAction`, `EvaluatePreconditions`, `HonorPrefer`, `WithRange`, `WithErrorMapping`, …).
 
 See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using this package.
+
+## Use this file when
+
+- You are wiring ASP.NET Core endpoints/controllers that return Trellis `Result`, `Result<T>`, `WriteOutcome<T>`, or `Page<T>`.
+- You need the exact response-mapping verb, status-code behavior, Problem Details mapping, ETag/range/preference handling, actor-provider setup, scalar value-object binding, or route constraints.
+- You are implementing API surface polish: failure response metadata, versioned `Location` headers, or tests proving `Error.UnprocessableContent` maps to 422.
+
+## Patterns Index
+
+| Goal | Canonical API / action | See |
+|---|---|---|
+| Enable Trellis Result-to-HTTP mapping | Call `builder.Services.AddTrellisAsp()` or `services.AddTrellis(o => o.UseAsp())` in the composition root. Exception middleware is only a 500 fallback; it does not map `Result` failures. | [`ServiceCollectionExtensions`](#servicecollectionextensions), [ServiceDefaults](trellis-api-servicedefaults.md) |
+| Return a Minimal API result | `return result.ToHttpResponse(...)` | [`HttpResponseExtensions`](#httpresponseextensions) |
+| Return an MVC typed action result | Convert first, then adapt: `return result.ToHttpResponse(...).AsActionResult<T>()` or `return await result.ToHttpResponseAsync(...).AsActionResultAsync<T>()` | [`ActionResultAdapterExtensions`](#actionresultadapterextensions) |
+| Configure 201 Created | `.ToHttpResponse(o => o.Created(...))`, `.CreatedAtRoute(...)`, or `.CreatedAtAction(...)` | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain) |
+| Generate versioned `Location` headers | **Required when query-string API versioning is enabled.** Include the API version in `CreatedAtRoute` route values: `["api-version"] = ApiVersion`. Omitting it produces `Location` headers that 404 on dereference. | [`CreatedAtRoute`](#httpresponseoptionsbuildertdomain) |
+| Map failure codes globally | Configure `TrellisAspOptions.ErrorStatusCodeMap` through `AddTrellisAsp(...)` | [`TrellisAspOptions`](#trellisaspoptions) |
+| Override failure mapping for one endpoint | `.WithErrorMapping(...)` / `.WithErrorMapping<TError>(statusCode)` | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain) |
+| Document endpoint failure codes | Add ASP.NET response metadata for every spec-listed failure status (`422`, `409`, `403`, `404`, etc.) in addition to happy-path metadata. | [Code examples](#code-examples) |
+| Add ETag / conditional GET | `.WithETag(...)`, `.WithLastModified(...)`, `.EvaluatePreconditions()` | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain), [`ETagHelper`](#etaghelper) |
+| Honor `Prefer: return=minimal` | `.HonorPrefer()` on write responses | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain) |
+| Return paginated list responses | `Result<Page<T>>.ToHttpResponse(nextUrlBuilder, bodySelector, ...)` | [`PagedResponse<TResponse>`](#pagedresponsetresponse) |
+| Resolve actors from requests | `AddClaimsActorProvider`, `AddEntraActorProvider`, or `AddDevelopmentActorProvider` | [`Trellis.Asp.Authorization`](#namespace-trellisaspauthorization) |
+| Bind scalar value objects from routes/query/body | `AddTrellisAsp()` plus route constraints / validation middleware as needed | [`Trellis.Asp.ModelBinding`](#namespace-trellisaspmodelbinding), [`Trellis.Asp.Validation`](#namespace-trellisaspvalidation) |
+
+## Endpoint checklist for generated APIs
+
+- Composition root calls `AddTrellisAsp()` or `UseAsp()`.
+- Every endpoint that returns a Trellis `Result` ultimately calls `ToHttpResponse` / `AsActionResult`.
+- OpenAPI metadata includes the success code and every failure code listed by the product spec.
+- `201 Created` endpoints include a usable `Location` header. **Under query-string API versioning, include `["api-version"] = ApiVersion` in `CreatedAtRoute` route values** (or use a literal `Location` that already contains `?api-version=...`). Forgetting this is a silent `Location`-404 bug — tests pass and OpenAPI looks fine, but clients following the `Location` header get 404.
+- `[Consumes("application/json")]` is **not** safe at the controller level when the controller has trigger-style POSTs without bodies (e.g., `POST /orders/{id}/submission`). ASP.NET Core returns `415 Unsupported Media Type` for any request without a `Content-Type` header. Apply `[Consumes]` per-action on body-bearing endpoints only, or scope it to a route convention.
+- Integration tests include at least one business-validation failure that asserts `422` Problem Details; do not rely on exception middleware to prove Result mapping.
+
+### Cross-package preflight for endpoint changes
+
+| If the endpoint change includes... | Also read | Why |
+|---|---|---|
+| Sending commands or queries through Mediator | [`trellis-api-mediator.md`](trellis-api-mediator.md) | ASP maps the response, but validation/authorization/logging/commit behavior belongs to the Mediator pipeline. |
+| EF-backed writes | [`trellis-api-efcore.md`](trellis-api-efcore.md), [`trellis-api-servicedefaults.md`](trellis-api-servicedefaults.md) | Handlers stage changes; `TransactionalCommandBehavior` commits only when registered in the correct order. |
+| Actor resolution or authorization failures | [`trellis-api-authorization.md`](trellis-api-authorization.md), [`trellis-api-mediator.md`](trellis-api-mediator.md) | ASP provides actor providers; authorization contracts and behaviors live outside the response mapper. |
+| Integration tests or `.http` examples | [`trellis-api-testing-aspnetcore.md`](trellis-api-testing-aspnetcore.md) | Failure-path status/header expectations should be executable, not only documented in OpenAPI. |
 
 ## Types
 
@@ -24,11 +74,10 @@ The single Trellis verb for converting `Result` / `Result<T>` / `Result<WriteOut
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static IResult ToHttpResponse(this Result result, Action<HttpResponseOptionsBuilder>? configure = null)` | `IResult` | Maps `Result` to `204 No Content` (success) or a Problem Details response (failure). |
 | `public static IResult ToHttpResponse(this Error error, Action<HttpResponseOptionsBuilder>? configure = null)` | `IResult` | Maps a standalone `Error` to a Problem Details response (for endpoints that produce a deterministic error). |
-| `public static IResult ToHttpResponse<T>(this Result<T> result, Action<HttpResponseOptionsBuilder<T>>? configure = null)` | `IResult` | Maps `Result<T>` to `200 OK` with the value as body, or `201 Created` + `Location` when `Created` / `CreatedAtRoute` / `CreatedAtAction` is configured. Failures go through Problem Details. |
+| `public static IResult ToHttpResponse<T>(this Result<T> result, Action<HttpResponseOptionsBuilder<T>>? configure = null)` | `IResult` | Maps `Result<T>` to `200 OK` with the value as body, or `201 Created` + `Location` when `Created` / `CreatedAtRoute` / `CreatedAtAction` is configured. For `Result<Unit>` (the no-payload result returned by `Result.Ok()` / `Result.Fail(error)`), success emits `204 No Content`. Failures go through Problem Details. |
 | `public static IResult ToHttpResponse<TDomain, TBody>(this Result<TDomain> result, Func<TDomain, TBody> body, Action<HttpResponseOptionsBuilder<TDomain>>? configure = null)` | `IResult` | Same as the `Result<T>` overload, but projects the response body via `body`. Selectors in the options builder still run against the domain value. |
-| `public static IResult ToHttpResponse<T>(this Result<WriteOutcome<T>> result, Action<HttpResponseOptionsBuilder<T>>? configure = null)` | `IResult` | Maps `Result<WriteOutcome<T>>` per RFC 9110: `Created → 201 + Location`, `Updated → 200` (or `204` with `Prefer: return=minimal`), `UpdatedNoContent → 204`, `Accepted → 202` + `Retry-After`, `AcceptedNoContent → 202`. |
+| `public static IResult ToHttpResponse<T>(this Result<WriteOutcome<T>> result, Action<HttpResponseOptionsBuilder<T>>? configure = null)` | `IResult` | Maps `Result<WriteOutcome<T>>` per RFC 9110: `Created → 201 + Location`, `Updated → 200` (or `204` with `Prefer: return=minimal` **when `HonorPrefer()` is configured**), `UpdatedNoContent → 204`, `Accepted → 202` + `Retry-After`, `AcceptedNoContent → 202`. |
 | `public static IResult ToHttpResponse<TDomain, TBody>(this Result<WriteOutcome<TDomain>> result, Func<TDomain, TBody> body, Action<HttpResponseOptionsBuilder<TDomain>>? configure = null)` | `IResult` | `WriteOutcome` overload with body projection. |
 | `public static IResult ToHttpResponse<T, TBody>(this Result<Page<T>> result, Func<Cursor, int, string> nextUrlBuilder, Func<T, TBody> body, Action<HttpResponseOptionsBuilder<Page<T>>>? configure = null)` | `IResult` | Maps `Result<Page<T>>` to a paginated JSON envelope (`PagedResponse<TBody>`) plus an RFC 8288 `Link` header. `nextUrlBuilder(cursor, appliedLimit)` builds the absolute URL for next/previous links. |
 
@@ -55,10 +104,11 @@ Fluent options builder used by every generic `ToHttpResponse` overload. Selector
 | `WithAcceptRanges(string acceptRanges)` | `HttpResponseOptionsBuilder<TDomain>` | Sets `Accept-Ranges` (e.g. `"bytes"` or `"none"`). |
 | `Created(string locationLiteral)` | `HttpResponseOptionsBuilder<TDomain>` | Returns `201 Created` with a literal `Location` header. |
 | `Created(Func<TDomain, string> selector)` | `HttpResponseOptionsBuilder<TDomain>` | Returns `201 Created` with a `Location` derived from the value. |
-| `CreatedAtRoute(string routeName, Func<TDomain, RouteValueDictionary> routeValues)` | `HttpResponseOptionsBuilder<TDomain>` | Returns `201 Created` with a `Location` generated via `LinkGenerator.GetUriByName` (resolved from `HttpContext.RequestServices` at execute time). AOT-safe. |
+| `CreatedAtRoute(string routeName, Func<TDomain, RouteValueDictionary> routeValues)` | `HttpResponseOptionsBuilder<TDomain>` | Returns `201 Created` with a `Location` generated via `LinkGenerator.GetUriByName` (resolved from `HttpContext.RequestServices` at execute time). AOT-safe. **Under query-string / header API versioning**, the route values dictionary MUST include `["api-version"] = ApiVersion` — otherwise `Location` headers omit the version and 404 on dereference. The recommended path is the `CreatedAtVersionedRoute(...)` extensions in [Trellis.Asp.ApiVersioning](trellis-api-asp-apiversioning.md), which inject the version automatically. The `TRLS023` analyzer warns on bare `CreatedAtRoute` calls inside `[ApiVersion]` controllers and offers a code fix that rewrites them to `CreatedAtVersionedRoute`. |
 | `[RequiresUnreferencedCode] [RequiresDynamicCode] CreatedAtAction(string actionName, Func<TDomain, RouteValueDictionary> routeValues, string? controllerName = null)` | `HttpResponseOptionsBuilder<TDomain>` | MVC equivalent of `CreatedAtAction` — uses `LinkGenerator.GetUriByAction`. **Not trim/AOT-safe**; use `CreatedAtRoute` for AOT scenarios. |
+| `WithRouteValueResolver(string key, Func<HttpContext, string?> resolver)` | `HttpResponseOptionsBuilder<TDomain>` | Registers a per-request resolver that injects an additional route value into the `Location`-generation dictionary at execute time, after the `routeValues` selector has run. The resolver is called with the request `HttpContext`; returning `null` skips injection (the existing entry, if any, is preserved). The runtime clones the user-supplied dictionary defensively the first time a resolver writes a non-null value, so selectors that return shared instances cannot leak across requests. The mechanism is the foundation for [Trellis.Asp.ApiVersioning](trellis-api-asp-apiversioning.md)'s `CreatedAtVersionedRoute` and is also useful for cross-cutting route-value injection (tenant id, request culture, etc.). |
 | `EvaluatePreconditions()` | `HttpResponseOptionsBuilder<TDomain>` | On `GET`/`HEAD`, evaluates RFC 9110 conditional headers (`If-Match`, `If-Unmodified-Since`, `If-None-Match`, `If-Modified-Since`) using the configured ETag/LastModified selectors and writes `304 Not Modified` or `412 Precondition Failed` accordingly. On unsafe methods the precondition must be evaluated *before* the mutation. |
-| `HonorPrefer()` | `HttpResponseOptionsBuilder<TDomain>` | Honors RFC 7240 `Prefer: return=minimal` / `return=representation`. Always emits `Vary: Prefer`; emits `Preference-Applied` only when honored. |
+| `HonorPrefer()` | `HttpResponseOptionsBuilder<TDomain>` | Opt in to RFC 7240 `Prefer: return=minimal` / `return=representation` handling on `WriteOutcome.Updated`. When **not** called, the `Prefer` request header is completely ignored: the writer never emits `Vary: Prefer` or `Preference-Applied`, and `return=minimal` does **not** short-circuit the body. When called, always emits `Vary: Prefer`; emits `Preference-Applied` only when an honored preference was sent. |
 | `WithRange(Func<TDomain, ContentRangeHeaderValue> selector)` | `HttpResponseOptionsBuilder<TDomain>` | Returns `206 Partial Content` with a `Content-Range` header from the selector (returns `200` when the range covers the whole representation). |
 | `WithRange(long from, long to, long totalLength)` | `HttpResponseOptionsBuilder<TDomain>` | Static range variant. Clamps `to` to `totalLength - 1`; returns `200` when the range covers the whole resource. |
 | `WithErrorMapping(Func<Error, int> mapper)` | `HttpResponseOptionsBuilder<TDomain>` | Per-call mapper for failure responses. Highest precedence. |
@@ -109,7 +159,7 @@ Configuration registered via `AddTrellisAsp(...)` that maps domain `Error` types
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `SystemDefault` | `static TrellisAspOptions` (internal) | Read-only default instance used when DI cannot resolve a configured `TrellisAspOptions` (e.g. the host did not call `AddTrellisAsp`). Internal — not callable from user code; hosts that want a different default must register their own. |
+| `SystemDefault` | `static TrellisAspOptions` (internal) | Read-only default instance used when DI cannot resolve a configured `TrellisAspOptions` (e.g. the host did not call `AddTrellisAsp`). Internal — not callable from user code. Hosts customize the mappings by passing a configure delegate to `AddTrellisAsp(o => o.MapError<...>(...))`; raw `AddSingleton(new TrellisAspOptions())` is unsupported and will be replaced by the bridge factory the next time `AddTrellisAsp` runs. |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -325,7 +375,7 @@ The main DI surface for `Trellis.Asp` (in folder `Extensions/`).
 | `public static IServiceCollection AddScalarValueValidationForMinimalApi(this IServiceCollection services)` | `IServiceCollection` | Configures only the Minimal API JSON pipeline. |
 | `public static RouteHandlerBuilder WithScalarValueValidation(this RouteHandlerBuilder builder)` | `RouteHandlerBuilder` | Adds `ScalarValueValidationEndpointFilter` to the route handler. |
 | `public static IServiceCollection AddTrellisAsp(this IServiceCollection services)` | `IServiceCollection` | Registers `TrellisAspOptions` with default error mappings, then calls `AddScalarValueValidation()`. |
-| `public static IServiceCollection AddTrellisAsp(this IServiceCollection services, Action<TrellisAspOptions> configure)` | `IServiceCollection` | Same as above, with a `MapError<TError>(...)` callback for overrides. |
+| `public static IServiceCollection AddTrellisAsp(this IServiceCollection services, Action<TrellisAspOptions> configure)` | `IServiceCollection` | Same as above, with a `MapError<TError>(...)` callback for overrides. **Calls compose** — when `AddTrellisAsp(o => ...)` is invoked more than once (e.g. by a library and the application), every `configure` delegate runs in registration order against the same `TrellisAspOptions` instance built lazily by `OptionsFactory<TrellisAspOptions>`. Same-`TError` mappings still follow last-wins, but mappings for different error types from earlier calls are preserved. |
 
 ### Namespace `Trellis.Asp.Authorization`
 
@@ -341,10 +391,18 @@ public static class ServiceCollectionExtensions
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static IServiceCollection AddClaimsActorProvider(this IServiceCollection services, Action<ClaimsActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor`, configures `ClaimsActorOptions`, and registers `IActorProvider` as a scoped `ClaimsActorProvider`. |
-| `public static IServiceCollection AddEntraActorProvider(this IServiceCollection services, Action<EntraActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor`, configures `EntraActorOptions`, and registers `IActorProvider` as a scoped `EntraActorProvider`. |
-| `public static IServiceCollection AddDevelopmentActorProvider(this IServiceCollection services, Action<DevelopmentActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor` + logging, configures `DevelopmentActorOptions`, and registers `IActorProvider` as a scoped `DevelopmentActorProvider`. The provider itself throws outside the Development environment. |
-| `public static IServiceCollection AddCachingActorProvider<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(this IServiceCollection services) where T : class, IActorProvider` | `IServiceCollection` | Registers concrete provider `T` as scoped, then wraps it with `CachingActorProvider` as the scoped `IActorProvider`. |
+| `public static IServiceCollection AddClaimsActorProvider(this IServiceCollection services, Action<ClaimsActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor`, configures `ClaimsActorOptions`, and **replaces** the `IActorProvider` registration with a scoped `ClaimsActorProvider`. |
+| `public static IServiceCollection AddEntraActorProvider(this IServiceCollection services, Action<EntraActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor`, configures `EntraActorOptions`, and **replaces** the `IActorProvider` registration with a scoped `EntraActorProvider`. |
+| `public static IServiceCollection AddDevelopmentActorProvider(this IServiceCollection services, Action<DevelopmentActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor` + logging, configures `DevelopmentActorOptions`, and **replaces** the `IActorProvider` registration with a scoped `DevelopmentActorProvider`. The provider itself throws outside the Development environment. |
+| `public static IServiceCollection AddCachingActorProvider<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(this IServiceCollection services) where T : class, IActorProvider` | `IServiceCollection` | Registers concrete provider `T` as scoped, then **replaces** the `IActorProvider` registration with a scoped `CachingActorProvider` wrapping `T`. |
+
+> **Replacement semantics.** Each `AddXxxActorProvider` helper calls
+> `services.Replace(...)` for the `IActorProvider` slot. Calling more than one
+> helper leaves exactly one `IActorProvider` descriptor — the last one wins —
+> and `GetServices<IActorProvider>()` returns a single provider. Without
+> `Replace`, two helpers would leave two scoped descriptors with surprising
+> resolution semantics (single resolve picks the last; enumeration exposes
+> both).
 
 ### `ClaimsActorOptions`
 
@@ -470,7 +528,7 @@ public abstract class ScalarValueModelBinderBase<TResult, TValue, TPrimitive> : 
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `protected abstract ModelBindingResult OnMissingValue()` | `ModelBindingResult` | Called when no raw value is present in the value provider. |
-| `protected virtual ModelBindingResult? OnEmptyValue() => null` | `ModelBindingResult?` | Called when the raw value is an empty string; return `null` to fall through to normal conversion. |
+| `protected virtual ModelBindingResult? OnEmptyValue() => null` | `ModelBindingResult?` | Called when the raw value is an empty string; return `null` to fall through to normal conversion. For string-typed scalar VOs (`TPrimitive == string`), the empty string is forwarded to `TValue.TryCreate("")` so the value object decides whether empty input is valid. For non-string primitives, empty strings continue to fail with the standard "value is required" message before reaching `TryCreate`. |
 | `protected abstract ModelBindingResult OnSuccess(TValue value)` | `ModelBindingResult` | Wraps a validated scalar value into the final binding result. |
 | `public Task BindModelAsync(ModelBindingContext bindingContext)` | `Task` | Reads the raw value, converts to `TPrimitive`, calls `TValue.TryCreate`, and populates `ModelState` on failure. |
 
@@ -681,24 +739,28 @@ public static class ValidationErrorsContext
 | Name | Type | Description |
 | --- | --- | --- |
 | `HasErrors` | `bool` | `true` when the current async-local scope contains at least one collected validation error. |
+| `CurrentPropertyName` | `string?` (get/set) | Async-local property name for the property currently being deserialized. Set by `PropertyNameAwareConverter<T>` (reflection mode) and read by both the reflection-mode `ScalarValueJsonConverterBase<,,>` and the AOT-generated converter (which falls back to a camel-cased type name when this is `null`). |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public static IDisposable BeginScope()` | `IDisposable` | Starts a new async-local validation collection scope; disposing restores the previous scope and property name. |
+| `public static void AddError(string fieldName, string errorMessage)` | `void` | Appends a single field violation to the current scope. No-op when no scope is active. Called by both reflection-mode (`ScalarValueJsonConverterBase<,,>`) and AOT-generated converters when `TryCreate` returns a non-`Error.UnprocessableContent` failure. |
+| `public static void AddError(Error.UnprocessableContent unprocessableContent)` | `void` | Merges every `FieldViolation` and `RuleViolation` in the supplied error into the current scope, preserving each violation's `ReasonCode`, `Args`, and `Detail`. No-op when no scope is active. Called by both reflection-mode and AOT-generated converters when `TryCreate` returns an `Error.UnprocessableContent` failure. |
 | `public static Error.UnprocessableContent? GetUnprocessableContent()` | `Error.UnprocessableContent?` | Returns the aggregated `Error.UnprocessableContent` for the current scope (with `Fields` / `Rules` populated from collected `FieldViolation`s) or `null` when no errors were collected. |
 
 ## Behavioral notes
 
 - **One verb, every shape.** `ToHttpResponse` is the only supported response mapper. The internal result types it constructs (`TrellisHttpResult<TDomain, TBody>`, `TrellisWriteOutcomeResult<TDomain, TBody>`, `TrellisErrorOnlyResult`, `TrellisEmptyResult`) implement `IResult`, the `IStatusCodeHttpResult` / `IValueHttpResult<T>` / `IContentTypeHttpResult` metadata interfaces, and `IEndpointMetadataProvider` so OpenAPI/ApiExplorer surfaces the success status, body type, and the union of error envelopes the writer can emit (`200`, `201`, `206`, `304`, `400`, `404`, `412`, `500`). Layer your own `[ProducesResponseType]` / `Produces<T>` on top.
-- **Failures use Problem Details.** A failure runs through `ResponseFailureWriter` (internal). It calls `Results.ValidationProblem(...)` for `Error.UnprocessableContent` with field violations (the `errors` dictionary keys are the violation `Field.Path` with the leading `/` trimmed; values are `Detail ?? ReasonCode`), and `Results.Problem(...)` for everything else. Companion headers are emitted automatically: `Allow` for `Error.MethodNotAllowed`, `Retry-After` for `Error.TooManyRequests` / `Error.ServiceUnavailable` (when a delay is configured), and `Content-Range: {Unit} */{CompleteLength}` for `Error.RangeNotSatisfiable`. Extensions always carry `code` and `kind`; `Error.InternalServerError` adds `faultId`; rule violations are surfaced under `rules`. For `5xx` responses the `Detail` is always replaced with `"An internal error occurred."` so internal diagnostics never leak to clients.
+- **Failures use Problem Details.** A failure runs through `ResponseFailureWriter` (internal). It calls `Results.ValidationProblem(...)` for `Error.UnprocessableContent` with field violations (the `errors` dictionary keys are the violation `Field.Path` translated from RFC 6901 JSON Pointer to ASP.NET Core MVC dot+bracket convention — `/items/0/name` becomes `items[0].name`, RFC 6901 escapes `~1`/`~0` are decoded, empty reference tokens become `[""]` so `""` (root) and `/` stay distinct on the wire; values are `Detail ?? ReasonCode`), and `Results.Problem(...)` for everything else. Every Trellis.Asp `ValidationProblem` emitter — `ResponseFailureWriter`, `ModelStateExtensions.AddResultErrors`, `ScalarValueValidationFilter` (MVC), `ScalarValueValidationEndpointFilter` (Minimal API), `ScalarValueTypeHelper.GetValidationErrors`, and `ScalarValueValidationMiddleware` (which translates `JsonException.Path` from JSON Path notation `$.items[0].name` to MVC `items[0].name` and uses an empty-string key for root or generic 400 fallbacks) — emits errors keyed in the same MVC dot+bracket shape, so JSON-deserialization 400s and ROP 422s share a single key shape on the wire. The translation is intentionally aligned with MVC's de facto convention and is therefore lossy for two edge cases: a numeric reference token always becomes `[N]` (matching what `[ApiController]` emits for both `List<T>` and `Dictionary<int,T>` access — the schema is not available at translation time); and segment names containing `.`/`[`/`]` collapse with structurally distinct pointers. C# property names reflected by FluentValidation cannot contain these characters, but `InputPointer.ForProperty` only escapes `~` and `/` per RFC 6901, so any caller that passes a `propertyName` containing `.`/`[`/`]` (for example a custom adapter mapping a dotted path to a flat field) will produce a single-segment pointer that collides with structurally distinct multi-segment pointers under this translation. Raw JSON Pointer values are preserved per-rule under `extensions["rules"][n].fields[]` only when the producer also supplied `RuleViolation`s; an `Error.UnprocessableContent` containing only `FieldViolation`s carries the translated MVC key as its sole on-wire identifier and has no escape hatch, so producers needing path fidelity for a flat field violation must also emit a corresponding `RuleViolation`. Companion headers are emitted automatically: `Allow` for `Error.MethodNotAllowed`, `Retry-After` for `Error.TooManyRequests` / `Error.ServiceUnavailable` (when a delay is configured), `Content-Range: {Unit} */{CompleteLength}` for `Error.RangeNotSatisfiable`, and `WWW-Authenticate` for `Error.Unauthorized` (one header per challenge in `Challenges`, formatted per RFC 9110 §11.6.1; parameter values are emitted as quoted-strings with `"` and `\` backslash-escaped per §5.6.4). The `WWW-Authenticate` arm is additionally gated on the resolved status code being `401` — if `WithErrorMapping` promotes `Error.Unauthorized` to a non-401 status, the header is suppressed (mirrors the m-13 status-aware design used by ValidationProblem detail scrubbing). When `Challenges` is empty (the default), no `WWW-Authenticate` header is written by the response writer — that flow is owned by the configured authentication handler (e.g. `JwtBearerHandler`). Extensions always carry `code` and `kind`; `Error.InternalServerError` adds `faultId`; rule violations are surfaced under `rules`. For `5xx` responses the `Detail` is always replaced with `"An internal error occurred."` so internal diagnostics never leak to clients.
 - **Status code resolution precedence.** `WithErrorMapping(Func<Error, int>)` (per call) → `WithErrorMapping<TError>(int)` (per call, walks the type hierarchy) → `TrellisAspOptions` resolved from `HttpContext.RequestServices` (or `TrellisAspOptions.SystemDefault` if none registered) → `500 Internal Server Error`.
 - **Conditional requests.** `EvaluatePreconditions()` runs only on `GET` / `HEAD` and only when at least one of `WithETag` / `WithLastModified` is configured. The internal `ConditionalRequestEvaluator` evaluates RFC 9110 preconditions in this order: `If-Match` (strong); else `If-Unmodified-Since`; then `If-None-Match` (weak); else `If-Modified-Since` for safe methods. Failed `If-Match` / `If-Unmodified-Since` → `412`; failed `If-None-Match` / `If-Modified-Since` on `GET`/`HEAD` → `304`.
 - **`Vary` is append-only.** Both the `HonorPrefer()` switch and `Vary(...)` use `AppendVaryUnique` — they preserve any pre-existing `Vary` values added by other middleware and skip duplicates (case-insensitive).
-- **`HonorPrefer()` semantics on `WriteOutcome.Updated`.** `Prefer: return=minimal` short-circuits to `204 No Content` and emits `Preference-Applied: return=minimal`; `return=representation` returns `200 OK` with the body and emits `Preference-Applied: return=representation`. `Vary: Prefer` is always emitted when honoring `Prefer`, regardless of which preference was sent.
+- **`HonorPrefer()` semantics on `WriteOutcome.Updated`.** `HonorPrefer()` is opt-in. Without it, `Prefer` request headers are ignored entirely: no `Vary: Prefer`, no `Preference-Applied`, and `return=minimal` does **not** suppress the body. When `HonorPrefer()` is configured, `Prefer: return=minimal` short-circuits to `204 No Content` and emits `Preference-Applied: return=minimal`; `return=representation` returns `200 OK` with the body and emits `Preference-Applied: return=representation`. `Vary: Prefer` is always emitted under `HonorPrefer()`, regardless of which preference was sent.
 - **Range mapping.** `WithRange` returns `200 OK` (full body) when the configured range covers the whole representation; otherwise `206 Partial Content` with `Content-Range`. The static-range overload clamps `to` to `totalLength - 1`; the selector overload trusts the provided `ContentRangeHeaderValue`.
 - **`CreatedAtAction` is not AOT-safe.** It depends on MVC's `ControllerLinkGeneratorExtensions`. The builder method, the writer's `ResolveActionLocation` private, and the `LocationKind.Action` branch are annotated `[RequiresUnreferencedCode]` / `[RequiresDynamicCode]`. Use `CreatedAtRoute` with a named route for trim/AOT scenarios; `ResolveActionLocation` throws `NotSupportedException` when `RuntimeFeature.IsDynamicCodeSupported` is `false`.
 - **Pagination.** The `Result<Page<T>>` overload always emits the `PagedResponse<TBody>` envelope; the RFC 8288 `Link` header is added only when `Page.Next` and/or `Page.Previous` cursors are present. Failure on the page result short-circuits through the standard error pipeline.
 - **Validation collection scope.** `ScalarValueValidationMiddleware` opens a `ValidationErrorsContext` scope per request. Both `ValidatingJsonConverter<,>` and `MaybeScalarValueJsonConverter<,>` collect errors into this scope; `ScalarValueValidationFilter` (MVC) and `ScalarValueValidationEndpointFilter` (Minimal API) short-circuit with a validation problem when the scope is non-empty at action/handler entry.
+- **AOT-generated converters participate in the same scope.** When an assembly opts into the source generator (a partial `JsonSerializerContext` decorated with `[GenerateScalarValueConverters]` or any other `JsonSerializerContext` in a project that references the generator), the emitted `JsonConverter<TValue>`s mirror `ScalarValueJsonConverterBase<,,>` bit-for-bit — they read `ValidationErrorsContext.CurrentPropertyName` for the field name (falling back to the camel-cased type name when the AOT path has no `PropertyNameAwareConverter<T>` setting it), call `TryCreate(primitive, fieldName)`, and on failure call `ValidationErrorsContext.AddError(...)` (forwarding `Error.UnprocessableContent` directly to preserve `ReasonCode`/`Args`, otherwise recording the `Detail` string under `fieldName`). Without this, AOT consumers got `null` on validation failure while reflection-mode consumers got a 422 — a divergence that broke "one programming model" between the two modes. The factory `Trellis.Generated.GeneratedValueObjectConverterFactory` is emitted by the generator alongside the per-type converters; consumers wire it in by adding it to their `JsonSerializerOptions.Converters` collection (e.g. inside `AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new GeneratedValueObjectConverterFactory()))`). The `[GenerateScalarValueConverters]`-marked partial `JsonSerializerContext` extension only emits `[JsonSerializable]` attributes; it does not auto-register the factory.
 - **Minimal API scalar binding failures are metadata-driven.** When ASP.NET Core throws a 400 while binding route/query parameters, `ScalarValueValidationMiddleware` no longer parses `BadHttpRequestException.Message` to discover a field name or invalid value. It inspects `IParameterBindingMetadata`, reads the matching route/query raw value, and re-runs Trellis scalar validation for `IScalarValue<,>` / `Maybe<TScalar>` parameters. Non-scalar endpoint binding failures are rethrown to ASP.NET Core.
 - **`AddTrellisAsp` is the one-call setup.** It registers `TrellisAspOptions` and chains `AddScalarValueValidation()`, configuring both the MVC and Minimal API JSON pipelines for scalar-value/`Maybe<T>` deserialization. You still need `UseScalarValueValidation()` middleware in the request pipeline and `WithScalarValueValidation()` on each Minimal API endpoint that should short-circuit on validation errors.
 - **Composite value objects in request/response DTOs.** `AddTrellisAsp`/`AddScalarValueValidation` only wires the **scalar** VO converters. Composite VOs (multi-field `[OwnedEntity]` types like `ShippingAddress`, `Money`) bind through `CompositeValueObjectJsonConverter<T>` (in `Trellis.Primitives`), which is **opt-in per type** via `[JsonConverter(typeof(CompositeValueObjectJsonConverter<MyVo>))]` on the value object class itself. Without that attribute, model binding falls back to default construction and **silently bypasses `TryCreate`** — the inner-field validation never runs and an invalid payload propagates into the domain layer. See [Cookbook Recipe 13](trellis-api-cookbook.md#recipe-13--composite-value-object-end-to-end-domain--api-json-binding--ef-core-ownership) for the full Domain + API JSON + EF pattern.
@@ -794,25 +856,15 @@ return result.ToHttpResponse(opts => opts
 
 ### Actor providers
 
+`AddXxxActorProvider` helpers all `Replace` the `IActorProvider` slot — only the **last** call wins. The two clean composition patterns:
+
+**Pattern A — select one provider per environment:**
+
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 using Trellis.Asp.Authorization;
 
 var services = new ServiceCollection();
-
-services.AddClaimsActorProvider(opts =>
-{
-    opts.ActorIdClaim = "sub";
-    opts.PermissionsClaim = "permissions";
-});
-
-services.AddEntraActorProvider(opts =>
-{
-    opts.MapPermissions = claims => claims
-        .Where(c => string.Equals(c.Type, "roles", StringComparison.OrdinalIgnoreCase))
-        .Select(c => c.Value)
-        .ToHashSet();
-});
 
 if (env.IsDevelopment())
 {
@@ -822,9 +874,30 @@ if (env.IsDevelopment())
         opts.DefaultPermissions = new HashSet<string> { "orders:read", "orders:create" };
     });
 }
+else
+{
+    services.AddEntraActorProvider(opts =>
+    {
+        opts.MapPermissions = claims => claims
+            .Where(c => string.Equals(c.Type, "roles", StringComparison.OrdinalIgnoreCase))
+            .Select(c => c.Value)
+            .ToHashSet();
+    });
+}
+```
 
+**Pattern B — wrap the chosen inner provider with caching:**
+
+```csharp
+// First register the inner provider, then wrap with caching.
+// Each AddCachingActorProvider<T>() call replaces the IActorProvider slot
+// with CachingActorProvider over T. The inner T is registered idempotently
+// via TryAddScoped<T>() so library + application calls do not duplicate.
+services.AddEntraActorProvider(opts => { /* ... */ });
 services.AddCachingActorProvider<EntraActorProvider>();
 ```
+
+Do **not** chain multiple `AddXxxActorProvider` calls expecting them to coexist or fall back — the last one always wins. If you need different providers in different environments, branch the registration code as in Pattern A.
 
 ### Route constraints for scalar value objects
 
