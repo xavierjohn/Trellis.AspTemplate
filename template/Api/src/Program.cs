@@ -1,4 +1,5 @@
-﻿using Scalar.AspNetCore;
+﻿using Asp.Versioning;
+using Scalar.AspNetCore;
 using Trellis.ServiceLevelIndicators;
 using TodoSample.AntiCorruptionLayer;
 using TodoSample.Api;
@@ -46,7 +47,14 @@ app.UseScalarValueValidation();
 app.UseServiceLevelIndicator();
 app.UseMiddleware<ErrorHandlingMiddleware>();
 app.MapControllers();
-app.MapHealthChecks("/health");
+// /health is a cross-cutting infra endpoint — it must respond to liveness/readiness probes
+// regardless of which API version a client speaks. Tagging it explicitly api-version-neutral
+// (rather than relying on it being implicitly outside the MVC versioning pipeline) makes
+// `?api-version` truly optional, surfaces it as `Neutral` rather than `Unspecified` in the
+// SLI/OpenTelemetry tags, and documents the intent for future readers. We attach the metadata
+// directly because `IsApiVersionNeutral()` requires an associated `WithApiVersionSet(...)`,
+// which doesn't apply to non-versioned endpoints like health checks.
+app.MapHealthChecks("/health").WithMetadata(new ApiVersionNeutralAttribute());
 
 app.Run();
 
