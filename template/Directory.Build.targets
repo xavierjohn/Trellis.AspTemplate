@@ -1,0 +1,55 @@
+﻿<Project>
+
+  <!--
+    Template-development-only post-build target: mirrors the api-ref markdown files that the
+    Trellis NuGet packages auto-sync into <repo-root>/.github/ down to template/.github/, the
+    bundled payload that ships in the dotnet-new template.
+
+    Why this exists:
+    - Each Trellis package ships a Trellis.ApiReference.targets that copies its trellis-api-*.md
+      file into <repo-root>/.github/ on every build (BeforeTargets="Build"). It locates the
+      repo root by walking up to .git.
+    - For a consumer scaffolded service, .git is at the service repo root, so the auto-sync
+      lands the markdown exactly where the service's AI agents read from. Correct behaviour.
+    - For us (TrellisAspTemplate maintainers), .git is at TrellisAspTemplate/, so the auto-sync
+      writes to TrellisAspTemplate/.github/ — but the bundled template payload at
+      template/.github/ is what actually ships. Without this target, every Trellis version bump
+      would require a manual copy step.
+
+    This file only ships its target's effects when templatepack.csproj exists one directory up
+    (i.e., we are building inside the TrellisAspTemplate repo). When a consumer scaffolds a
+    service, this Directory.Build.targets is included in their tree but the condition is false
+    so the target is a harmless no-op.
+  -->
+
+  <PropertyGroup>
+    <_TrellisInTemplateDev Condition="Exists('$(MSBuildThisFileDirectory)..\templatepack.csproj')">true</_TrellisInTemplateDev>
+  </PropertyGroup>
+
+  <Target Name="_MirrorTrellisApiReferenceToTemplateGitHub"
+          AfterTargets="_CopyTrellisApiReference"
+          Condition="'$(_TrellisInTemplateDev)' == 'true' AND '$(DesignTimeBuild)' != 'true' AND '$(BuildingForLiveUnitTesting)' != 'true'">
+
+    <PropertyGroup>
+      <_TrellisRepoRootGithub>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildThisFileDirectory)', '..', '.github'))))</_TrellisRepoRootGithub>
+      <_TrellisTemplateGithub>$([MSBuild]::EnsureTrailingSlash('$(MSBuildThisFileDirectory).github'))</_TrellisTemplateGithub>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <!--
+        Match only `trellis-api-*.md` so manually-maintained files in template/.github/ such
+        as `trellis-value-object-taxonomy.md` are not overwritten.
+      -->
+      <_TrellisApiRefMirror Include="$(_TrellisRepoRootGithub)\trellis-api-*.md" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(_TrellisApiRefMirror)"
+          DestinationFolder="$(_TrellisTemplateGithub)"
+          SkipUnchangedFiles="true"
+          Retries="3"
+          RetryDelayMilliseconds="200"
+          ContinueOnError="WarnAndContinue"
+          Condition="'@(_TrellisApiRefMirror)' != ''" />
+  </Target>
+
+</Project>
