@@ -34,6 +34,10 @@ public class TodosControllerTests
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         response.Headers.Location.Should().NotBeNull();
+        // The Location header must round-trip the requested api-version so the follow-up GET
+        // dereferences correctly. CreatedAtVersionedRoute (Trellis.Asp.ApiVersioning) injects
+        // this automatically — without it the URL would 404 under query-string versioning.
+        response.Headers.Location!.OriginalString.Should().Contain("api-version=2026-03-26");
 
         var todo = await response.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         todo.Title.Should().Be("Buy groceries");
