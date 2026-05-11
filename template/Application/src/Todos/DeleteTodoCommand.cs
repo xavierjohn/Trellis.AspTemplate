@@ -5,12 +5,20 @@ using TodoSample.Domain;
 using Trellis.Authorization;
 
 /// <summary>
-/// Deletes a todo item.
+/// Deletes a todo item. Only the creator can delete their own todo.
 /// </summary>
-public sealed record DeleteTodoCommand(TodoId TodoId) : ICommand<Result<Trellis.Unit>>, IAuthorize
+public sealed record DeleteTodoCommand(TodoId TodoId) : ICommand<Result<Trellis.Unit>>, IAuthorize, IAuthorizeResource<TodoItem>, IIdentifyResource<TodoItem, TodoId>
 {
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosDelete];
+
+    /// <inheritdoc />
+    public IResult Authorize(Actor actor, TodoItem resource) =>
+        Result.Ensure(actor.IsOwner(resource.CreatedByActorId),
+            new Error.Forbidden("todo.delete.creator-only", new ResourceRef("Todo", resource.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = "Only the creator can delete this todo." });
+
+    /// <inheritdoc />
+    public TodoId GetResourceId() => TodoId;
 }
 
 /// <summary>
