@@ -487,7 +487,16 @@ public sealed record UpdateOrderCommand(OrderId OrderId, Money NewTotal)
 // DI wiring
 services.AddTrellisBehaviors();
 services.AddClaimsActorProvider();               // ClaimsActorProvider for ASP.NET Core
-services.AddResourceAuthorization(typeof(UpdateOrderCommand).Assembly);
+// Pass every assembly that contains command/query types AND every assembly that contains
+// IResourceLoader<,> implementations. In a layered app the loader typically lives in the
+// ACL assembly, not the Application assembly — passing only the Application assembly will
+// register ResourceAuthorizationBehavior<,,> without discovering the shared loader and the
+// pipeline will fail at runtime when it cannot resolve IResourceLoader<TMessage, TResource>.
+// Note: the scanner does not de-duplicate assemblies; if the two layers happen to collapse
+// to one assembly, pass it once (or .Distinct() the array) to avoid registering the behavior twice.
+services.AddResourceAuthorization(
+    typeof(UpdateOrderCommand).Assembly,        // Application assembly (commands + IAuthorizeResource)
+    typeof(OrderResourceLoader).Assembly);      // ACL assembly (IResourceLoader<,> implementations)
 ```
 
 **What it shows.** `IAuthorize` enforces an AND-permission gate via `AuthorizationBehavior<,>`. `IAuthorizeResource<TResource>` runs *after* `IResourceLoader<TMessage, TResource>` produces the loaded resource, then calls `Authorize(actor, resource)`. Combining `IAuthorizeResource<TResource>` with `IIdentifyResource<TResource, TId>` lets the framework reuse the shared `SharedResourceLoaderById<TResource, TId>` instead of requiring a per-command loader.
@@ -726,7 +735,7 @@ public class PlaceOrderHandlerTests
 }
 ```
 
-**What it shows.** `ResultAssertions<TValue>.HaveValue(...)` does structural comparison; `UnwrapError()` is the safe accessor that *only* returns the error and is intended for use after `Should().BeFailure...`. Calling `.Should()` on an `Error.UnprocessableContent` returns the specialized `ValidationErrorAssertions` (with `HaveFieldError`, `HaveFieldErrorWithDetail`, `HaveFieldCount`). Async pipelines should be awaited *first* and asserted after — `await result.Should().BeSuccessAsync()` is wrong because `BeSuccess()` is sync; the awaited `Result<T>` is what you assert on.
+**What it shows.** `ResultAssertions<TValue>.HaveValue(...)` does structural comparison; `UnwrapError()` is the safe accessor that *only* returns the error and is intended for use after `Should().BeFailure...`. Calling `.Should()` on an `Error.UnprocessableContent` returns the specialized `ValidationErrorAssertions` (with `HaveFieldError`, `HaveFieldErrorWithDetail`, `HaveFieldCount`). Async assertions have two valid shapes: await the pipeline first and assert the resulting `Result<T>`, or call `BeSuccessAsync` / `BeFailureAsync` directly on `Task<Result<T>>` or `ValueTask<Result<T>>`. The unsupported shape is `await result.Should().BeSuccessAsync()` because `.Should()` returns synchronous `ResultAssertions<TValue>`.
 
 ---
 
@@ -1021,7 +1030,7 @@ The answer depends on whether the inner type is a **scalar** (single-primitive) 
 
 | Inner type | Pattern | Why |
 |---|---|---|
-| `Maybe<TScalar>` where `TScalar : IScalarValue<TScalar, TPrimitive>` (e.g., `Maybe<EmailAddress>`, `Maybe<PhoneNumber>`) | **Use `Maybe<T>` directly on the DTO.** | `AddTrellisAsp()` registers `MaybeScalarValueJsonConverterFactory` (JSON), `MaybeModelBinder<T,P>` (route/query/header), and `MaybeSuppressChildValidationMetadataProvider` (stops `ValidationVisitor` from touching `.Value` when `None`). `null`/missing → `None`; valid → `Maybe.From(validated)`; invalid → ProblemDetails with the same field path the domain emits. |
+| `Maybe<TScalar>` where `TScalar : IScalarValue<TScalar, TPrimitive>` (e.g., `Maybe<EmailAddress>`, `Maybe<PhoneNumber>`) | **Use `Maybe<T>` directly on the DTO.** | `AddTrellisAsp()` registers `MaybeScalarValueJsonConverterFactory` (JSON) and `MaybeModelBinder<T,P>` (route/query/header); MVC child-validation suppression for `None` scalar-maybe values is handled internally by the Trellis MVC integration. Call `AddTrellisAsp(...)` before MVC model binding is configured. `null`/missing → `None`; valid → `Maybe.From(validated)`; invalid → ProblemDetails with the same field path the domain emits. |
 | `Maybe<TComposite>` where `TComposite : ValueObject` with multiple fields (e.g., `Maybe<ShippingAddress>`) | **Use a nullable transport (`TComposite?`) and adapt at the controller seam.** | No `MaybeCompositeValueObjectJsonConverterFactory` ships today — System.Text.Json would default-construct the inner type, bypassing `TryCreate`. Wrap with `Maybe.From(...)` inside the controller. |
 
 ### Pattern A — scalar `Maybe<T>` directly on the DTO
