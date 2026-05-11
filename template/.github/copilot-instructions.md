@@ -33,7 +33,20 @@ Every Trellis NuGet package ships an AI-targeted reference markdown. Each packag
 | `Trellis.Analyzers` | Roslyn analyzers `TRLS001`–`TRLS023` and code fixes; generator diagnostics `TRLS031`–`TRLS039`. Surfaces compile-time mistakes (unsafe `Maybe.Value`, sentinel `default(Result)`, missing api-version on `CreatedAtRoute`, etc.). | `.github/trellis-api-analyzers.md` |
 | **Cross-cutting docs (not packages)** | | |
 | Cookbook | Cross-package end-to-end recipes spanning DDD, Mediator, FluentValidation, EF Core, ASP.NET Core, authorization, state machine, testing. Patterns Index at the top of the file. | `.github/trellis-api-cookbook.md` |
+| Anti-pattern gallery | Ready-to-apply WRONG/FIX shapes for each `TRLSxxx` analyzer trigger. Read first when debugging an analyzer warning; preserve the control-flow shape and adapt identifiers, types, and error values to the caller. | `.github/trellis-api-anti-patterns.md` |
 | Value-object taxonomy | Scalar vs composite value-object classification rules — when to use `IScalarValue<T,TPrimitive>` vs `[OwnedEntity]`. | `.github/trellis-value-object-taxonomy.md` |
+
+### Preflight verification — required before generating non-trivial code
+
+Reading the references is necessary but not sufficient. Before producing any non-trivial Trellis code, **explicitly answer these in your reasoning** (one or two lines is enough, but skipping the step is not allowed):
+
+1. **Which task am I doing?** Name the task in the cookbook's task-lookup table — verbatim if possible.
+2. **Which recipe applies?** Cite the recipe number (e.g. *"Recipe 1 — CRUD aggregate"* or *"Recipe 21 — Parallel independent loads"*). If no recipe applies, name the cookbook section or package reference that does.
+3. **Which inherited surface does my type already get?** For any type derived from `Aggregate<TId>`, `Entity<TId>`, `RequiredGuid<T>`, `RequiredString<T>`, `RequiredEnum<T>`, the scalar `Required*<T>` primitives (`RequiredInt<T>`, `RequiredLong<T>`, `RequiredDecimal<T>`, `RequiredBool<T>`, `RequiredDateTime<T>`), `ValueObject`, or `ScalarValueObject<TSelf, T>`, list the inherited members you will *not* redeclare. Recipe 1 in the cookbook enumerates the standard set for `RequiredGuid<T>`, `RequiredString<T>`, `ValueObject`, and `Aggregate<TId>` and points at the compiled `Recipe1InheritedSurface` demonstrator in the framework's `Examples/CookbookSnippets/Recipe01_CrudAggregate.cs` for byte-exact signatures. The most common Recipe 1 mistake is redeclaring `Id`, equality methods, or `TryCreate` that the base class already provides.
+4. **Am I about to invent an API?** If you cannot point at a specific reference file + line range for the method/extension/attribute you are about to use, stop and load that reference. Do not synthesize the signature from prior knowledge.
+5. **What does the analyzer say?** If the change is in a `Result`/`Maybe`/EF-Core/value-object pipeline, list which `TRLSxxx` IDs are relevant. Cite the matching section in `.github/trellis-api-anti-patterns.md` if one exists; otherwise cite `.github/trellis-api-analyzers.md` and the relevant package reference. Preserve the WRONG/FIX control-flow shape from the anti-pattern file, adapting identifiers, types, and error values to the caller — the snippets are pattern examples, not self-contained replacements.
+
+If you cannot answer any of these, stop and load the missing reference before continuing.
 
 ## Critical Rules
 
