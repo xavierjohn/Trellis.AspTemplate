@@ -56,7 +56,7 @@ public partial class TodoItem : Aggregate<TodoId>
             s => Status = s,
             ConfigureStateMachine);
 
-        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, timeProvider.GetUtcNow().UtcDateTime));
+        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, timeProvider.GetUtcNow()));
     }
 
     /// <summary>
@@ -80,8 +80,8 @@ public partial class TodoItem : Aggregate<TodoId>
         return _machine.FireResult(Triggers.Complete)
             .Tap(_ =>
             {
-                var completedAt = tp.GetUtcNow().UtcDateTime;
-                CompletedAt = completedAt;
+                var completedAt = tp.GetUtcNow();
+                CompletedAt = completedAt.UtcDateTime;
                 DomainEvents.Add(new TodoCompleted(Id, completedAt));
             });
     }

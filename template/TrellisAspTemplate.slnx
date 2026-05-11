@@ -1,11 +1,12 @@
 <Solution>
-  <Folder Name="/Acl/">
-    <Project Path="Acl/src/AntiCorruptionLayer.csproj" />
-    <Project Path="Acl/tests/AntiCorruptionLayer.Tests.csproj" />
-  </Folder>
+  <!-- Api/src is declared first so Visual Studio uses it as the implicit startup project on a fresh checkout. -->
   <Folder Name="/Api/">
     <Project Path="Api/src/Api.csproj" />
     <Project Path="Api/tests/Api.Tests.csproj" />
+  </Folder>
+  <Folder Name="/Acl/">
+    <Project Path="Acl/src/AntiCorruptionLayer.csproj" />
+    <Project Path="Acl/tests/AntiCorruptionLayer.Tests.csproj" />
   </Folder>
   <Folder Name="/Application/">
     <Project Path="Application/src/Application.csproj" />

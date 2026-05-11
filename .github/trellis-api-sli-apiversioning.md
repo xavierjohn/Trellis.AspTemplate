@@ -12,7 +12,7 @@ See also: [`trellis-api-sli.md`](trellis-api-sli.md), [`trellis-api-sli-asp.md`]
 
 | Tag | Value |
 |---|---|
-| `http.api.version` | The single requested API version (e.g. `2023-06-06`), `"Neutral"` if the endpoint is API-version-neutral, `"Unspecified"` if no version was requested, or `""` if multiple versions were requested. |
+| `http.api.version` | The single resolved API version (e.g. `2023-06-06`), `"Neutral"` if the endpoint is API-version-neutral, `"Unspecified"` if no version was requested and no default was assumed, or `""` if the request is invalid or ambiguous. |
 
 ---
 

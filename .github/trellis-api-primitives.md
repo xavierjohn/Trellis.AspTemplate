@@ -1,28 +1,68 @@
+﻿---
+package: Trellis.Primitives
+namespaces: [Trellis, Trellis.Primitives]
+types: [Age, CountryCode, CurrencyCode, EmailAddress, Hostname, IpAddress, LanguageCode, MonetaryAmount, Money, Percentage, PhoneNumber, Slug, Url, CompositeValueObjectJsonConverter<T>, PrimitiveValueObjectTraceProviderBuilderExtensions]
+version: v3
+last_verified: 2026-05-03
+audience: [llm]
+---
 # Trellis API Primitives
 
 **Package:** `Trellis.Primitives`  
 **Namespaces:** `Trellis`, `Trellis.Primitives`  
-**Purpose:** the 13 built-in concrete value objects (`Age`, `CountryCode`, `CurrencyCode`, `EmailAddress`, `Hostname`, `IpAddress`, `LanguageCode`, `MonetaryAmount`, `Money`, `Percentage`, `PhoneNumber`, `Slug`, `Url`) plus VO-runtime infrastructure (`ParsableJsonConverter<T>`, `CompositeValueObjectJsonConverter<T>`, `PrimitiveValueObjectTrace`, `PrimitiveValueObjectTraceProviderBuilderExtensions`).
+**Purpose:** the 13 built-in concrete value objects (`Age`, `CountryCode`, `CurrencyCode`, `EmailAddress`, `Hostname`, `IpAddress`, `LanguageCode`, `MonetaryAmount`, `Money`, `Percentage`, `PhoneNumber`, `Slug`, `Url`) plus Primitives-owned VO-runtime infrastructure (`CompositeValueObjectJsonConverter<T>`, `PrimitiveValueObjectTraceProviderBuilderExtensions`).
 
 See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using this package.
 
-> **Slimmed-down package (Phase 2).** PR #403 moved the `Required*<TSelf>` base classes (`RequiredString`, `RequiredEnum`, `RequiredInt`, `RequiredLong`, `RequiredDecimal`, `RequiredGuid`, `RequiredBool`, `RequiredDateTime`), the validation attributes (`StringLengthAttribute`, `RangeAttribute`, `EnumValueAttribute`), `StringExtensions` (`NormalizeFieldName`, `ToCamelCase`, `ParseScalarValue`, `TryParseScalarValue`), and the `RequiredEnumJsonConverter<TRequiredEnum>` from `Trellis.Primitives` into `Trellis.Core`. The base contracts (`IScalarValue<TSelf, TPrimitive>`, `IFormattableScalarValue<TSelf, TPrimitive>`) and base classes (`ValueObject`, `ScalarValueObject<TSelf, T>`) also live in `Trellis.Core`. `Trellis.Primitives` now ships only the concrete VOs that build on those bases plus the JSON/tracing infrastructure listed below. See [trellis-api-core.md](trellis-api-core.md#primitive-value-object-base-classes) for everything that moved.
+> **Package scope.** The `Required*<TSelf>` base classes (`RequiredString`, `RequiredEnum`, `RequiredInt`, `RequiredLong`, `RequiredDecimal`, `RequiredGuid`, `RequiredBool`, `RequiredDateTime`), validation attributes (`StringLengthAttribute`, `RangeAttribute`, `EnumValueAttribute`), `StringExtensions` (`NormalizeFieldName`, `ToCamelCase`, `ParseScalarValue`, `TryParseScalarValue`), `ParsableJsonConverter<T>`, `PrimitiveValueObjectTrace`, and `RequiredEnumJsonConverter<TRequiredEnum>` live in `Trellis.Core`. The base contracts (`IScalarValue<TSelf, TPrimitive>`, `IFormattableScalarValue<TSelf, TPrimitive>`) and base classes (`ValueObject`, `ScalarValueObject<TSelf, T>`) also live in `Trellis.Core`. `Trellis.Primitives` ships the concrete VOs that build on those bases plus the composite JSON converter and OpenTelemetry registration extension listed below. See [trellis-api-core.md](trellis-api-core.md#primitive-value-object-base-classes) for the base-type reference.
 >
 > The incremental generator that emits the `TryCreate`/`Create`/`Parse`/`TryParse`/`JsonConverter` partial bodies for `Required*<TSelf>` derivations (`Trellis.Core.Generator`) is bundled inside `Trellis.Core.nupkg` under `analyzers/dotnet/cs/`. `Trellis.Primitives` no longer references its own generator package — installing `Trellis.Core` (or transitively, `Trellis.Primitives` which depends on it) attaches the analyzer automatically.
 
+## Use this file when
+
+- You need one of the ready-made concrete value objects such as `EmailAddress`, `PhoneNumber`, `Money`, `CurrencyCode`, `Url`, or `Slug`.
+- You need the composite value-object JSON converter or OpenTelemetry registration extension for primitives shipped by `Trellis.Primitives`.
+- You are deciding whether to use a built-in primitive or define a custom `Required*<TSelf>` value object from `Trellis.Core`.
+
+## Patterns Index
+
+| Goal | Canonical API / pattern | See |
+|---|---|---|
+| Validate an email string | `EmailAddress.TryCreate(...)` | [`EmailAddress`](#emailaddress) |
+| Validate optional phone input | `PhoneNumber.TryCreate(...)` and wrap absence with `Maybe<PhoneNumber>` at the domain seam | [`PhoneNumber`](#phonenumber), [Core `Maybe<T>`](trellis-api-core.md#public-readonly-struct-maybet-where-t--notnull) |
+| Represent money | `Money` / `MonetaryAmount` / `CurrencyCode` | [`Money`](#money), [`MonetaryAmount`](#monetaryamount), [`CurrencyCode`](#currencycode) |
+| Bind/serialize built-in scalar primitives | Use generated converters from the primitive/base contracts; ASP validation is in `Trellis.Asp` | [`ParsableJsonConverter<T>`](trellis-api-core.md#parsablejsonconvertert), [ASP validation](trellis-api-asp.md#namespace-trellisaspvalidation) |
+| Define a custom SKU/order-id primitive | Use `partial class Sku : RequiredString<Sku>` or `partial class OrderId : RequiredGuid<OrderId>` from `Trellis.Core` | [Core primitive base classes](trellis-api-core.md#primitive-value-object-base-classes) |
+| Add length/range constraints to custom primitives | Use Trellis `[StringLength]` / `[Range]` attributes from `namespace Trellis`, not DataAnnotations | [Core attributes](trellis-api-core.md#primitive-value-object-base-classes), [TRLS017](trellis-api-analyzers.md#diagnostics) |
+| Add JSON for composite value objects | `CompositeValueObjectJsonConverter<T>` | [`CompositeValueObjectJsonConverter<T>`](#compositevalueobjectjsonconvertert) |
+
+## Common traps
+
+- This file documents concrete primitives. Custom primitive base classes and Trellis validation attributes live in [trellis-api-core.md](trellis-api-core.md#primitive-value-object-base-classes).
+- Use Trellis attributes when defining generated primitives; similarly named DataAnnotations attributes compile but are ignored by the Trellis generator.
+- Keep primitive parsing out of handlers. Convert transport primitives to value objects at the DTO/controller/application seam, then pass shaped commands inward.
+
+### Trellis validation attributes vs `System.ComponentModel.DataAnnotations`
+
+The Trellis validation attributes are **class-targeted** with **different shapes** than the same-named DataAnnotations types. Decorate the `partial class` definition of a `Required*<TSelf>`-derived value object, not a property. `[StringLength]` supports both `MaximumLength` (positional ctor argument) and `MinimumLength` (property initializer); the missing piece relative to DataAnnotations is `[RegularExpression]` — pattern checks go in `static partial void ValidateAdditional(string value, string fieldName, ref string? error)`.
+
+**Class-targeted (apply to the `partial class` of a `Required*<TSelf>`-derived value object):**
+
+| Attribute | Target | Constructor(s) | Use it for | DataAnnotations equivalent that does **not** work |
+|---|---|---|---|---|
+| `Trellis.StringLengthAttribute` | `class` (on the `partial class X : RequiredString<X>`) | `StringLengthAttribute(int maximumLength)` (use `MinimumLength = N` initializer for the lower bound; `maximumLength` must be `>= 1`) | Length constraint on a `RequiredString<TSelf>` value object. Generated `TryCreate` enforces `MinimumLength <= length <= MaximumLength` after the null/empty/whitespace check. | `[System.ComponentModel.DataAnnotations.StringLength(...)]` on the class fails with `CS0592` (DataAnnotations targets `Property | Field | Parameter`, not `Class`); on a member it compiles but is ignored by the Trellis generator. `TRLS017` is the analyzer guardrail for the class-placement case if `AttributeUsage` ever expands. |
+| `Trellis.RangeAttribute` | `class` (on the `partial class X : RequiredInt<X>` / `RequiredLong<X>` / `RequiredDecimal<X>`) | `(int min, int max)`, `(long min, long max)`, `(double min, double max)` | Numeric range constraint. The constructor selected determines which generator template fires. | `[Range(typeof(decimal), "0.01", "999999.99")]` — use `(double, double)` instead. |
+| **Pattern / regex** | n/a | n/a | Override `static partial void ValidateAdditional(string value, string fieldName, ref string? error)` and run a `Regex.IsMatch(...)`. There is no `[RegularExpression]` attribute analog. | `[RegularExpression(@"^[A-Z]{3}\d{4}$")]` — silently does nothing on a `Required*<TSelf>` class. |
+
+**Field-targeted (apply to `public static readonly` members of a `RequiredEnum<TSelf>`-derived value object):**
+
+`Trellis.EnumValueAttribute(string value)` overrides the external symbolic name for a single enum member. Apply it to a `public static readonly TSelf` field whose canonical name should differ from the C# field identifier (e.g., when serializing `Status.InProgress` as `"in-progress"`). Without the attribute, `RequiredEnum<TSelf>` falls back to the field name. **This is the only Trellis primitive attribute that targets `AttributeTargets.Field` and takes a `string` argument** — do not include it in the class-targeted table above.
+
+A property-targeted form like `[StringLength(20, MinimumLength = 3)] public string Value { get; }` produces `CS0592: Attribute is not valid on this declaration type` only if `[StringLength]` resolves to `Trellis.StringLengthAttribute`, which targets `AttributeTargets.Class` only. The DataAnnotations attribute of the same name targets properties/fields/parameters and compiles in those positions, but the Trellis source generator only inspects attributes on the partial class declaration, so a DataAnnotations attribute on a member of a `Required*<TSelf>`-derived class is silently ignored. `TRLS017` covers the converse case — a DataAnnotations `[StringLength]`/`[Range]` applied to the class itself.
+
 ## Types
 
-> Base contracts (`IScalarValue<TSelf, TPrimitive>`, `IFormattableScalarValue<TSelf, TPrimitive>`), base classes (`ValueObject`, `ScalarValueObject<TSelf, T>`), validation attributes (`RangeAttribute`, `StringLengthAttribute`, `EnumValueAttribute`), `StringExtensions`, the `Required*<TSelf>` base classes, and `RequiredEnumJsonConverter<TRequiredEnum>` are all documented in [trellis-api-core.md](trellis-api-core.md). They live in `Trellis.Core` and are used by every concrete VO listed below. The inherited `static TSelf Create(TPrimitive value)` factory documented on `ScalarValueObject<TSelf, T>` is **not** repeated on each concrete VO below.
-
-### `PrimitiveValueObjectTrace`
-
-```csharp
-public static class PrimitiveValueObjectTrace
-```
-
-| Name | Type | Description |
-| --- | --- | --- |
-| `ActivitySource` | `ActivitySource` | Shared OpenTelemetry source used by primitive creation/parsing paths. |
+> Base contracts (`IScalarValue<TSelf, TPrimitive>`, `IFormattableScalarValue<TSelf, TPrimitive>`), base classes (`ValueObject`, `ScalarValueObject<TSelf, T>`), validation attributes (`RangeAttribute`, `StringLengthAttribute`, `EnumValueAttribute`), `StringExtensions`, the `Required*<TSelf>` base classes, `ParsableJsonConverter<T>`, `PrimitiveValueObjectTrace`, and `RequiredEnumJsonConverter<TRequiredEnum>` are all documented in [trellis-api-core.md](trellis-api-core.md). They live in `Trellis.Core` and are used by every concrete VO listed below. `Trellis.Primitives` type-forwards `ParsableJsonConverter<T>` and `PrimitiveValueObjectTrace` for binary compatibility, but new source guidance should treat Core as the owner. The inherited `static TSelf Create(TPrimitive value)` factory documented on `ScalarValueObject<TSelf, T>` is **not** repeated on each concrete VO below.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -40,22 +80,7 @@ public static class PrimitiveValueObjectTraceProviderBuilderExtensions
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static TracerProviderBuilder AddPrimitiveValueObjectInstrumentation(this TracerProviderBuilder builder)` | `TracerProviderBuilder` | Registers the Trellis primitive activity source with OpenTelemetry. |
-
-### `ParsableJsonConverter<T>`
-
-```csharp
-public class ParsableJsonConverter<T> : JsonConverter<T> where T : IParsable<T>
-```
-
-| Name | Type | Description |
-| --- | --- | --- |
-| — | — | Converter type; no public properties. |
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| `public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)` | `T?` | Accepts JSON `string`, `number`, `true`, `false`, and `null`; converts to string and calls `T.Parse(raw, default)`. `null` throws because Trellis scalar types are non-nullable. |
-| `public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options)` | `void` | Writes JSON numbers for numeric scalar types discovered via `ScalarValueObject<,>`; otherwise writes JSON strings. |
+| `public static TracerProviderBuilder AddPrimitiveValueObjectInstrumentation(this TracerProviderBuilder builder)` | `TracerProviderBuilder` | Registers the Core-owned Trellis primitive activity source (`PrimitiveValueObjectTrace.ActivitySourceName`) with OpenTelemetry. Throws `ArgumentNullException` when `builder` is null. |
 
 ### `Age`
 
@@ -189,15 +214,15 @@ public class MonetaryAmount : ScalarValueObject<MonetaryAmount, decimal>, IScala
 | `public static Result<MonetaryAmount> TryCreate(decimal? value, string? fieldName = null)` | `Result<MonetaryAmount>` | Rejects `null`. |
 | `public static Result<MonetaryAmount> TryCreate(string? value, string? fieldName = null)` | `Result<MonetaryAmount>` | Invariant string parsing. |
 | `public static Result<MonetaryAmount> TryCreate(string? value, IFormatProvider? provider, string? fieldName = null)` | `Result<MonetaryAmount>` | Culture-aware string parsing. |
-| `public Result<MonetaryAmount> Add(MonetaryAmount other)` | `Result<MonetaryAmount>` | Adds two amounts. |
-| `public Result<MonetaryAmount> Subtract(MonetaryAmount other)` | `Result<MonetaryAmount>` | Subtracts and fails if result would become invalid. |
+| `public Result<MonetaryAmount> Add(MonetaryAmount other)` | `Result<MonetaryAmount>` | Adds two amounts. Throws `ArgumentNullException` when `other` is null. |
+| `public Result<MonetaryAmount> Subtract(MonetaryAmount other)` | `Result<MonetaryAmount>` | Subtracts and fails if result would become invalid. Throws `ArgumentNullException` when `other` is null. |
 | `public Result<MonetaryAmount> Multiply(int quantity)` | `Result<MonetaryAmount>` | Rejects negative quantity. |
 | `public Result<MonetaryAmount> Multiply(decimal multiplier)` | `Result<MonetaryAmount>` | Rejects negative multiplier. |
 | `public static MonetaryAmount Parse(string? s, IFormatProvider? provider)` | `MonetaryAmount` | Throws `FormatException` on failure. |
 | `public static bool TryParse([NotNullWhen(true)] string? s, IFormatProvider? provider, [MaybeNullWhen(false)] out MonetaryAmount result)` | `bool` | Safe parse helper. |
 | `public static explicit operator MonetaryAmount(decimal value)` | `MonetaryAmount` | Explicit cast using `Create(decimal)`. |
 | `public override string ToString()` | `string` | Invariant decimal string. |
-| `public static Result<MonetaryAmount> Sum(IEnumerable<MonetaryAmount> values)` | `Result<MonetaryAmount>` | Returns `Zero` for empty collections. |
+| `public static Result<MonetaryAmount> Sum(IEnumerable<MonetaryAmount> values)` | `Result<MonetaryAmount>` | Returns `Zero` for empty collections. Throws `ArgumentNullException` when `values` is null and `ArgumentException` when any element is null. |
 
 ### `CompositeValueObjectJsonConverter<T>`
 
@@ -215,7 +240,7 @@ order the properties are declared.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)` | `T?` | Reads a JSON object, populates parameters by JSON property name (case-insensitive), invokes `TryCreate`, and throws `TrellisJsonValidationException` with the error display message on failure. Throws `TrellisJsonValidationException` for missing required properties. |
+| `public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)` | `T?` | Reads a JSON object, populates parameters by JSON property name (case-insensitive), invokes `TryCreate`, and throws `TrellisJsonValidationException` with the error display message on failure. When required properties are missing, throws a single `TrellisJsonValidationException` listing **all** missing names (e.g. `Required properties missing: 'amount', 'currency'.`) so multi-field violations surface in one round trip. |
 | `public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options)` | `void` | Writes one JSON property per public instance property in declaration order, using the underlying primitive value for `IScalarValue<,>` properties. |
 
 Apply via `[JsonConverter(typeof(CompositeValueObjectJsonConverter<MyVo>))]` on the value object type.
@@ -239,20 +264,20 @@ public class Money : ValueObject
 | --- | --- | --- |
 | `public static Result<Money> TryCreate(decimal amount, string currencyCode, string? fieldName = null)` | `Result<Money>` | Rejects negative amounts and invalid currency codes. |
 | `public static Money Create(decimal amount, string currencyCode)` | `Money` | Throwing factory. |
-| `public Result<Money> Add(Money other)` | `Result<Money>` | Requires matching currencies. |
-| `public Result<Money> Subtract(Money other)` | `Result<Money>` | Requires matching currencies and non-negative result. |
-| `public Result<Money> Multiply(decimal multiplier)` | `Result<Money>` | Rejects negative multiplier. |
-| `public Result<Money> Multiply(int quantity)` | `Result<Money>` | Rejects negative quantity. |
-| `public Result<Money> Divide(decimal divisor)` | `Result<Money>` | Divisor must be positive. |
-| `public Result<Money> Divide(int divisor)` | `Result<Money>` | Divisor must be positive. |
-| `public Result<Money[]> Allocate(params int[] ratios)` | `Result<Money[]>` | Ratio-based split with remainder distribution. |
-| `public bool IsGreaterThan(Money other)` | `bool` | False when currencies differ. |
-| `public bool IsGreaterThanOrEqual(Money other)` | `bool` | False when currencies differ. |
-| `public bool IsLessThan(Money other)` | `bool` | False when currencies differ. |
-| `public bool IsLessThanOrEqual(Money other)` | `bool` | False when currencies differ. |
+| `public Result<Money> Add(Money other)` | `Result<Money>` | Requires matching currencies. Throws `ArgumentNullException` when `other` is null. Returns `Error.UnprocessableContent` on currency mismatch or addition overflow. |
+| `public Result<Money> Subtract(Money other)` | `Result<Money>` | Requires matching currencies and non-negative result. Throws `ArgumentNullException` when `other` is null. |
+| `public Result<Money> Multiply(decimal multiplier)` | `Result<Money>` | Rejects negative multiplier. Returns `Error.UnprocessableContent` on multiplication overflow. |
+| `public Result<Money> Multiply(int quantity)` | `Result<Money>` | Rejects negative quantity. Returns `Error.UnprocessableContent` on multiplication overflow. |
+| `public Result<Money> Divide(decimal divisor)` | `Result<Money>` | Divisor must be positive. Returns `Error.UnprocessableContent` when division would overflow (e.g. very small positive divisor). |
+| `public Result<Money> Divide(int divisor)` | `Result<Money>` | Divisor must be positive. Returns `Error.UnprocessableContent` on division overflow. |
+| `public Result<Money[]> Allocate(params int[] ratios)` | `Result<Money[]>` | Ratio-based split with remainder distribution. Throws `ArgumentNullException` when `ratios` is null. Returns `Error.UnprocessableContent` with field `ratios` when any ratio is non-positive or `ratios.Sum()` overflows; with field `amount` when the minor-unit conversion or the per-ratio share multiplication (`amountInMinorUnits * ratios[i]`, computed in a checked context) overflows. |
+| `public bool IsGreaterThan(Money other)` | `bool` | False when currencies differ. Throws `ArgumentNullException` when `other` is null. |
+| `public bool IsGreaterThanOrEqual(Money other)` | `bool` | False when currencies differ. Throws `ArgumentNullException` when `other` is null. |
+| `public bool IsLessThan(Money other)` | `bool` | False when currencies differ. Throws `ArgumentNullException` when `other` is null. |
+| `public bool IsLessThanOrEqual(Money other)` | `bool` | False when currencies differ. Throws `ArgumentNullException` when `other` is null. |
 | `public static Result<Money> Zero(string currencyCode = "USD")` | `Result<Money>` | Currency-aware zero instance. |
 | `public override string ToString()` | `string` | Invariant amount plus currency code. |
-| `public static Result<Money> Sum(IEnumerable<Money> values)` | `Result<Money>` | Fails for empty or mixed-currency collections. |
+| `public static Result<Money> Sum(IEnumerable<Money> values)` | `Result<Money>` | Fails for empty or mixed-currency collections. Throws `ArgumentNullException` when `values` is null and `ArgumentException` when any element is null. |
 
 ### `Percentage`
 
@@ -295,7 +320,7 @@ public partial class PhoneNumber : ScalarValueObject<PhoneNumber, string>, IScal
 | `public static Result<PhoneNumber> TryCreate(string? value, string? fieldName = null)` | `Result<PhoneNumber>` | Removes spaces, dashes, and parentheses, then validates E.164. |
 | `public static PhoneNumber Parse(string? s, IFormatProvider? provider)` | `PhoneNumber` | Throws `FormatException` on failure. |
 | `public static bool TryParse([NotNullWhen(true)] string? s, IFormatProvider? provider, [MaybeNullWhen(false)] out PhoneNumber result)` | `bool` | Safe parse helper. |
-| `public string GetCountryCode()` | `string` | Extracts the E.164 country calling code. |
+| `public string GetCountryCode()` | `string` | Extracts the E.164 country calling code via longest-prefix lookup. Throws `InvalidOperationException` when the prefix does not match any assigned ITU-T calling code (`TryCreate` validates only E.164 *shape*, not assigned-code membership). |
 
 ### `Slug`
 
@@ -350,16 +375,16 @@ The base classes (`ValueObject`, `ScalarValueObject<TSelf, T>`, `RequiredString<
 | Type | Namespace | Category | Underlying/wire shape | Notes |
 | --- | --- | --- | --- | --- |
 | `Age` | `Trellis.Primitives` | Scalar | JSON number or numeric string input; JSON number output | `int`, range `0..150`. |
-| `CountryCode` | `Trellis.Primitives` | Scalar | JSON string | Uppercase ISO 3166-1 alpha-2. |
-| `CurrencyCode` | `Trellis.Primitives` | Scalar | JSON string | Uppercase ISO 4217. |
+| `CountryCode` | `Trellis.Primitives` | Scalar | JSON string | Uppercase ASCII ISO 3166-1 alpha-2 (exactly two ASCII letters). |
+| `CurrencyCode` | `Trellis.Primitives` | Scalar | JSON string | Uppercase ASCII ISO 4217 (exactly three ASCII letters). |
 | `EmailAddress` | `Trellis.Primitives` | Scalar | JSON string | Trimmed validated email. |
 | `Hostname` | `Trellis.Primitives` | Scalar | JSON string | RFC 1123 hostname. |
 | `IpAddress` | `Trellis.Primitives` | Scalar | JSON string | IPv4 or IPv6 text. |
-| `LanguageCode` | `Trellis.Primitives` | Scalar | JSON string | Lowercase ISO 639-1 alpha-2. |
+| `LanguageCode` | `Trellis.Primitives` | Scalar | JSON string | Lowercase ASCII ISO 639-1 alpha-2. |
 | `MonetaryAmount` | `Trellis.Primitives` | Scalar | JSON number or numeric string input; JSON number output | Non-negative single-currency amount with 2-decimal rounding. |
-| `Money` | `Trellis.Primitives` | Structured | JSON object `{ "amount": number, "currency": string }` | Multi-currency value object; not scalar. |
+| `Money` | `Trellis.Primitives` | Structured | JSON object `{ "amount": number, "currency": string }` | Multi-currency value object; not scalar. Decimal places per ISO 4217 minor units (0 for JPY/KRW/BIF/CLP/DJF/GNF/ISK/KMF/PYG/RWF/UGX/UYI/VND/VUV/XAF/XOF/XPF; 3 for BHD/IQD/JOD/KWD/LYD/OMR/TND; 4 for CLF/UYW; 2 otherwise). |
 | `Percentage` | `Trellis.Primitives` | Scalar | JSON number or numeric string input; JSON number output | `decimal` in `0..100`; `ToString()` adds `%`. |
-| `PhoneNumber` | `Trellis.Primitives` | Scalar | JSON string | Normalized E.164 string. |
+| `PhoneNumber` | `Trellis.Primitives` | Scalar | JSON string | Normalized E.164 string. `GetCountryCode()` throws when the prefix is not an assigned ITU-T calling code. |
 | `Slug` | `Trellis.Primitives` | Scalar | JSON string | Lowercase letters, digits, single hyphens. |
 | `Url` | `Trellis.Primitives` | Scalar | JSON string | Absolute HTTP/HTTPS URI. |
 

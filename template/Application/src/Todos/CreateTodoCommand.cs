@@ -49,8 +49,8 @@ public sealed class CreateTodoCommandHandler : ICommandHandler<CreateTodoCommand
     public async ValueTask<Result<TodoItem>> Handle(CreateTodoCommand command, CancellationToken cancellationToken)
     {
         var actor = await _actorProvider.GetCurrentActorAsync(cancellationToken);
-        return await TodoItem.TryCreate(command.Title, command.DueDate, command.Tag, actor.Id, _timeProvider)
+        return TodoItem.TryCreate(command.Title, command.DueDate, command.Tag, actor.Id, _timeProvider)
             .Bind(todo => todo.Start().Map(_ => todo))
-            .CheckAsync(todo => _repository.SaveAsync(todo, cancellationToken));
+            .Tap(_repository.Add);
     }
 }

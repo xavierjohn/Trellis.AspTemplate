@@ -25,15 +25,16 @@ GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}
 Accept: application/json
 X-Test-Actor: {{userActor}}
 
-### Get overdue todos
+### Get overdue todos (paginated — RFC 8288 Link header)
 GET {{host}}/api/Todos/overdue?api-version={{apiVersion}}
 Accept: application/json
 X-Test-Actor: {{userActor}}
 
-### Update todo
+### Update todo (requires If-Match per RFC 9110)
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
+If-Match: {{createTodo.response.headers.ETag}}
 
 {
   "title": "Buy organic groceries",
@@ -41,10 +42,11 @@ X-Test-Actor: {{adminActor}}
   "tag": "health"
 }
 
-### Update todo with past due date (→ 400)
+### Update todo with past due date (→ 422)
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
+If-Match: {{createTodo.response.headers.ETag}}
 
 {
   "title": "Too late",
@@ -100,6 +102,12 @@ Accept: application/json
 
 ###############################################
 # RFC 9110 — Conditional Request Examples
+#
+# NOTE: ETags change after every successful PUT. To run these examples
+# top-to-bottom, refresh the captured ETag between successful updates by
+# re-running the "Get todo by ID" request above (which becomes the new
+# `{{createTodo.response.headers.ETag}}` reference) — or create a fresh
+# todo per scenario. Otherwise the server returns 412 Precondition Failed.
 ###############################################
 
 ### GET with If-None-Match — 304 Not Modified when ETag matches
@@ -108,6 +116,12 @@ GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}
 Accept: application/json
 X-Test-Actor: {{userActor}}
 If-None-Match: {{createTodo.response.headers.ETag}}
+
+### GET with If-Modified-Since — 304 Not Modified when not modified after the given date (RFC 9110 §13.1.3)
+GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+If-Modified-Since: Wed, 01 Jan 2099 00:00:00 GMT
 
 ### PUT with If-Match — conditional update (succeeds if ETag matches)
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
@@ -121,7 +135,7 @@ If-Match: {{createTodo.response.headers.ETag}}
   "tag": "health"
 }
 
-### PUT with stale If-Match — 412 Precondition Failed
+### PUT with stale If-Match — 412 Precondition Failed (RFC 9110 §13.1.1)
 # Using the old ETag after the update above — should fail
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
@@ -133,12 +147,62 @@ If-Match: "stale-etag-value"
   "dueDate": "2026-04-15T12:00:00Z"
 }
 
-### PUT without If-Match — unconditional update (OptionalETag is a no-op)
+### PUT without If-Match — 428 Precondition Required (RFC 6585 §3)
+# RequireETag enforces strict optimistic concurrency: missing If-Match is a hard failure.
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
 
 {
-  "title": "Unconditional update",
+  "title": "Missing If-Match",
   "dueDate": "2026-04-20T12:00:00Z"
 }
+
+###############################################
+# RFC 7240 — Prefer header
+###############################################
+
+### PUT with Prefer: return=minimal — 204 No Content (no body)
+# HonorPrefer() opts the endpoint into RFC 7240; the response includes
+# `Vary: Prefer` and `Preference-Applied: return=minimal`.
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+If-Match: {{createTodo.response.headers.ETag}}
+Prefer: return=minimal
+
+{
+  "title": "Minimal response please",
+  "dueDate": "2026-05-01T12:00:00Z"
+}
+
+### PUT with Prefer: return=representation — 200 OK with body (default behavior, explicit)
+PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
+Content-Type: application/json
+X-Test-Actor: {{adminActor}}
+If-Match: {{createTodo.response.headers.ETag}}
+Prefer: return=representation
+
+{
+  "title": "Full representation",
+  "dueDate": "2026-05-02T12:00:00Z"
+}
+
+###############################################
+# RFC 8288 — Link header pagination
+###############################################
+
+### Get first page of overdue todos with a small limit — Link: <…>; rel="next" appears when more pages exist
+GET {{host}}/api/Todos/overdue?limit=2&api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+
+### Follow the next page using the cursor returned in the previous response body
+GET {{host}}/api/Todos/overdue?cursor={{the-cursor-token-from-next-link}}&limit=2&api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}
+
+### Malformed cursor — 422 Unprocessable Content (RFC 9110 §15.5.21) with Problem Details (RFC 9457)
+GET {{host}}/api/Todos/overdue?cursor=not-a-guid&api-version={{apiVersion}}
+Accept: application/json
+X-Test-Actor: {{userActor}}

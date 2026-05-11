@@ -38,9 +38,8 @@ public sealed class CompleteTodoCommandHandler : ICommandHandler<CompleteTodoCom
     public async ValueTask<Result<TodoItem>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken)
     {
         var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
-        return await maybe
+        return maybe
             .ToResult(new Error.NotFound(new ResourceRef("Todo", command.TodoId.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = $"Todo {command.TodoId} not found." })
-            .Bind(todo => todo.Complete(_timeProvider).Map(_ => todo))
-            .CheckAsync(todo => _repository.SaveAsync(todo, cancellationToken));
+            .Bind(todo => todo.Complete(_timeProvider).Map(_ => todo));
     }
 }
