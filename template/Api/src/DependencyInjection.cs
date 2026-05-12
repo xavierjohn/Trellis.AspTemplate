@@ -22,7 +22,16 @@ internal static class DependencyInjection
         // controller class can serve multiple versions without folder/namespace duplication.
         // Do NOT add VersionByNamespaceConvention — see template/.github/copilot-instructions.md
         // "API versioning approach" for the rationale.
-        services.AddApiVersioning()
+        //
+        // UnsupportedApiVersionStatusCode = 404: when an endpoint exists at version v2 but the client
+        // requests it under v1 (or vice versa), Asp.Versioning's default is 400 Bad Request. 404 is the
+        // semantically correct response — the request syntax is valid; the resource doesn't exist at
+        // that version. 404 also matches what a typo'd path returns, giving clients one consistent
+        // signal for "no such resource at this surface."
+        services.AddApiVersioning(options =>
+                {
+                    options.UnsupportedApiVersionStatusCode = StatusCodes.Status404NotFound;
+                })
                 .AddMvc()
                 .AddApiExplorer()
                 .AddOpenApi(options => options.Document.AddScalarTransformers());

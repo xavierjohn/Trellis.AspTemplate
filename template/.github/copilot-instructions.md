@@ -466,7 +466,12 @@ public class OrdersController : ControllerBase
 }
 
 // In DependencyInjection.cs:
-services.AddApiVersioning()
+services.AddApiVersioning(options =>
+        {
+            // 404 (not 400) when a client requests an endpoint at a version where it doesn't exist.
+            // Semantically correct: the syntax is valid; the resource doesn't exist at this version.
+            options.UnsupportedApiVersionStatusCode = StatusCodes.Status404NotFound;
+        })
         .AddMvc()                                 // ✅ no VersionByNamespaceConvention
         .AddApiExplorer()
         .AddOpenApi(o => o.Document.AddScalarTransformers());
