@@ -1,6 +1,7 @@
 ﻿namespace TodoSample.Api.v2026_03_26.Controllers;
 
 using System.Globalization;
+using Asp.Versioning;
 using Mediator;
 using Microsoft.AspNetCore.Mvc;
 using Trellis;
@@ -29,6 +30,7 @@ using TodoSample.Domain;
 /// </list>
 /// </summary>
 [ApiController]
+[ApiVersion(ApiVersion)]
 [Consumes("application/json")]
 [Produces("application/json")]
 [Route("api/[controller]")]

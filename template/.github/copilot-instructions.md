@@ -429,6 +429,85 @@ return await _context.SaveChangesAsync(cancellationToken);
 ```
 - **Reference:** See `.github/trellis-api-efcore.md §DbContextOptionsBuilderExtensions`, `.github/trellis-api-efcore.md §ModelConfigurationBuilderExtensions`, `.github/trellis-api-efcore.md §DbContextExtensions`, `.github/trellis-api-efcore.md §MaybeEntityTypeBuilderExtensions`.
 
+### Use attribute-based API versioning
+
+- **Rule:** 🔴 MUST declare API versions with `[ApiVersion("yyyy-MM-dd")]` attributes on controller classes. Do NOT register `VersionByNamespaceConvention`. Do NOT create per-version namespaces or folders as a mechanism for version assignment (folder organization for readability is fine; the namespace must not be load-bearing).
+- **Rationale:** Attribute-based versioning lets a single controller class serve multiple versions concurrently — when a feature adds v2 fields or a v2-only endpoint, you add `[ApiVersion("2026-12-01")]` alongside the existing `[ApiVersion("2026-11-12")]` on the same class and use `[MapToApiVersion("2026-12-01")]` per action where the behavior differs. `VersionByNamespaceConvention` forces full controller duplication into a v2 namespace for any feature that needs cross-version reuse, multiplies the surface to maintain, and is the source of subtle bugs (route conflicts, ETag plumbing duplicated per copy, OpenAPI documents that disagree between versions).
+- **Correct:**
+```csharp
+using Asp.Versioning;
+using Microsoft.AspNetCore.Mvc;
+
+[ApiController]
+[ApiVersion("2026-11-12")]
+[ApiVersion("2026-12-01")]
+[Route("api/[controller]")]
+public class OrdersController : ControllerBase
+{
+    // v1 + v2 share this action (same shape both versions).
+    [HttpGet("{id}", Name = "Orders_GetById")]
+    public Task<ActionResult<OrderResponse>> GetById(OrderId id, CancellationToken ct) =>
+        _sender.Send(new GetOrderByIdQuery(id), ct)
+            .AsTask()
+            .ToHttpResponseAsync(OrderResponse.From)
+            .AsActionResultAsync<OrderResponse>();
+
+    // v2-only endpoint. Returns 404 under ?api-version=2026-11-12 automatically.
+    [HttpPost("{id}/return")]
+    [MapToApiVersion("2026-12-01")]
+    public Task<ActionResult<OrderResponse>> Return(
+        OrderId id,
+        [FromBody] ReturnOrderRequest request,
+        CancellationToken ct) =>
+        _sender.Send(new ReturnOrderCommand(id, request.Reason), ct)
+            .AsTask()
+            .ToHttpResponseAsync(OrderResponse.From)
+            .AsActionResultAsync<OrderResponse>();
+}
+
+// In DependencyInjection.cs:
+services.AddApiVersioning()
+        .AddMvc()                                 // ✅ no VersionByNamespaceConvention
+        .AddApiExplorer()
+        .AddOpenApi(o => o.Document.AddScalarTransformers());
+```
+- **Incorrect:**
+```csharp
+// ❌ Per-version namespace duplication.
+namespace MyService.Api.v2026_11_12.Controllers;
+public class OrdersController : ControllerBase { /* v1 actions */ }
+
+namespace MyService.Api.v2026_12_01.Controllers;
+public class OrdersController : ControllerBase { /* identical v2 actions + Return */ }
+
+// ❌ DI registers namespace convention.
+services.AddApiVersioning()
+        .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()));
+
+// ❌ Explicit v1 stub action returning 404 — let the framework versioning interceptor
+//    do this so route-param validation can't mask the 404 with a 422.
+[HttpPost("{id}/return")]
+public IActionResult ReturnV1Stub(OrderId id) => NotFound();
+
+// ❌ v2-only action without [MapToApiVersion] — silently exposes the action under v1.
+// On a controller with multiple [ApiVersion] attributes, an action without
+// [MapToApiVersion] is reachable under EVERY declared version. Always mark
+// version-specific actions explicitly:
+[ApiController]
+[ApiVersion("2026-11-12")]
+[ApiVersion("2026-12-01")]
+public class OrdersController : ControllerBase
+{
+    [HttpPost("{id}/return")]                     // ❌ reachable under v1 AND v2
+    public Task<ActionResult<OrderResponse>> Return(...) => ...;
+
+    [HttpPost("{id}/return")]
+    [MapToApiVersion("2026-12-01")]               // ✅ v2 only
+    public Task<ActionResult<OrderResponse>> Return(...) => ...;
+}
+```
+- **Reference:** See `.github/trellis-api-asp-apiversioning.md` for the `CreatedAtVersionedRoute` helpers that compose with this pattern, and `template/Api/src/2026-03-26/Controllers/TodosController.cs` for the reference implementation (single-version sample; multi-version is the same shape with additional `[ApiVersion]` attributes on the class).
+
 ### Keep controllers thin and value-object-first
 
 - **Rule:** 🔴 MUST accept scalar value-object parameters directly in controllers, map domain results to DTOs in controllers, and add XML doc comments to all public API types and members.

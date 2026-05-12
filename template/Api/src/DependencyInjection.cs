@@ -1,6 +1,5 @@
 ﻿namespace TodoSample.Api;
 
-using Asp.Versioning.Conventions;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -19,8 +18,12 @@ internal static class DependencyInjection
         services.ConfigureServiceLevelIndicators();
         services.AddProblemDetails();
         services.AddControllers().AddScalarValueValidation();
+        // Attribute-based API versioning: controllers declare [ApiVersion("...")] explicitly so a single
+        // controller class can serve multiple versions without folder/namespace duplication.
+        // Do NOT add VersionByNamespaceConvention — see template/.github/copilot-instructions.md
+        // "API versioning approach" for the rationale.
         services.AddApiVersioning()
-                .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()))
+                .AddMvc()
                 .AddApiExplorer()
                 .AddOpenApi(options => options.Document.AddScalarTransformers());
         services.AddScoped<ErrorHandlingMiddleware>();
