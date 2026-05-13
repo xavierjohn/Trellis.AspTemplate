@@ -45,7 +45,8 @@ app.UseHttpsRedirection();
 app.UseAuthorization();
 app.UseScalarValueValidation();
 app.UseServiceLevelIndicator();
-app.UseMiddleware<ErrorHandlingMiddleware>();
+// 500-fallback only; Result→HTTP mapping is wired by AddTrellisAsp() in AddPresentation().
+app.UseMiddleware<UnhandledExceptionMiddleware>();
 app.MapControllers();
 // /health is a cross-cutting infra endpoint — it must respond to liveness/readiness probes
 // regardless of which API version a client speaks. Tagging it explicitly api-version-neutral

@@ -4,13 +4,20 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
 
 /// <summary>
-/// Class Error handling Middleware.
+/// Catches unhandled exceptions and emits a generic <c>500 Internal Server Error</c>
+/// problem-details response with the current trace id.
 /// </summary>
-internal class ErrorHandlingMiddleware : IMiddleware
+/// <remarks>
+/// This middleware is a <b>500 fallback only</b>. It does <b>not</b> map Trellis
+/// <c>Result&lt;T&gt;</c> failures (<c>Error.NotFound</c>, <c>Error.UnprocessableContent</c>,
+/// etc.) to HTTP status codes — that mapping is registered by
+/// <c>builder.Services.AddTrellisAsp()</c> in <c>DependencyInjection.AddPresentation</c>.
+/// </remarks>
+internal class UnhandledExceptionMiddleware : IMiddleware
 {
-    private readonly ILogger<ErrorHandlingMiddleware> _logger;
+    private readonly ILogger<UnhandledExceptionMiddleware> _logger;
 
-    public ErrorHandlingMiddleware(ILogger<ErrorHandlingMiddleware> logger) => _logger = logger;
+    public UnhandledExceptionMiddleware(ILogger<UnhandledExceptionMiddleware> logger) => _logger = logger;
 
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
@@ -26,7 +33,7 @@ internal class ErrorHandlingMiddleware : IMiddleware
 
     private async Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
-        _logger.LogErrorHandlingMiddlewareMessage(exception);
+        _logger.LogUnhandledExceptionMiddlewareMessage(exception);
         context.Response.StatusCode = StatusCodes.Status500InternalServerError;
 
         // if you know you're in MVC-land, you can fall back to ProblemDetailsFactory

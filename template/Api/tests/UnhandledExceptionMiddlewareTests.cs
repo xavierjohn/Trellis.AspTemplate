@@ -5,11 +5,11 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 [Collection(TestWebApplicationFactoryCollectionFixture.Id)]
-public class ErrorHandlingMiddlewareTests
+public class UnhandledExceptionMiddlewareTests
 {
     private readonly TestWebApplicationFactoryFixture _factory;
 
-    public ErrorHandlingMiddlewareTests(TestWebApplicationFactoryFixture factory, ITestOutputHelper output)
+    public UnhandledExceptionMiddlewareTests(TestWebApplicationFactoryFixture factory, ITestOutputHelper output)
     {
         _factory = factory;
         _factory.OutputHelper = output;

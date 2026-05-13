@@ -17,6 +17,13 @@ internal static class DependencyInjection
         services.ConfigureOpenTelemetry();
         services.ConfigureServiceLevelIndicators();
         services.AddProblemDetails();
+        // AddTrellisAsp registers TrellisAspOptions (default Error → HTTP status code mappings:
+        // NotFound → 404, UnprocessableContent → 422, Conflict → 409, Forbidden → 403, …) plus
+        // the scalar value-object JSON/binder pipelines for both MVC and Minimal API. Must be
+        // called before AddControllers so the JSON options it configures are observed by MVC.
+        // Without it, Result-typed responses fall back to TrellisAspOptions.SystemDefault and
+        // any host-specific MapError<T>(...) overrides cannot be wired.
+        services.AddTrellisAsp();
         services.AddControllers().AddScalarValueValidation();
         // Attribute-based API versioning: controllers declare [ApiVersion("...")] explicitly so a single
         // controller class can serve multiple versions without folder/namespace duplication.
@@ -35,7 +42,7 @@ internal static class DependencyInjection
                 .AddMvc()
                 .AddApiExplorer()
                 .AddOpenApi(options => options.Document.AddScalarTransformers());
-        services.AddScoped<ErrorHandlingMiddleware>();
+        services.AddScoped<UnhandledExceptionMiddleware>();
         services.AddHealthChecks();
 
         if (environment.IsDevelopment())
