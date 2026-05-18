@@ -1,7 +1,7 @@
 ﻿---
 package: Trellis.Asp
 namespaces: [Trellis.Asp, Trellis.Asp.Authorization, Trellis.Asp.ModelBinding, Trellis.Asp.Routing, Trellis.Asp.Validation]
-types: [TrellisHttpResult, ToHttpResponse, AsActionResult, HttpResponseOptionsBuilder<T>, ClaimsActorProvider, EntraActorProvider, DevelopmentActorProvider, CachingActorProvider]
+types: [TrellisHttpResult, ToHttpResponse, AsActionResult, HttpResponseOptionsBuilder<T>, CacheControl, MaybePrimitiveJsonConverter<T>, MaybePrimitiveJsonConverterFactory, MaybePrimitiveModelBinder<T>, MaybePrimitives, ClaimsActorProvider, EntraActorProvider, DevelopmentActorProvider, CachingActorProvider]
 version: v3
 last_verified: 2026-05-01
 audience: [llm]
@@ -12,7 +12,7 @@ audience: [llm]
 **Namespaces:** `Trellis.Asp`, `Trellis.Asp.Authorization`, `Trellis.Asp.ModelBinding`, `Trellis.Asp.Routing`, `Trellis.Asp.Validation`
 **Purpose:** ASP.NET Core integration for mapping Trellis `Result`/`Result<T>`/`WriteOutcome<T>`/`Page<T>` values to HTTP responses, evaluating HTTP preconditions / ranges / `Prefer` preferences, hydrating actors from JWT claims, validating scalar value objects in MVC and Minimal APIs, and emitting AOT-friendly `JsonConverter`s for Trellis scalar values.
 
-The single supported response verb is `result.ToHttpResponse(...)`. It returns `Microsoft.AspNetCore.Http.IResult` and works in both Minimal API and MVC hosts (.NET 7+ executes `IResult` natively in MVC). For typed `ActionResult<T>` signatures, chain `.AsActionResult<T>()`. Configure protocol semantics via the fluent `HttpResponseOptionsBuilder<T>` (`WithETag`, `WithLastModified`, `Vary`, `Created`/`CreatedAtRoute`/`CreatedAtAction`, `EvaluatePreconditions`, `HonorPrefer`, `WithRange`, `WithErrorMapping`, …).
+The single supported response verb is `result.ToHttpResponse(...)`. It returns `Microsoft.AspNetCore.Http.IResult` and works in both Minimal API and MVC hosts (.NET 7+ executes `IResult` natively in MVC). For typed `ActionResult<T>` signatures, chain `.AsActionResult<T>()`. Configure protocol semantics via the fluent `HttpResponseOptionsBuilder<T>` (`WithETag`, `WithLastModified`, `Vary`, `WithCacheControl`, `Created`/`CreatedAtRoute`/`CreatedAtAction`, `EvaluatePreconditions`, `HonorPrefer`, `WithRange`, `WithErrorMapping`, …).
 
 See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using this package.
 
@@ -35,6 +35,7 @@ See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using t
 | Override failure mapping for one endpoint | `.WithErrorMapping(...)` / `.WithErrorMapping<TError>(statusCode)` | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain) |
 | Document endpoint failure codes | Add ASP.NET response metadata for every spec-listed failure status (`422`, `409`, `403`, `404`, etc.) in addition to happy-path metadata. | [Code examples](#code-examples) |
 | Add ETag / conditional GET | `.WithETag(...)`, `.WithLastModified(...)`, `.EvaluatePreconditions()` | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain), [`ETagHelper`](#etaghelper) |
+| Add `Cache-Control` directive (per endpoint) | `.WithCacheControl(CacheControl.NoStore())` / `.WithCacheControl(CacheControl.Public(TimeSpan.FromMinutes(5)))` / `.WithCacheControl(t => …)` | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain), [`CacheControl`](#cachecontrol) |
 | Honor `Prefer: return=minimal` | `.HonorPrefer()` on write responses | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain) |
 | Return paginated list responses | `Result<Page<T>>.ToHttpResponse(nextUrlBuilder, bodySelector, ...)` | [`PagedResponse<TResponse>`](#pagedresponsetresponse) |
 | Resolve actors from requests | `AddClaimsActorProvider`, `AddEntraActorProvider`, or `AddDevelopmentActorProvider` | [`Trellis.Asp.Authorization`](#namespace-trellisaspauthorization) |
@@ -99,9 +100,12 @@ Fluent options builder used by every generic `ToHttpResponse` overload. Selector
 | `WithETag(Func<TDomain, EntityTagValue> selector)` | `HttpResponseOptionsBuilder<TDomain>` | Sets a strong or weak ETag from a caller-built `EntityTagValue`. |
 | `WithLastModified(Func<TDomain, DateTimeOffset> selector)` | `HttpResponseOptionsBuilder<TDomain>` | Emits `Last-Modified` header in RFC 1123 format. |
 | `Vary(params string[] headers)` | `HttpResponseOptionsBuilder<TDomain>` | Appends headers to the response `Vary` header (existing values preserved; duplicates suppressed). |
+| `VaryForActor()` | `HttpResponseOptionsBuilder<TDomain>` | Appends the request header(s) that contribute to actor identity for the registered `IActorProvider` to the response `Vary` header. The provider must implement `IProvideActorVaryHeaders` (the bundled `ClaimsActorProvider` returns `["Authorization"]`, `DevelopmentActorProvider` returns `[X-Test-Actor]`, `CachingActorProvider` delegates to its inner). Throws `InvalidOperationException` at apply time when no provider is registered, the registered provider does not implement the capability, or the implementation returns an empty collection (fail-closed against silent cache-poisoning across actors). Decorating providers (e.g. `CachingActorProvider`) are unwrapped via the internal `IDecoratingActorProvider` so the diagnostic names the underlying provider that needs the implementation. Applies to success, failure, `WriteOutcome`, and paginated paths uniformly. |
 | `WithContentLanguage(params string[] languages)` | `HttpResponseOptionsBuilder<TDomain>` | Joins values into `Content-Language`. |
 | `WithContentLocation(Func<TDomain, string> selector)` | `HttpResponseOptionsBuilder<TDomain>` | Sets the `Content-Location` header. |
 | `WithAcceptRanges(string acceptRanges)` | `HttpResponseOptionsBuilder<TDomain>` | Sets `Accept-Ranges` (e.g. `"bytes"` or `"none"`). |
+| `WithCacheControl(CacheControlHeaderValue value)` | `HttpResponseOptionsBuilder<TDomain>` | Sets the `Cache-Control` response header to the supplied directive. Applies to success responses (200 / 201 / 204 / 206 / 304), `WriteOutcome` (Created / Updated / Accepted), paged responses, AND failure responses — so `WithCacheControl(CacheControl.NoStore())` protects 404 / 403 / 412 / 422 from intermediate-cache leakage just as much as the 200. Throws `ArgumentNullException` on null. Use the [`CacheControl`](#cachecontrol) presets (`NoStore()`, `NoCache()`, `Public(TimeSpan)`, `Private(TimeSpan)`, `Immutable(TimeSpan)`) for common shapes; each call returns a fresh `CacheControlHeaderValue` so mutation cannot leak across responses. |
+| `WithCacheControl(Func<TDomain, CacheControlHeaderValue?> selector)` | `HttpResponseOptionsBuilder<TDomain>` | Sets `Cache-Control` from a selector run against the success-path domain value. Applies to the success path only (failures carry no domain value). Returning `null` from the selector omits the header on that response (falls back to the static-value overload if both are configured; otherwise no header is emitted). |
 | `Created(string locationLiteral)` | `HttpResponseOptionsBuilder<TDomain>` | Returns `201 Created` with a literal `Location` header. |
 | `Created(Func<TDomain, string> selector)` | `HttpResponseOptionsBuilder<TDomain>` | Returns `201 Created` with a `Location` derived from the value. |
 | `CreatedAtRoute(string routeName, Func<TDomain, RouteValueDictionary> routeValues)` | `HttpResponseOptionsBuilder<TDomain>` | Returns `201 Created` with a `Location` generated via `LinkGenerator.GetUriByName` (resolved from `HttpContext.RequestServices` at execute time). AOT-safe. **Under query-string / header API versioning**, the route values dictionary MUST include `["api-version"] = ApiVersion` — otherwise `Location` headers omit the version and 404 on dereference. The recommended path is the `CreatedAtVersionedRoute(...)` extensions in [Trellis.Asp.ApiVersioning](trellis-api-asp-apiversioning.md), which inject the version automatically. The `TRLS023` analyzer warns on bare `CreatedAtRoute` calls inside `[ApiVersion]` controllers and offers a code fix that rewrites them to `CreatedAtVersionedRoute`. |
@@ -122,12 +126,14 @@ Fluent options builder used by every generic `ToHttpResponse` overload. Selector
 public sealed class HttpResponseOptionsBuilder
 ```
 
-Non-generic builder used for the value-less `Result` overload.
+Non-generic builder consumed only by `Error.ToHttpResponse(this Error error, Action<HttpResponseOptionsBuilder>?)` — used to shape the ProblemDetails response for a standalone `Error`.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `Vary(params string[] headers)` | `HttpResponseOptionsBuilder` | Appends headers to `Vary`. |
+| `VaryForActor()` | `HttpResponseOptionsBuilder` | Same contract as the generic builder's `VaryForActor()`. Applied by `Error.ToHttpResponse(...)` (the only consumer of the non-generic builder), so standalone error responses emitted via this verb partition by actor too. |
 | `HonorPrefer()` | `HttpResponseOptionsBuilder` | Always emits `Vary: Prefer`. |
+| `WithCacheControl(CacheControlHeaderValue value)` | `HttpResponseOptionsBuilder` | Same contract as the generic builder's static-value overload. The non-generic builder is consumed only by `Error.ToHttpResponse(...)`, so this overload sets `Cache-Control` on the ProblemDetails failure response — useful for `Error.ToHttpResponse(o => o.WithCacheControl(CacheControl.NoStore()))` to keep deterministic-error responses out of intermediate caches. |
 | `WithErrorMapping(Func<Error, int> mapper)` | `HttpResponseOptionsBuilder` | Per-call mapper for failure responses. |
 | `WithErrorMapping<TError>(int statusCode) where TError : Error` | `HttpResponseOptionsBuilder` | Per-call override for a single error type. |
 
@@ -381,6 +387,69 @@ The main DI surface for `Trellis.Asp` (in folder `Extensions/`).
 
 The actor-provider DI surface absorbed from the former `Trellis.Asp.Authorization` package. Domain primitives (`Actor`, `IActorProvider`, etc.) live in `Trellis.Authorization` — see [`trellis-api-authorization.md`](trellis-api-authorization.md).
 
+### `IProvideActorVaryHeaders`
+
+**Declaration**
+
+```csharp
+public interface IProvideActorVaryHeaders
+{
+    IReadOnlyCollection<string> VaryByHeaders { get; }
+}
+```
+
+Optional capability that an `IActorProvider` implementation can expose so [`HttpResponseOptionsBuilder<TDomain>.VaryForActor`](#httpresponseoptionsbuildertdomain) can emit the correct request headers as response `Vary` entries for cache partitioning by actor.
+
+The bundled providers implement this:
+
+- `ClaimsActorProvider` (and `EntraActorProvider` via inheritance) — `virtual VaryByHeaders => ["Authorization"]`. Subclass and override for non-bearer auth (cookies, mTLS, forwarded headers); leaving the JWT-bearer default in place against a non-Bearer service allows the same cache-poisoning that `VaryForActor()` exists to prevent.
+- `DevelopmentActorProvider` — `[X-Test-Actor]` (the test header).
+- `CachingActorProvider` — delegates to the wrapped provider's `VaryByHeaders`; surfaces an empty collection when the wrapped provider does not implement the interface, so `VaryForActor()` throws fail-closed pointing at the inner provider as the remediation site (the writer unwraps caching wrappers via the internal `IDecoratingActorProvider` interface so the diagnostic names the right type).
+
+Custom providers that derive actor identity from request data that cannot be cleanly named by an HTTP header (mTLS, IP-based, etc.) should NOT implement this interface; consumers using such providers must mark cache-eligible endpoints with `Cache-Control: private, no-store` instead of calling `VaryForActor()`.
+
+### `CacheControl`
+
+**Declaration**
+
+```csharp
+public static class CacheControl
+{
+    public static CacheControlHeaderValue NoStore();
+    public static CacheControlHeaderValue NoCache();
+    public static CacheControlHeaderValue Public(TimeSpan maxAge);
+    public static CacheControlHeaderValue Private(TimeSpan maxAge);
+    public static CacheControlHeaderValue Immutable(TimeSpan maxAge);
+}
+```
+
+Preset `System.Net.Http.Headers.CacheControlHeaderValue` builders for the common directives, designed for use with [`HttpResponseOptionsBuilder<TDomain>.WithCacheControl`](#httpresponseoptionsbuildertdomain).
+
+| Preset | Emits | When to use |
+|---|---|---|
+| `CacheControl.NoStore()` | `Cache-Control: no-store` | Responses that contain personal data, secrets, or per-user state. Use on `Error.ToHttpResponse` and `Result.ToHttpResponse(opts => opts.WithCacheControl(...))` for sensitive endpoints; the static-value overload propagates to failure responses too so 404 / 403 / 422 cannot leak through intermediate caches. |
+| `CacheControl.NoCache()` | `Cache-Control: no-cache` | Caches may store the response but must revalidate with the origin before serving. Different from `no-store`: revalidation is allowed, storage is not forbidden. |
+| `CacheControl.Public(TimeSpan)` | `Cache-Control: public, max-age={seconds}` | Public, cacheable read endpoints (catalog data, public reference data). Shared caches may store and serve to any consumer for the lifetime. |
+| `CacheControl.Private(TimeSpan)` | `Cache-Control: private, max-age={seconds}` | Per-user representations safe to cache in the user agent only. Compose with `VaryForActor()` if any intermediate (CDN, reverse proxy) is in the path. |
+| `CacheControl.Immutable(TimeSpan)` | `Cache-Control: public, max-age={seconds}, immutable` | RFC 8246 — the response will not change for the freshness lifetime. Clients should not revalidate. Use for content-addressed or versioned assets. The `immutable` directive is appended via the BCL type's `Extensions` collection because `CacheControlHeaderValue` has no dedicated property for it. |
+
+**Fresh-instance guarantee.** Every preset returns a new `CacheControlHeaderValue` on each call. `CacheControlHeaderValue` is mutable; if the presets returned a shared instance, a single caller mutating one returned value could corrupt every subsequent call. Test pinning: `CacheControl_presets_return_fresh_instances` in `WithCacheControlTests`.
+
+**Directive coverage outside the presets.** Pass a hand-built `CacheControlHeaderValue` directly to `WithCacheControl(...)` when you need a directive not covered by a preset (`s-maxage`, `proxy-revalidate`, `stale-while-revalidate` via `Extensions`, etc.):
+
+```csharp
+opts.WithCacheControl(new CacheControlHeaderValue
+{
+    Public = true,
+    MaxAge = TimeSpan.FromMinutes(5),
+    SharedMaxAge = TimeSpan.FromMinutes(15),
+    MustRevalidate = true,
+});
+```
+
+**Composition with `VaryForActor()`.** Cache-Control and `Vary` are orthogonal — the former says "is this cacheable, and for how long"; the latter says "by which request dimensions does the cache key vary." For per-user representations served behind a shared cache, combine: `opts.WithCacheControl(CacheControl.Private(TimeSpan.FromMinutes(5))).VaryForActor()`.
+
+
 ### `ServiceCollectionExtensions`
 
 **Declaration**
@@ -414,8 +483,8 @@ public class ClaimsActorOptions
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `ActorIdClaim` | `string` | Claim type used for `Actor.Id`. Default: `"sub"`. Matched verbatim against `Claim.Type`; no dotted/JSON-path traversal. |
-| `PermissionsClaim` | `string` | Claim type used for permissions. Default: `"permissions"`. Multi-valued JWT claims arrive as repeated `Claim` instances and are aggregated via `FindAll`. |
+| `ActorIdClaim` | `string` | Claim type used for `Actor.Id`. Default: `"sub"` (RFC 7519 / OIDC subject claim). Matched against `Claim.Type` literally first; if the configured name is not found, falls back to its counterpart in a curated short↔long mapping table maintained by the provider. Covers the OAuth2 / OIDC / Microsoft identity-platform claims that consumers realistically configure as an actor id: `"sub"`/`"nameid"` ↔ `ClaimTypes.NameIdentifier`, `"oid"` ↔ `http://schemas.microsoft.com/identity/claims/objectidentifier`, `"upn"` ↔ `ClaimTypes.Upn`, `"email"` ↔ `ClaimTypes.Email`, `"role"`/`"roles"` ↔ `ClaimTypes.Role`, `"name"`/`"unique_name"` ↔ `ClaimTypes.Name`, `"tid"` ↔ `http://schemas.microsoft.com/identity/claims/tenantid`, `"idp"`/`"acr"`/`"amr"` ↔ their Microsoft long forms. The bidirectional fallback makes typical configurations just-work against both `JwtBearerOptions.MapInboundClaims = true` (ASP.NET default) and `false`. Emits a debug-level log entry when the fallback fires. No dotted/JSON-path traversal. The curated table is a subset of `JwtSecurityTokenHandler.DefaultInboundClaimTypeMap`; the space-delimited OAuth scope claim `"scp"`, AD FS 1.x legacy aliases, and device / certificate / request-transport / password-policy claims are intentionally not covered (see the `PermissionsClaim` row for the `scp` rationale). |
+| `PermissionsClaim` | `string` | Claim type used for permissions. Default: `"permissions"`. Multi-valued JWT claims arrive as repeated `Claim` instances and are aggregated via `FindAll`. Matched against `Claim.Type` literally first; the resolver also queries every counterpart in the provider's curated short↔long mapping table (notably `"role"`/`"roles"` ↔ `ClaimTypes.Role`) and merges all matches into a single deduplicated set. This makes `PermissionsClaim = "roles"` and `PermissionsClaim = ClaimTypes.Role` both just-work against `JwtBearerOptions.MapInboundClaims = true` (ASP.NET default) and `false`. The default `"permissions"` is not in the mapping table, so it resolves by literal match only (regression-safe). The fallback emits a debug-level log entry when the configured claim resolves nothing but a counterpart does. The OAuth scope claim `"scp"` is intentionally NOT covered by the fallback: its value is space-delimited (RFC 6749 §3.3, e.g. `"orders.read orders.write"`) and `ClaimsActorProvider` snapshots claim values verbatim into the permission set, so wiring the fallback would still leave `Actor.HasPermission("orders.read")` returning `false`. OAuth scope-as-permission requires a custom subclass that splits the value. See the `ActorIdClaim` row above for the full covered subset. |
 
 ### `ClaimsActorProvider`
 
@@ -424,10 +493,11 @@ public class ClaimsActorOptions
 ```csharp
 public class ClaimsActorProvider(
     IHttpContextAccessor httpContextAccessor,
-    IOptions<ClaimsActorOptions> options) : IActorProvider
+    IOptions<ClaimsActorOptions> options,
+    ILogger<ClaimsActorProvider>? logger = null) : IActorProvider
 ```
 
-Hydrates an `Actor` from the current `HttpContext.User` using flat JWT/OIDC claims. Subclass and override `GetCurrentActorAsync` for nested-claim or computed-permission scenarios; `EntraActorProvider` is a worked example.
+Hydrates an `Actor` from the current `HttpContext.User` using flat JWT/OIDC claims. The optional `logger` parameter receives debug-level diagnostics when the short↔long claim-name fallback resolves a claim the configured literal name did not produce — helpful for diagnosing silent-401/403 issues caused by `JwtBearerOptions.MapInboundClaims = true`. `AddClaimsActorProvider(...)` wires the logger automatically; manual constructions may pass `null`. Subclass and override `GetCurrentActorAsync` for nested-claim or computed-permission scenarios; `EntraActorProvider` is a worked example.
 
 | Name | Type | Description |
 | --- | --- | --- |
@@ -436,7 +506,7 @@ Hydrates an `Actor` from the current `HttpContext.User` using flat JWT/OIDC clai
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public virtual Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Actor>` | Throws `InvalidOperationException` when `HttpContext` is missing, no authenticated identity exists, or the configured `ActorIdClaim` is missing. Permissions come from `FindAll(PermissionsClaim)` snapshotted into a `FrozenSet<string>`; `Actor.Create(actorId, permissions)` is used so forbidden permissions and attributes default to empty. |
+| `public virtual Task<Maybe<Actor>> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Maybe<Actor>>` | Returns `Maybe<Actor>.None` when no authenticated identity exists or the configured `ActorIdClaim` is missing from the authenticated identity — the mediator pipeline maps `Maybe.None` to `Error.Unauthorized` (HTTP 401). Throws `InvalidOperationException` only when `HttpContext` is missing (configuration bug, surfaces as HTTP 500). On success, permissions come from `FindAll(PermissionsClaim)` plus every counterpart in the provider's curated short↔long mapping table (see `PermissionsClaim` above), merged and snapshotted into a `FrozenSet<string>`; the result is wrapped via `Maybe.From(Actor.Create(actorId, permissions))` so forbidden permissions and attributes default to empty. |
 
 ### `EntraActorOptions`
 
@@ -464,7 +534,7 @@ public sealed class EntraActorProvider : ClaimsActorProvider
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public EntraActorProvider(IHttpContextAccessor httpContextAccessor, IOptions<EntraActorOptions> options)` | — | Builds the Entra-specific provider; passes `ActorIdClaim = options.Value.IdClaimType` and `PermissionsClaim = "roles"` to the base. |
-| `public override Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Actor>` | Throws the same missing-context / missing-identity failures as `ClaimsActorProvider`. When `IdClaimType` is the long objectidentifier claim, falls back to the short `"oid"` claim before failing. Wraps any exception from `MapPermissions`, `MapForbiddenPermissions`, or `MapAttributes` in `InvalidOperationException`. |
+| `public override Task<Maybe<Actor>> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Maybe<Actor>>` | Returns `Maybe<Actor>.None` when no authenticated identity exists or the configured ID claim is missing — the mediator pipeline maps that to `Error.Unauthorized` (HTTP 401). When `IdClaimType` is the long objectidentifier claim, falls back to the short `"oid"` claim before returning `None`. Throws `InvalidOperationException` only when `HttpContext` is missing (configuration bug, surfaces as HTTP 500); any exception from `MapPermissions`, `MapForbiddenPermissions`, or `MapAttributes` is rewrapped in `InvalidOperationException` naming the failing delegate. |
 
 ### `DevelopmentActorOptions`
 
@@ -496,7 +566,7 @@ Reads the `X-Test-Actor` header (JSON: `{ "Id": ..., "Permissions": [...], "Forb
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Actor>` | Throws `InvalidOperationException` whenever `!hostEnvironment.IsDevelopment()`, regardless of header presence. In Development, returns `Actor.Create(DefaultActorId, DefaultPermissions)` when `HttpContext` is null or the header is missing/empty. Malformed JSON logs a warning and falls back unless `ThrowOnMalformedHeader` is `true`. |
+| `public Task<Maybe<Actor>> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Maybe<Actor>>` | Throws `InvalidOperationException` whenever `!hostEnvironment.IsDevelopment()`, regardless of header presence. In Development, always returns `Maybe.From(actor)` — never `Maybe.None` — so dev workflows are unaffected by the 401 contract: `Maybe.From(Actor.Create(DefaultActorId, DefaultPermissions))` when `HttpContext` is null or the header is missing/empty, otherwise the parsed actor wrapped via `Maybe.From`. Malformed JSON logs a warning and falls back unless `ThrowOnMalformedHeader` is `true`. |
 
 ### `CachingActorProvider`
 
@@ -511,7 +581,7 @@ Decorator that caches the inner provider's resolution task per request scope usi
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public CachingActorProvider(IActorProvider inner, IHttpContextAccessor httpContextAccessor)` | — | `inner` cannot be null. |
-| `public Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Actor>` | Returns the cached task; if `cancellationToken` differs from `RequestAborted`, applies it via `Task.WaitAsync`. |
+| `public Task<Maybe<Actor>> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Maybe<Actor>>` | Returns the cached task — including a cached `Maybe<Actor>.None` when the inner provider resolved no authenticated actor — so the inner provider runs once per request scope. If `cancellationToken` differs from `RequestAborted`, applies it via `Task.WaitAsync`. |
 
 ### Namespace `Trellis.Asp.ModelBinding`
 
@@ -561,6 +631,37 @@ public class MaybeModelBinder<TValue, TPrimitive>
 | `protected override ModelBindingResult? OnEmptyValue()` | `ModelBindingResult?` | Returns `ModelBindingResult.Success(Maybe<TValue>.None)`. |
 | `protected override ModelBindingResult OnSuccess(TValue value)` | `ModelBindingResult` | Returns `ModelBindingResult.Success(Maybe.From(value))`. |
 
+### `MaybePrimitiveModelBinder<T>`
+
+**Declaration**
+
+```csharp
+public sealed class MaybePrimitiveModelBinder<T> : IModelBinder
+    where T : notnull
+```
+
+Binds `Maybe<T>` parameters where `T` is a primitive in the closed allowed list (`string`, `decimal`, `int`, `long`, `short`, `byte`, `double`, `float`, `bool`, `Guid`, `DateTime`, `DateTimeOffset`) from route / query / form / header sources. Counterpart of `MaybeModelBinder<,>` for the no-scalar-VO case — the new `MaybePrimitiveJsonConverterFactory` handles the JSON body side of the same shape. The allowed list itself is exposed via the non-generic [`MaybePrimitives`](#maybeprimitives) helper so the `FrozenSet<Type>` is allocated once for the framework rather than once per closed generic instantiation.
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public Task BindModelAsync(ModelBindingContext bindingContext)` | `Task` | Missing or empty value → `ModelBindingResult.Success(Maybe<T>.None)`. Parseable primitive → `ModelBindingResult.Success(Maybe.From(parsed))`. Unparseable → adds a model-state error and returns `ModelBindingResult.Failed()`. Parses using invariant culture and the typed `TryParse` methods on each primitive type. |
+
+<a id="maybeprimitives"></a>
+
+### `MaybePrimitives`
+
+**Declaration**
+
+```csharp
+public static class MaybePrimitives
+```
+
+Non-generic holder for the closed `Maybe<T>` primitive allowed list shared by `MaybePrimitiveJsonConverterFactory` and `MaybePrimitiveModelBinder<T>`. Exists as a non-generic class so the `FrozenSet<Type>` is shared across all closed generic instantiations of the binder (avoids per-`T` allocation and the CA1000 "no static members on generic types" guidance).
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static readonly FrozenSet<Type> SupportedPrimitives` | `FrozenSet<Type>` | The 12-type allowed list: `string`, `decimal`, `int`, `long`, `short`, `byte`, `double`, `float`, `bool`, `Guid`, `DateTime`, `DateTimeOffset`. Used by both the JSON converter factory's `CanConvert` and the model binder provider's `GetBinder`. |
+
 ### `ScalarValueModelBinderProvider`
 
 **Declaration**
@@ -571,7 +672,7 @@ public class ScalarValueModelBinderProvider : IModelBinderProvider
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public IModelBinder? GetBinder(ModelBinderProviderContext context)` | `IModelBinder?` | Returns a `MaybeModelBinder<,>` for `Maybe<TScalar>`, a `ScalarValueModelBinder<,>` for direct scalar values, or `null` otherwise. Annotated `[UnconditionalSuppressMessage]` for IL2070/IL2072/IL2075 and IL3050 — model binding is not Native AOT compatible. |
+| `public IModelBinder? GetBinder(ModelBinderProviderContext context)` | `IModelBinder?` | Returns a `MaybeModelBinder<,>` for `Maybe<TScalar>` where `TScalar : IScalarValue<,>`, a `MaybePrimitiveModelBinder<T>` for `Maybe<T>` where `T` is in `MaybePrimitives.SupportedPrimitives`, a `ScalarValueModelBinder<,>` for direct scalar values, or `null` otherwise. Annotated `[UnconditionalSuppressMessage]` for IL2070/IL2072/IL2075 and IL3050 — model binding is not Native AOT compatible. |
 
 ### Namespace `Trellis.Asp.Routing`
 
@@ -686,6 +787,39 @@ public sealed class MaybeScalarValueJsonConverterFactory : JsonConverterFactory
 | `public override bool CanConvert(Type typeToConvert)` | `bool` | `true` when `typeToConvert` is `Maybe<T>` and `T` is a scalar value type. |
 | `public override JsonConverter? CreateConverter(Type typeToConvert, JsonSerializerOptions options)` | `JsonConverter?` | Builds `MaybeScalarValueJsonConverter<TValue, TPrimitive>` for supported `Maybe<TScalar>` types. |
 
+### `MaybePrimitiveJsonConverter<T>`
+
+**Declaration**
+
+```csharp
+public sealed class MaybePrimitiveJsonConverter<T> : JsonConverter<Maybe<T>>
+    where T : notnull
+```
+
+JSON converter for `Maybe<T>` where `T` is an STJ-native primitive in the closed allowed list enforced by `MaybePrimitiveJsonConverterFactory`. Reads dispatch on `typeof(T)` to typed `Utf8JsonReader` methods (`GetString` / `GetInt32` / `GetDecimal` / `GetGuid` / `GetDateTime` / etc.) — no reflection, no `JsonSerializer` round-trip, AOT-safe by construction. `null` token → `Maybe<T>.None`; primitive value → `Maybe.From(value)`. `None` writes as JSON `null`.
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public override Maybe<T> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)` | `Maybe<T>` | Reads JSON `null` as `Maybe<T>.None`; otherwise dispatches on the closed primitive allowed list. Wrong JSON shape throws the standard `JsonException`. |
+| `public override void Write(Utf8JsonWriter writer, Maybe<T> value, JsonSerializerOptions options)` | `void` | `Maybe.None` writes JSON `null`; otherwise switches on the unwrapped value and writes via the matching typed `Utf8JsonWriter` method. |
+
+### `MaybePrimitiveJsonConverterFactory`
+
+**Declaration**
+
+```csharp
+public sealed class MaybePrimitiveJsonConverterFactory : JsonConverterFactory
+```
+
+Closes the asymmetry where `MaybeScalarValueJsonConverterFactory` shipped support for `Maybe<TScalar>` (typed value objects) but `Maybe<long>` / `Maybe<int>` / `Maybe<string>` / `Maybe<DateTime>` etc. fell through to STJ's default object handling, producing JSON the converter cannot itself parse back. Auto-registered by `AddTrellisAsp(...)` alongside the scalar factory (same `JsonSerializer.IsReflectionEnabledByDefault` gate for AOT). The supported primitive set deliberately mirrors `CompositeValueObjectJsonConverter<T>`'s allowed list: the rule is "`Maybe<T>` works wherever `T` is a primitive Trellis already supports directly".
+
+Supported primitives: `string`, `decimal`, `int`, `long`, `short`, `byte`, `double`, `float`, `bool`, `Guid`, `DateTime`, `DateTimeOffset`. Shapes outside this set (`DateOnly`, `TimeOnly`, unsigned numerics, arrays, collections, nested composites) continue to require the wire-shape DTO + adapter pattern (Cookbook Recipe 14).
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public override bool CanConvert(Type typeToConvert)` | `bool` | `true` when `typeToConvert` is `Maybe<T>` and `T` is in the closed primitive allowed list. Returns `false` for `Maybe<TScalar>` (handled by `MaybeScalarValueJsonConverterFactory`) and for unsupported primitive shapes (e.g. `Maybe<DateOnly>`) so the two factories don't compete. |
+| `public override JsonConverter? CreateConverter(Type typeToConvert, JsonSerializerOptions options)` | `JsonConverter?` | Builds `MaybePrimitiveJsonConverter<T>` for the inner primitive type. |
+
 ### `ScalarValueValidationFilter`
 
 **Declaration**
@@ -751,7 +885,7 @@ public static class ValidationErrorsContext
 ## Behavioral notes
 
 - **One verb, every shape.** `ToHttpResponse` is the only supported response mapper. The internal result types it constructs (`TrellisHttpResult<TDomain, TBody>`, `TrellisWriteOutcomeResult<TDomain, TBody>`, `TrellisErrorOnlyResult`, `TrellisEmptyResult`) implement `IResult`, the `IStatusCodeHttpResult` / `IValueHttpResult<T>` / `IContentTypeHttpResult` metadata interfaces, and `IEndpointMetadataProvider` so OpenAPI/ApiExplorer surfaces the success status, body type, and the union of error envelopes the writer can emit (`200`, `201`, `206`, `304`, `400`, `404`, `412`, `500`). Layer your own `[ProducesResponseType]` / `Produces<T>` on top.
-- **Failures use Problem Details.** A failure runs through `ResponseFailureWriter` (internal). It calls `Results.ValidationProblem(...)` for `Error.UnprocessableContent` with field violations (the `errors` dictionary keys are the violation `Field.Path` translated from RFC 6901 JSON Pointer to ASP.NET Core MVC dot+bracket convention — `/items/0/name` becomes `items[0].name`, RFC 6901 escapes `~1`/`~0` are decoded, empty reference tokens become `[""]` so `""` (root) and `/` stay distinct on the wire; values are `Detail ?? ReasonCode`), and `Results.Problem(...)` for everything else. Every Trellis.Asp `ValidationProblem` emitter — `ResponseFailureWriter`, `ModelStateExtensions.AddResultErrors`, `ScalarValueValidationFilter` (MVC), `ScalarValueValidationEndpointFilter` (Minimal API), `ScalarValueTypeHelper.GetValidationErrors`, and `ScalarValueValidationMiddleware` (which translates `JsonException.Path` from JSON Path notation `$.items[0].name` to MVC `items[0].name` and uses an empty-string key for root or generic 400 fallbacks) — emits errors keyed in the same MVC dot+bracket shape, so JSON-deserialization 400s and ROP 422s share a single key shape on the wire. The translation is intentionally aligned with MVC's de facto convention and is therefore lossy for two edge cases: a numeric reference token always becomes `[N]` (matching what `[ApiController]` emits for both `List<T>` and `Dictionary<int,T>` access — the schema is not available at translation time); and segment names containing `.`/`[`/`]` collapse with structurally distinct pointers. C# property names reflected by FluentValidation cannot contain these characters, but `InputPointer.ForProperty` only escapes `~` and `/` per RFC 6901, so any caller that passes a `propertyName` containing `.`/`[`/`]` (for example a custom adapter mapping a dotted path to a flat field) will produce a single-segment pointer that collides with structurally distinct multi-segment pointers under this translation. Raw JSON Pointer values are preserved per-rule under `extensions["rules"][n].fields[]` only when the producer also supplied `RuleViolation`s; an `Error.UnprocessableContent` containing only `FieldViolation`s carries the translated MVC key as its sole on-wire identifier and has no escape hatch, so producers needing path fidelity for a flat field violation must also emit a corresponding `RuleViolation`. Companion headers are emitted automatically: `Allow` for `Error.MethodNotAllowed`, `Retry-After` for `Error.TooManyRequests` / `Error.ServiceUnavailable` (when a delay is configured), `Content-Range: {Unit} */{CompleteLength}` for `Error.RangeNotSatisfiable`, and `WWW-Authenticate` for `Error.Unauthorized` (one header per challenge in `Challenges`, formatted per RFC 9110 §11.6.1; parameter values are emitted as quoted-strings with `"` and `\` backslash-escaped per §5.6.4). The `WWW-Authenticate` arm is additionally gated on the resolved status code being `401` — if `WithErrorMapping` promotes `Error.Unauthorized` to a non-401 status, the header is suppressed (mirrors the m-13 status-aware design used by ValidationProblem detail scrubbing). When `Challenges` is empty (the default), no `WWW-Authenticate` header is written by the response writer — that flow is owned by the configured authentication handler (e.g. `JwtBearerHandler`). Extensions always carry `code` and `kind`; `Error.InternalServerError` adds `faultId`; rule violations are surfaced under `rules`. For `5xx` responses the `Detail` is always replaced with `"An internal error occurred."` so internal diagnostics never leak to clients.
+- **Failures use Problem Details.** A failure runs through `ResponseFailureWriter` (internal). It calls `Results.ValidationProblem(...)` for `Error.UnprocessableContent` with field violations (the `errors` dictionary keys are the violation `Field.Path` translated from RFC 6901 JSON Pointer to ASP.NET Core MVC dot+bracket convention — `/items/0/name` becomes `items[0].name`, RFC 6901 escapes `~1`/`~0` are decoded, empty reference tokens become `[""]` so `""` (root) and `/` stay distinct on the wire; values are `Detail ?? ReasonCode`), and `Results.Problem(...)` for everything else. Every Trellis.Asp `ValidationProblem` emitter — `ResponseFailureWriter`, `ModelStateExtensions.AddResultErrors`, `ScalarValueValidationFilter` (MVC), `ScalarValueValidationEndpointFilter` (Minimal API), `ScalarValueTypeHelper.GetValidationErrors`, and `ScalarValueValidationMiddleware` (which translates `JsonException.Path` from JSON Path notation `$.items[0].name` to MVC `items[0].name` and uses an empty-string key for root or generic 400 fallbacks) — emits errors keyed in the same MVC dot+bracket shape, so JSON-deserialization 400s and ROP 422s share a single key shape on the wire. The translation is intentionally aligned with MVC's de facto convention and is therefore lossy for two edge cases: a numeric reference token always becomes `[N]` (matching what `[ApiController]` emits for both `List<T>` and `Dictionary<int,T>` access — the schema is not available at translation time); and segment names containing `.`/`[`/`]` collapse with structurally distinct pointers. C# property names reflected by FluentValidation cannot contain these characters, but `InputPointer.ForProperty` only escapes `~` and `/` per RFC 6901, so any caller that passes a `propertyName` containing `.`/`[`/`]` (for example a custom adapter mapping a dotted path to a flat field) will produce a single-segment pointer that collides with structurally distinct multi-segment pointers under this translation. Raw JSON Pointer values are preserved per-rule under `extensions["rules"][n].fields[]` only when the producer also supplied `RuleViolation`s; an `Error.UnprocessableContent` containing only `FieldViolation`s carries the translated MVC key as its sole on-wire identifier and has no escape hatch, so producers needing path fidelity for a flat field violation must also emit a corresponding `RuleViolation`. Companion headers are emitted automatically: `Allow` for `Error.MethodNotAllowed`, `Retry-After` for `Error.TooManyRequests` / `Error.ServiceUnavailable` (when a delay is configured), `Content-Range: {Unit} */{CompleteLength}` for `Error.RangeNotSatisfiable`, and `WWW-Authenticate` for `Error.Unauthorized` (one header per challenge in `Challenges`, formatted per RFC 9110 §11.6.1; parameter values are emitted as quoted-strings with `"` and `\` backslash-escaped per §5.6.4). The `WWW-Authenticate` arm is additionally gated on the resolved status code being `401` — if `WithErrorMapping` promotes `Error.Unauthorized` to a non-401 status, the header is suppressed (mirrors the m-13 status-aware design used by ValidationProblem detail scrubbing). When `Challenges` is empty (the default for mediator-emitted 401s where the framework does not know the configured scheme), `ResponseFailureWriter` synthesizes a scheme-only challenge from `IAuthenticationSchemeProvider.GetDefaultChallengeSchemeAsync()` (falling back to `GetDefaultAuthenticateSchemeAsync()`) so RFC 9110 §11.6.1 compliance holds on anonymous-tolerant routes where the ASP.NET Core auth handler is never invoked. Synthesis is skipped when (a) `Error.Unauthorized.Challenges` is non-empty (caller-supplied challenges are authoritative), (b) the response already carries a `WWW-Authenticate` header, or (c) no `IAuthenticationSchemeProvider` is registered / no default challenge scheme exists — synthesizing "Bearer" for a service that does not use Bearer would mislead clients. The synthesized header uses the scheme NAME registered with `AddAuthentication`, so `AddJwtBearer("ApiJwt", ...)` produces `WWW-Authenticate: ApiJwt`; consumers needing a different wire token populate `Error.Unauthorized.Challenges` themselves. Extensions always carry `code` and `kind`; `Error.InternalServerError` adds `faultId`; rule violations are surfaced under `rules`. Every Trellis.Asp Problem Details response also carries `instance` (RFC 9457 §3.1) populated from `HttpRequest.GetEncodedPathAndQuery()` — the server-relative path+query of the originating request — so clients can correlate problem responses with the request that produced them without consulting access logs. For `5xx` responses the `Detail` is always replaced with `"An internal error occurred."` so internal diagnostics never leak to clients.
 - **Status code resolution precedence.** `WithErrorMapping(Func<Error, int>)` (per call) → `WithErrorMapping<TError>(int)` (per call, walks the type hierarchy) → `TrellisAspOptions` resolved from `HttpContext.RequestServices` (or `TrellisAspOptions.SystemDefault` if none registered) → `500 Internal Server Error`.
 - **Conditional requests.** `EvaluatePreconditions()` runs only on `GET` / `HEAD` and only when at least one of `WithETag` / `WithLastModified` is configured. The internal `ConditionalRequestEvaluator` evaluates RFC 9110 preconditions in this order: `If-Match` (strong); else `If-Unmodified-Since`; then `If-None-Match` (weak); else `If-Modified-Since` for safe methods. Failed `If-Match` / `If-Unmodified-Since` → `412`; failed `If-None-Match` / `If-Modified-Since` on `GET`/`HEAD` → `304`.
 - **`Vary` is append-only.** Both the `HonorPrefer()` switch and `Vary(...)` use `AppendVaryUnique` — they preserve any pre-existing `Vary` values added by other middleware and skip duplicates (case-insensitive).

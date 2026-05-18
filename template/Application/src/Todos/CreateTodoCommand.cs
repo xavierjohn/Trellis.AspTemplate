@@ -48,7 +48,10 @@ public sealed class CreateTodoCommandHandler : ICommandHandler<CreateTodoCommand
 
     public async ValueTask<Result<TodoItem>> Handle(CreateTodoCommand command, CancellationToken cancellationToken)
     {
-        var actor = await _actorProvider.GetCurrentActorAsync(cancellationToken);
+        var maybeActor = await _actorProvider.GetCurrentActorAsync(cancellationToken);
+        if (!maybeActor.TryGetValue(out var actor))
+            return Result.Fail<TodoItem>(new Error.Unauthorized() { Detail = "No authenticated actor." });
+
         return TodoItem.TryCreate(command.Title, command.DueDate, command.Tag, actor.Id, _timeProvider)
             .Bind(todo => todo.Start().Map(_ => todo))
             .Tap(_repository.Add);
