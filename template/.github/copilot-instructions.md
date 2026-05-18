@@ -285,7 +285,10 @@ using Trellis;
 
 public async ValueTask<Result<Order>> Handle(CreateOrderCommand command, CancellationToken cancellationToken)
 {
-    var actor = await _actorProvider.GetCurrentActorAsync(cancellationToken);
+    var maybeActor = await _actorProvider.GetCurrentActorAsync(cancellationToken);
+    if (!maybeActor.TryGetValue(out var actor))
+        return Result.Fail<Order>(new Error.Unauthorized() { Detail = "No authenticated actor." });
+
     return Order.TryCreate(command.CustomerId, command.LineItems, actor.Id, _timeProvider)
         .Tap(_repository.Add); // stage; UoW commits on handler success
 }

@@ -2,6 +2,7 @@
 
 using Microsoft.EntityFrameworkCore;
 using TodoSample.Domain;
+using Trellis.Authorization;
 using Trellis.EntityFrameworkCore;
 
 /// <summary>
@@ -17,7 +18,11 @@ public class AppDbContext : DbContext
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
-        configurationBuilder.ApplyTrellisConventions(typeof(TodoId).Assembly);
+        // Scan the Domain assembly for consumer-defined VOs and Trellis.Authorization for
+        // the framework's ActorId (used on TodoItem.CreatedByActorId).
+        configurationBuilder.ApplyTrellisConventions(
+            typeof(TodoId).Assembly,
+            typeof(ActorId).Assembly);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

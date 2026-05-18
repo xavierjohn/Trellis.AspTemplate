@@ -43,7 +43,7 @@ public record TodoResponse
         Status = todo.Status.Value,
         CompletedAt = todo.CompletedAt.AsNullable(),
         Tag = todo.Tag.Match<string?>(t => t.Value, () => null),
-        CreatedByActorId = todo.CreatedByActorId,
+        CreatedByActorId = todo.CreatedByActorId.Value,
         CreatedAt = todo.CreatedAt,
         LastModified = todo.LastModified
     };

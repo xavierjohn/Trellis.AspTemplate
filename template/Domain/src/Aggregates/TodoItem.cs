@@ -1,5 +1,6 @@
 ﻿namespace TodoSample.Domain;
 
+using Trellis.Authorization;
 using Trellis.StateMachine;
 
 /// <summary>
@@ -31,7 +32,7 @@ public partial class TodoItem : Aggregate<TodoId>
     public partial Maybe<Tag> Tag { get; private set; }
 
     /// <summary>The actor who created this todo.</summary>
-    public string CreatedByActorId { get; private set; } = null!;
+    public ActorId CreatedByActorId { get; private set; } = null!;
 
     /// <summary>EF Core constructor.</summary>
     private TodoItem() : base(default!)
@@ -42,7 +43,7 @@ public partial class TodoItem : Aggregate<TodoId>
             ConfigureStateMachine);
     }
 
-    private TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider timeProvider)
+    private TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, ActorId createdByActorId, TimeProvider timeProvider)
         : base(TodoId.NewUniqueV7())
     {
         Title = title;
@@ -62,7 +63,7 @@ public partial class TodoItem : Aggregate<TodoId>
     /// <summary>
     /// Creates a new todo item in Pending state.
     /// </summary>
-    public static Result<TodoItem> TryCreate(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider? timeProvider = null) =>
+    public static Result<TodoItem> TryCreate(Title title, DueDate dueDate, Maybe<Tag> tag, ActorId createdByActorId, TimeProvider? timeProvider = null) =>
         Result.Ok(new TodoItem(title, dueDate, tag, createdByActorId, timeProvider ?? TimeProvider.System));
 
     /// <summary>
