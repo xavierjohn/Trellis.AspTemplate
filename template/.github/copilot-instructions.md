@@ -801,3 +801,41 @@ services.AddScoped<IActorProvider, HttpActorProvider>();
 ```
 - **Incorrect:** Depend on `_submittedAt` or generated mediator code before the earlier projects have been built once.
 - **Reference:** See `.github/trellis-api-efcore.md` and `.github/trellis-api-mediator.md`.
+
+## Running Tests
+
+This template is configured for `dotnet test` in **Microsoft.Testing.Platform (MTP) native mode** on .NET 10. The wiring is in two places: `global.json` declares `"test": { "runner": "Microsoft.Testing.Platform" }`, and every test csproj inherits `<UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>` via `build/test.props`. Both are required; neither file should be edited.
+
+### Canonical invocations
+
+- **Whole solution:** `dotnet test` from the repository root. Discovers and runs every test csproj.
+- **Single project:** `dotnet test --project Domain/tests/Domain.Tests.csproj` (or any other test csproj).
+- **Single test:** `dotnet test --project Domain/tests/Domain.Tests.csproj --filter-method "*Submit_with_*"` (MTP filter syntax — note `--filter-method`, not the VSTest-era `--filter`).
+
+All three run through MTP. A successful run ends with a block like:
+
+```
+Test run summary: Passed!
+  total: N
+  failed: 0
+  succeeded: N
+  skipped: 0
+```
+
+### "Zero tests ran" — diagnosis
+
+If `dotnet test` reports `Zero tests ran` or exits with code 5 despite test methods existing, the run did **not** activate MTP-native mode and fell back to VSTest. Check, in order:
+
+1. The current working directory is at or below the one containing `global.json` (run `cat global.json` to confirm). Without `global.json`, `dotnet test` defaults to VSTest, which doesn't see MTP-built test executables.
+2. The SDK on PATH is .NET 10.0.100 or later (`dotnet --version`). Earlier SDKs ignore the `"test": { "runner": ... }` schema.
+3. The csproj actually inherits `<UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>` (check that `build/test.props` is being imported — it's wired in via `Directory.Build.props`).
+
+### Don't use VSTest-era arguments
+
+The following are VSTest-only and silently no-op under MTP. Do not paste them from older Trellis docs or Stack Overflow answers:
+
+- `--logger:trx`, `--logger:console;verbosity=detailed` — under MTP use `--report-trx` and `--output Detailed`.
+- `--filter "FullyQualifiedName~Foo"` — under MTP use `--filter-method "*Foo*"`, `--filter-class "*FooTests"`, or `--filter-namespace "Foo.*"`.
+- `--collect "Code Coverage"` — MTP collects via `Microsoft.Testing.Extensions.CodeCoverage` (already referenced by the template); pass `--coverage` to enable.
+
+If unsure whether you're in MTP mode, run `dotnet test --help` from the test project's directory — the MTP help text starts with `Microsoft(R) Testing Platform Execution Command Line Tool`. The VSTest help text starts with `MSTest Platform`.
