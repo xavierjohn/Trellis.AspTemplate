@@ -530,7 +530,6 @@ using TodoSample.Domain;
 using Trellis.Asp;
 
 [ApiController]
-[Consumes("application/json")]
 [Produces("application/json")]
 [Route("api/[controller]")]
 public class TodosController : ControllerBase
@@ -553,6 +552,25 @@ public class TodosController : ControllerBase
                 TodoResponse.From,
                 opts => opts.WithETag(t => EntityTagValue.Strong(t.ETag)).EvaluatePreconditions())
             .AsActionResultAsync<TodoResponse>();
+
+    /// <summary>
+    /// Create a todo item (JSON body).
+    /// </summary>
+    [HttpPost]
+    [Consumes("application/json")]
+    public Task<ActionResult<TodoResponse>> Create(
+        [FromBody] CreateTodoRequest request, CancellationToken cancellationToken) => /* ... */;
+
+    /// <summary>
+    /// Complete a todo (bodyless transition — id is in the URL).
+    /// </summary>
+    [HttpPost("{id}/completion")]
+    public Task<ActionResult<TodoResponse>> Complete(
+        TodoId id, CancellationToken cancellationToken) =>
+        _sender.Send(new CompleteTodoCommand(id), cancellationToken)
+            .AsTask()
+            .ToHttpResponseAsync(TodoResponse.From)
+            .AsActionResultAsync<TodoResponse>();
 }
 ```
 - **Incorrect:**
@@ -566,6 +584,28 @@ public async Task<TodoItem> GetById(Guid id, CancellationToken cancellationToken
 }
 ```
 - **Reference:** See `.github/trellis-api-asp.md §HttpResponseExtensions`, `.github/trellis-api-asp.md §ActionResultAdapterExtensions`, `.github/trellis-api-asp.md §ServiceCollectionExtensions`.
+
+### Place `[Consumes("application/json")]` on body-taking actions, never on the controller
+
+- **Rule:** 🔴 MUST attach `[Consumes("application/json")]` to individual actions that read a request body (create, add-child, update). MUST NOT put it at the controller class level when the controller mixes body POSTs with bodyless transition POSTs (`{id}/submission`, `{id}/approval`, `{id}/completion`, etc.).
+- **Rationale:** A class-level `[Consumes]` is enforced by MVC against **every** action on the controller. A bodyless transition POST has no `Content-Type` header (and no body to declare one for), so MVC rejects it with **415 Unsupported Media Type** before the action runs. The caller has done nothing wrong — RFC 9110 §8.3 does not require `Content-Type` on requests with no body. The 415 is a self-inflicted misconfiguration that the action would otherwise handle correctly.
+- **Correct:** see the body POST + bodyless transition pair in the previous rule's example. `[Consumes("application/json")]` annotates `Create` (body) and is absent on `Complete` (bodyless).
+- **Incorrect:**
+```csharp
+[ApiController]
+[Route("api/[controller]")]
+[Consumes("application/json")]                       // ❌ Applied to every action, including bodyless transitions
+public class OrdersController : ControllerBase
+{
+    [HttpPost]
+    public Task<ActionResult<OrderResponse>> CreateDraft([FromBody] CreateDraftOrderRequest request, ...) => ...;
+
+    [HttpPost("{id}/submission")]                    // ❌ Now returns 415 unless the caller sends an empty `{}` JSON body
+    public Task<ActionResult<OrderResponse>> Submit(OrderId id, ...) => ...;
+}
+```
+- **Symptom to watch for:** transition endpoints returning 415 in integration tests or `api.http` flows, "fixed" by sending an empty `{}` body with `Content-Type: application/json`. That is a workaround, not a fix — the right fix is removing the class-level `[Consumes]`.
+- **Reference:** See `.github/trellis-api-asp.md §HttpResponseExtensions`. RFC 9110 §8.3 (`Content-Type` is required only when a representation is enclosed).
 
 ### Read the testing reference before writing tests
 
