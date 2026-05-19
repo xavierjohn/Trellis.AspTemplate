@@ -1,9 +1,9 @@
 ﻿---
 package: Trellis.Authorization
 namespaces: [Trellis.Authorization]
-types: [IActorProvider, ActorContext, Actor, ActorId, Permission, AuthorizeAttribute, IAuthorizationRequirement, IResourceAuthorizationHandler]
+types: [IActorProvider, ActorContext, Actor, Permission, AuthorizeAttribute, IAuthorizationRequirement, IResourceAuthorizationHandler]
 version: v3
-last_verified: 2026-05-17
+last_verified: 2026-05-01
 audience: [llm]
 ---
 # Trellis.Authorization — API Reference
@@ -11,9 +11,6 @@ audience: [llm]
 **Package:** `Trellis.Authorization`
 **Namespace:** `Trellis.Authorization`
 **Purpose:** Domain-layer authorization primitives — actor identity / permission / attribute model and the contracts used by the mediator's authorization behavior to perform static (permission) and resource-based authorization. This package contains no ASP.NET Core dependencies; the `IActorProvider` implementations and DI helpers ship in `Trellis.Asp` (see [`trellis-api-asp.md`](trellis-api-asp.md), namespace `Trellis.Asp.Authorization`).
-
-> [!TIP]
-> For the end-to-end mental model — JWT → JwtBearer → `IActorProvider` → mediator behaviors → 401/403 — plus decision trees and Mermaid diagrams, read [Mental model](../articles/integration-asp-authorization.md#mental-model) in the integration article first. This file is the type-by-type reference.
 
 See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using this package.
 
@@ -34,7 +31,6 @@ See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using t
 | Authorize against a loaded resource | Implement `IAuthorizeResource<TResource>.Authorize(actor, resource)` | [`IAuthorizeResource<TResource>`](#iauthorizeresourcetresource) |
 | Write owner/admin resource guards | `Result.Ensure(condition, new Error.Forbidden(...))` | [`IAuthorizeResource<TResource>`](#iauthorizeresourcetresource), [Core `Result.Ensure`](trellis-api-core.md#public-static-partial-class-result) |
 | Identify a resource by id for shared loading | `IIdentifyResource<TResource, TId>` | [`IIdentifyResource<TResource, TId>`](#iidentifyresourcetresource-tid) |
-| Authorize against a related resource one or more navigation hops away (cricket-style fan-out, owner chains) | Implement `IAuthorizeResourceVia<TOwner>` on the command + `IIdentifyRelatedResource<TRelated, TId>` (singular) or `IIdentifyRelatedResources<TRelated, TId>` (terminal plural) on entities along the path | [`IAuthorizeResourceVia<TOwner>`](#iauthorizeresourceviatowner), [`IIdentifyRelatedResource<TRelated, TId>`](#iidentifyrelatedresourcetrelated-tid), [`IIdentifyRelatedResources<TRelated, TId>`](#iidentifyrelatedresourcestrelated-tid) |
 
 ## Common traps
 
@@ -61,8 +57,7 @@ public sealed class Actor : IEquatable<Actor>
 
 | Signature | Description |
 | --- | --- |
-| `public Actor(ActorId id, IReadOnlySet<string> permissions, IReadOnlySet<string> forbiddenPermissions, IReadOnlyDictionary<string, string> attributes)` | Typed constructor. Snapshots the supplied state into frozen collections (ordinal comparison). Throws `ArgumentNullException` when any argument is null. |
-| `public Actor(string id, IReadOnlySet<string> permissions, IReadOnlySet<string> forbiddenPermissions, IReadOnlyDictionary<string, string> attributes)` | Convenience overload that wraps the raw claim string in `ActorId` (via `ActorId.Create`) and delegates to the typed constructor. Throws `ArgumentException` when `id` is null / empty / whitespace. |
+| `public Actor(string id, IReadOnlySet<string> permissions, IReadOnlySet<string> forbiddenPermissions, IReadOnlyDictionary<string, string> attributes)` | Snapshots the supplied state into frozen collections (ordinal comparison). Throws `ArgumentException` when `id` is null/whitespace; throws `ArgumentNullException` when `permissions`, `forbiddenPermissions`, or `attributes` is null. |
 
 **Fields**
 
@@ -74,7 +69,7 @@ public sealed class Actor : IEquatable<Actor>
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `Id` | `ActorId` | Strongly-typed principal identifier (e.g. JWT `sub`). Wraps the raw claim string in a [`RequiredString<ActorId>`](trellis-api-core.md) so the identity flows through authorization-layer APIs and consumer aggregate fields as a domain type rather than an untyped `string`. |
+| `Id` | `string` | Unique actor identifier (e.g. JWT `sub`). |
 | `Permissions` | `IReadOnlySet<string>` | Granted permissions. Ordinal comparison; setter snapshots into a `FrozenSet<string>`. |
 | `ForbiddenPermissions` | `IReadOnlySet<string>` | Explicit deny-list. Deny always overrides allow. Snapshotted into a `FrozenSet<string>`. |
 | `Attributes` | `IReadOnlyDictionary<string, string>` | ABAC attributes. Snapshotted into a `FrozenDictionary<string, string>` with ordinal comparer. |
@@ -83,29 +78,14 @@ public sealed class Actor : IEquatable<Actor>
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static Actor Create(ActorId id, IReadOnlySet<string> permissions)` | `Actor` | Typed factory. Creates an actor with empty `ForbiddenPermissions` and empty `Attributes`. Throws `ArgumentNullException` for null arguments. |
-| `public static Actor Create(string id, IReadOnlySet<string> permissions)` | `Actor` | Convenience factory that wraps the raw claim string in `ActorId`. |
+| `public static Actor Create(string id, IReadOnlySet<string> permissions)` | `Actor` | Creates an actor with empty `ForbiddenPermissions` and empty `Attributes`. |
 | `public bool HasPermission(string permission)` | `bool` | Returns `true` only when `permission` is in `Permissions` and not in `ForbiddenPermissions`. |
 | `public bool HasPermission(string permission, string scope)` | `bool` | Checks the scoped permission composed as `permission` + `':'` + `scope` (deny-aware). Throws `ArgumentNullException` when either argument is null. |
 | `public bool HasAllPermissions(IEnumerable<string> permissions)` | `bool` | `true` when every entry passes `HasPermission`. |
 | `public bool HasAnyPermission(IEnumerable<string> permissions)` | `bool` | `true` when at least one entry passes `HasPermission`. |
-| `public bool IsOwner(ActorId resourceOwnerId)` | `bool` | Typed equality check between `Id` and `resourceOwnerId` using `ActorId`'s value-equality semantics. Prefer this overload when the owner id is itself a typed `ActorId` so the comparison is type-checked at the call site. |
-| `public bool IsOwner(string resourceOwnerId)` | `bool` | Convenience overload that compares `Id.Value` and `resourceOwnerId` with `StringComparison.Ordinal`. |
+| `public bool IsOwner(string resourceOwnerId)` | `bool` | Compares `Id` and `resourceOwnerId` with `StringComparison.Ordinal`. |
 | `public bool HasAttribute(string key)` | `bool` | `true` when `Attributes` contains `key`. |
 | `public string? GetAttribute(string key)` | `string?` | Returns the attribute value or `null` when absent. |
-
-### `ActorId`
-
-**Declaration**
-
-```csharp
-[Trim, NotDefault]
-public sealed partial class ActorId : RequiredString<ActorId>;
-```
-
-Strongly-typed wrapper around the raw principal id (typically the JWT `sub` or AAD `oid` claim) so the authorization layer exposes a domain type instead of an untyped `string`. Decorated with `[Trim, NotDefault]`: the value is trimmed on construction and an empty / whitespace-only id is rejected. Generated factories `ActorId.Create(string)` / `ActorId.TryCreate(string?)` come from the bundled source generator (see [`trellis-api-core.md`](trellis-api-core.md)).
-
-Consumers that store the principal id at aggregate boundaries — audit-style fields like `Order.CreatedByActorId` or `Document.LastModifiedByActorId` — should reuse `ActorId` for those fields so cross-aggregate comparisons (`actor.IsOwner(order.CreatedByActorId)`) are type-checked end-to-end. Domain identifiers that are conceptually different from the principal id (a customer aggregate id, a tenant member id, a domain user aggregate's primary key) remain whatever VO the domain models and are resolved to / from the principal at the application service boundary.
 
 ### `ActorAttributes`
 
@@ -139,11 +119,7 @@ public interface IActorProvider
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `Task<Maybe<Actor>> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Maybe<Actor>>` | Returns the current authenticated actor wrapped in `Maybe.From(...)`, or `Maybe<Actor>.None` when the request has no usable authenticated actor. The mediator authorization pipeline maps `Maybe.None` to `Error.Unauthorized` (HTTP 401) per RFC 9110 §15.5.2. Implementations should throw `InvalidOperationException` only for genuine infrastructure or configuration failures (no `HttpContext`, mapping delegate threw, etc.) — those still surface as `Error.InternalServerError` (HTTP 500). "No actor" is client-error state, not an exception. Register as scoped. |
-
-**401 vs 500 contract.** `Maybe<Actor>.None` means the framework cannot identify an actor for the request — typically the request lacks credentials, the auth middleware did not produce an authenticated identity, or the configured actor-id claim is missing from an otherwise authenticated identity. All three are classes of client error and the mediator pipeline emits HTTP 401. A thrown `InvalidOperationException` means the provider itself cannot operate (no `HttpContext`, malformed configuration, mapping delegate failure) — that's a server bug and surfaces as HTTP 500.
-
-> **`WWW-Authenticate` header on the 401.** RFC 9110 §11.6.1 requires `WWW-Authenticate` on 401 responses. `ResponseFailureWriter` (the mediator → HTTP failure path) synthesizes a scheme-only challenge from the registered default-challenge scheme via `IAuthenticationSchemeProvider` when `Error.Unauthorized.Challenges` is empty and no other middleware has already written the header. Consumers who want a parametrized challenge (with `realm`, `scope`, `error`, `error_description`, etc.) populate `Error.Unauthorized.Challenges` explicitly — the writer treats supplied challenges as authoritative and never synthesizes over them. The synthesized header uses the scheme NAME registered with `AddAuthentication` (so `AddJwtBearer("ApiJwt", ...)` produces `WWW-Authenticate: ApiJwt`); services that need a different wire token populate `Challenges` themselves. If no authentication is registered at all, the writer emits no synthesized header — synthesizing "Bearer" for a service that does not use Bearer would mislead clients.
+| `Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Actor>` | Returns the current authenticated actor. Implementations must throw `InvalidOperationException` (or a more specific subclass) when the request is unauthenticated or the actor cannot be resolved. Register as scoped. |
 
 ### `IAuthorize`
 
@@ -186,63 +162,6 @@ Companion to `IAuthorizeResource<TResource>` that exposes a typed resource ident
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `TId GetResourceId()` | `TId` | Extracts the typed resource ID from the message. |
-
-### `IAuthorizeResourceVia<TOwner>`
-
-**Declaration**
-
-```csharp
-public interface IAuthorizeResourceVia<TOwner>
-```
-
-Declares resource-based authorization against a resource that is **not** the leaf the command identifies, but is reachable via one or more `IIdentifyRelatedResource[s]<,>` declarations on entities along the navigation chain. The originating motivation is the cricket-style "actor owns Team1 OR Team2" pattern: command identifies a `Match`, authorization is evaluated against the set of teams it points at.
-
-The pipeline always passes `IReadOnlyList<TOwner>` to `Authorize` — size 1 for chains terminating in a singular hop, size N for chains terminating in a plural hop (cricket fan-out). The framework does not impose the operator over the list; the command picks `Any`, `All`, or any other shape inside `Authorize`.
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| `IResult Authorize(Actor actor, IReadOnlyList<TOwner> owners)` | `IResult` | Returns success to proceed or a failure (typically `Error.Forbidden`) to short-circuit. The `owners` list is non-null and non-empty; an empty plural navigation short-circuits to `Error.Forbidden` before `Authorize` is called. |
-
-**Failure semantics**:
-
-- **Leaf load failure** — the loader's error bubbles verbatim (matches existing `IAuthorizeResource<T>` semantics for the resource the command identifies).
-- **Intermediate or owner load failure** — collapsed to `Error.Forbidden` to avoid leaking existence of related resources whose presence/absence the actor may not be authorized to learn.
-- **Empty result at any hop** (singular extract returning 0 IDs or plural extract returning 0 IDs) — short-circuits to `Error.Forbidden` without invoking `Authorize`.
-- **Missing `SharedResourceLoaderById<TTo, TToId>`** at any hop — throws `InvalidOperationException` (deployment bug, not authorization denial).
-
-A command may implement either `IAuthorizeResource<T>` **or** `IAuthorizeResourceVia<TOwner>`, never both. Registration throws at startup if both are present — security primitives are not silently composed.
-
-### `IIdentifyRelatedResource<TRelated, TId>`
-
-**Declaration**
-
-```csharp
-public interface IIdentifyRelatedResource<TRelated, out TId>
-```
-
-Entity-side declaration of a single outbound foreign-key navigation. Used by the resolver to walk the navigation chain at registration time. Implement on aggregate roots whose authorization is evaluated against a different aggregate one or more hops away.
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| `TId GetRelatedResourceId()` | `TId` | Returns the identifier of the related resource of type `TRelated`. |
-
-For two distinct outbound navigations to the same `TRelated` (cricket `Match.HomeTeamId` / `Match.AwayTeamId`), use [`IIdentifyRelatedResources<TRelated, TId>`](#iidentifyrelatedresourcestrelated-tid) instead — C# disallows declaring the same generic interface twice on a single type.
-
-### `IIdentifyRelatedResources<TRelated, TId>`
-
-**Declaration**
-
-```csharp
-public interface IIdentifyRelatedResources<TRelated, TId>
-```
-
-Entity-side declaration of a plural outbound navigation (fan-out). Used at the **terminal** hop of an authorization chain to express OR-style / candidate-set authorization (cricket `Match → {HomeTeam, AwayTeam}`).
-
-| Signature | Returns | Description |
-| --- | --- | --- |
-| `IReadOnlyList<TId> GetRelatedResourceIds()` | `IReadOnlyList<TId>` | Returns the identifiers of all related resources of type `TRelated`. Non-null. Duplicates are de-duplicated by the pipeline before loading; an empty list short-circuits to `Error.Forbidden`. Order is not significant. |
-
-Plural-in-middle (fan-out cartesian expansion) is intentionally out of scope for v1 and rejected at registration time. For chains needing a plural intermediate hop, drop to `IResourceLoader<TMessage, TProjection>` with a projection type.
 
 ### `IResourceLoader<TMessage, TResource>`
 
@@ -351,53 +270,6 @@ public sealed class OrderResourceLoader(IOrderRepository repo)
         (await repo.GetByIdAsync(id, ct)).ToResult(new Error.NotFound(ResourceRef.For<Order>(id)));
 }
 ```
-
-### Indirect (multi-hop) resource authorization — cricket fan-out
-
-Authorize a `UploadScorecardCommand` against the actor owning **either** the home or away team of the match. The command identifies the leaf (`Match`); `Match` declares its plural outbound navigation to `Team`; the command's `Authorize` runs against the loaded list.
-
-```csharp
-using Trellis;
-using Trellis.Authorization;
-
-public sealed partial class MatchId : RequiredGuid<MatchId>;
-public sealed partial class TeamId : RequiredGuid<TeamId>;
-
-public sealed class Match : Aggregate<MatchId>, IIdentifyRelatedResources<Team, TeamId>
-{
-    public TeamId HomeTeamId { get; }
-    public TeamId AwayTeamId { get; }
-    public IReadOnlyList<TeamId> GetRelatedResourceIds() => [HomeTeamId, AwayTeamId];
-}
-
-public sealed class Team : Aggregate<TeamId>
-{
-    public string CreatedByActorId { get; }
-}
-
-public sealed record UploadScorecardCommand(MatchId MatchId, /* fields */)
-    : ICommand<Result<Unit>>,
-      IAuthorizeResourceVia<Team>,
-      IIdentifyResource<Match, MatchId>
-{
-    public MatchId GetResourceId() => MatchId;
-
-    public IResult Authorize(Actor actor, IReadOnlyList<Team> owners) =>
-        Result.Ensure(
-            owners.Any(t => t.CreatedByActorId == actor.Id),
-            new Error.Forbidden("match.upload-scorecard")
-                { Detail = "Actor does not own either match team." });
-}
-
-// Composition root: assembly scan registers the via-behavior, the leaf-loader bridge,
-// and the SharedResourceLoaderById<Match,MatchId> + SharedResourceLoaderById<Team,TeamId>.
-services.AddTrellisBehaviors();
-services.AddResourceAuthorization(typeof(UploadScorecardCommand).Assembly);
-```
-
-For chains (e.g. `Match → Team → Tournament`), declare `IIdentifyRelatedResource<Team, TeamId>` on `Match` and `IIdentifyRelatedResource<Tournament, TournamentId>` on `Team`, then set `IAuthorizeResourceVia<Tournament>` on the command.
-
-For shapes the navigation-chain model can't express (composite keys, conditional/data-dependent paths, recursive hierarchies, projections, joins, plural-in-middle), drop to an explicit `IResourceLoader<TMessage, TProjection>` returning a custom projection, and put `IAuthorizeResource<TProjection>` on the command.
 
 ### Constructing an `Actor` directly (tests, custom providers)
 

@@ -347,11 +347,9 @@ This analyzer was deleted from the current API. The `result.IsSuccess ? result.V
 
 #### `CompositeValueObjectDtoConverterAnalyzer` — `TRLS020`
 - Flags ASP.NET controller request/response DTOs, Minimal API handler request DTOs, and Mediator `IRequest<T>`/`ICommand<T>`/`IQuery<T>` message DTOs with properties whose type is an `[OwnedEntity]` Trellis `ValueObject` missing `[JsonConverter(typeof(CompositeValueObjectJsonConverter<T>))]`.
-- Also flags properties typed `Maybe<TComposite>` where `TComposite` is an `[OwnedEntity]` `ValueObject`. **`Maybe<TComposite>` is always flagged**, even when the inner `TComposite` carries `[JsonConverter(typeof(CompositeValueObjectJsonConverter<TComposite>))]`: that converter operates on `TComposite`, not on `Maybe<TComposite>`. Trellis ships no `MaybeCompositeValueObjectJsonConverterFactory`, so STJ falls back to default construction of the inner type and wraps it in `Maybe.From`, silently bypassing `TryCreate`. The supported DTO transport per cookbook Recipe 14 is `TComposite?` plus `Maybe.From(...)` at the endpoint/API seam — applicable to controller actions, Minimal API handlers, and Mediator message-construction sites.
 - This catches the silent JSON-binding failure where System.Text.Json can default-construct the composite value object and bypass `TryCreate` validation.
 - Does not flag domain model properties that are not exposed through DTO surfaces.
-- Does not flag bare composite value-object types that carry the matching `CompositeValueObjectJsonConverter<T>` attribute.
-- Scope is bounded to owned composite value objects. `Maybe<TScalarValueObject>` (where `TScalarValueObject : IScalarValue<,>`) is handled by `MaybeScalarValueJsonConverterFactory` and is out of scope for this analyzer. `Maybe<int>` / `Maybe<string>` / `Maybe<Guid>` / `Maybe<DateTime>` (primitive inner types in the closed allowed list) are handled by `MaybePrimitiveJsonConverterFactory` since Trellis #506 (`AddTrellisAsp()` auto-registers it); also out of scope for this analyzer because the JSON round-trip is correct by construction. Primitive inner types outside the allowed list (`DateOnly`, `TimeOnly`, unsigned numerics) remain unsupported and use the wire-shape DTO seam per Recipe 14 — also out of scope here for the same correctness-bug-class boundary.
+- Does not flag composite value-object types that carry the matching `CompositeValueObjectJsonConverter<T>` attribute.
 - No code fix.
 
 #### `RedundantEfConfigurationAnalyzer` — `TRLS021`
