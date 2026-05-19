@@ -57,11 +57,10 @@ public class TodosController : ControllerBase
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
-    public Task<ActionResult<TodoResponse>> Create(
+    public ValueTask<ActionResult<TodoResponse>> Create(
         [FromBody] CreateTodoRequest request,
         CancellationToken cancellationToken) =>
         _sender.Send(new CreateTodoCommand(request.Title, request.DueDate, request.Tag), cancellationToken)
-            .AsTask()
             .ToHttpResponseAsync(
                 TodoResponse.From,
                 opts => opts
@@ -86,11 +85,10 @@ public class TodosController : ControllerBase
     [ProducesResponseType(StatusCodes.Status304NotModified)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status412PreconditionFailed)]
-    public Task<ActionResult<TodoResponse>> GetById(
+    public ValueTask<ActionResult<TodoResponse>> GetById(
         [CustomerResourceId] TodoId id,
         CancellationToken cancellationToken) =>
         _sender.Send(new GetTodoByIdQuery(id), cancellationToken)
-            .AsTask()
             .ToHttpResponseAsync(
                 TodoResponse.From,
                 opts => opts
@@ -114,12 +112,11 @@ public class TodosController : ControllerBase
     [ProducesResponseType(typeof(PagedResponse<TodoResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
-    public Task<ActionResult<PagedResponse<TodoResponse>>> GetOverdue(
+    public ValueTask<ActionResult<PagedResponse<TodoResponse>>> GetOverdue(
         [FromQuery] string? cursor,
         [FromQuery] int limit,
         CancellationToken cancellationToken) =>
         _sender.Send(new GetOverdueTodosQuery(cursor, limit), cancellationToken)
-            .AsTask()
             .ToHttpResponseAsync(
                 nextUrlBuilder: (c, applied) =>
                     $"{Request.Scheme}://{Request.Host}{Request.PathBase}/api/Todos/overdue" +
@@ -170,11 +167,10 @@ public class TodosController : ControllerBase
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public Task<ActionResult<TodoResponse>> Complete(
+    public ValueTask<ActionResult<TodoResponse>> Complete(
         [CustomerResourceId] TodoId id,
         CancellationToken cancellationToken) =>
         _sender.Send(new CompleteTodoCommand(id), cancellationToken)
-            .AsTask()
             .ToHttpResponseAsync(
                 TodoResponse.From,
                 opts => opts
@@ -198,11 +194,10 @@ public class TodosController : ControllerBase
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public Task<Microsoft.AspNetCore.Http.IResult> Delete(
+    public ValueTask<Microsoft.AspNetCore.Http.IResult> Delete(
         [CustomerResourceId] TodoId id,
         CancellationToken cancellationToken) =>
         _sender.Send(new DeleteTodoCommand(id), cancellationToken)
-            .AsTask()
             .ToHttpResponseAsync();
 }
 
