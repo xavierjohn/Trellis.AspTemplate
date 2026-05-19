@@ -7,7 +7,7 @@ using Trellis.Authorization;
 /// <summary>
 /// Completes a todo item. Only the creator can complete their own todo.
 /// </summary>
-public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>
+public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>, IIdentifyResource<TodoItem, TodoId>
 {
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosComplete];
@@ -15,7 +15,10 @@ public sealed record CompleteTodoCommand(TodoId TodoId) : ICommand<Result<TodoIt
     /// <inheritdoc />
     public IResult Authorize(Actor actor, TodoItem resource) =>
         Result.Ensure(actor.IsOwner(resource.CreatedByActorId),
-            Error.Forbidden("Only the creator can complete this todo."));
+            new Error.Forbidden("todo.complete.creator-only", new ResourceRef("Todo", resource.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = "Only the creator can complete this todo." });
+
+    /// <inheritdoc />
+    public TodoId GetResourceId() => TodoId;
 }
 
 /// <summary>
@@ -35,9 +38,8 @@ public sealed class CompleteTodoCommandHandler : ICommandHandler<CompleteTodoCom
     public async ValueTask<Result<TodoItem>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken)
     {
         var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
-        return await maybe
-            .ToResult(Error.NotFound($"Todo {command.TodoId} not found."))
-            .Bind(todo => todo.Complete(_timeProvider).Map(_ => todo))
-            .CheckAsync(todo => _repository.SaveAsync(todo, cancellationToken));
+        return maybe
+            .ToResult(new Error.NotFound(new ResourceRef("Todo", command.TodoId.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = $"Todo {command.TodoId} not found." })
+            .Bind(todo => todo.Complete(_timeProvider).Map(_ => todo));
     }
 }

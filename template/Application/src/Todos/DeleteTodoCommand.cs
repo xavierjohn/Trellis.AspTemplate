@@ -23,5 +23,5 @@ public sealed class DeleteTodoCommandHandler : ICommandHandler<DeleteTodoCommand
     public DeleteTodoCommandHandler(ITodoRepository repository) => _repository = repository;
 
     public async ValueTask<Result<Trellis.Unit>> Handle(DeleteTodoCommand command, CancellationToken cancellationToken) =>
-        await _repository.DeleteAsync(command.TodoId, cancellationToken);
+        await _repository.RemoveByIdAsync(command.TodoId, cancellationToken);
 }

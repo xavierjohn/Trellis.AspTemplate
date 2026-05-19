@@ -48,6 +48,6 @@ public class CompleteTodoCommandTests
         await using var scope = _actorProvider.WithActor("user-2", Permissions.TodosComplete);
         var result = await _sender.Send(new CompleteTodoCommand(created.Id), TestContext.Current.CancellationToken);
 
-        result.Should().BeFailureOfType<ForbiddenError>();
+        result.Should().BeFailureOfType<Error.Forbidden>();
     }
 }

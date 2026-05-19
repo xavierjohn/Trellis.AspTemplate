@@ -24,5 +24,5 @@ public sealed class GetTodoByIdQueryHandler : IQueryHandler<GetTodoByIdQuery, Re
 
     public async ValueTask<Result<TodoItem>> Handle(GetTodoByIdQuery query, CancellationToken cancellationToken) =>
         (await _repository.FindByIdAsync(query.TodoId, cancellationToken))
-            .ToResult(Error.NotFound($"Todo {query.TodoId} not found."));
+            .ToResult(new Error.NotFound(new ResourceRef("Todo", query.TodoId.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = $"Todo {query.TodoId} not found." });
 }

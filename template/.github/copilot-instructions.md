@@ -416,6 +416,61 @@ public async Task<TodoItem> GetById(Guid id, CancellationToken cancellationToken
 ```
 - **Reference:** See `.github/trellis-api-asp.md §ActionResultExtensions`, `.github/trellis-api-asp.md §ActionResultExtensionsAsync`, `.github/trellis-api-asp.md §ServiceCollectionExtensions`.
 
+### Use namespace-based API versioning
+
+- **Rule:** 🔴 MUST place each API version's controllers in its own `Api/src/{yyyy-MM-dd}/Controllers/` folder with a matching `{ServiceName}.Api.v{yyyy_MM_dd}.Controllers` namespace. Do NOT add `[ApiVersion("...")]` attributes — `VersionByNamespaceConvention` derives the version from the namespace segment.
+- **Rationale:** Trellis template controllers are deliberately thin (route binding + `_sender.Send(...)` + response mapping), so duplicating a controller per version is cheaper than maintaining a single shared controller with version-aware projection seams (`HttpContext.RequestedApiVersion` branches, per-version DTO selection, `[MapToApiVersion]` per action). One folder = one version is easier to reason about and impossible to silently break across versions (a v2 edit cannot affect v1 by accident).
+- **When to add a new version:** Copy the latest version's `Api/src/{date}/Controllers/` and `Api/src/{date}/Models/` folders to a new `{date}` folder, change the namespace from `v{yyyy_MM_dd}` to the new value everywhere in the copy, then evolve the v2 copy independently — add fields to its `TodoResponse`, change endpoint shapes, etc. Older versions stay frozen.
+- **Correct:**
+```csharp
+// Api/src/2026-03-26/Controllers/TodosController.cs — v1
+namespace TodoSample.Api.v2026_03_26.Controllers;
+[ApiController]
+[Route("api/[controller]")]
+public class TodosController : ControllerBase { /* ... */ }
+
+// Api/src/2026-12-01/Controllers/TodosController.cs — v2 (independent copy)
+namespace TodoSample.Api.v2026_12_01.Controllers;
+[ApiController]
+[Route("api/[controller]")]
+public class TodosController : ControllerBase { /* same shape; new IsOverdue field on TodoResponse */ }
+
+// Api/src/DependencyInjection.cs
+services.AddApiVersioning()
+        .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()))
+        .AddApiExplorer()
+        .AddOpenApi(options => options.Document.AddScalarTransformers());
+```
+- **Incorrect:**
+```csharp
+// ❌ [ApiVersion] attribute when the namespace already provides the version.
+[ApiController]
+[ApiVersion("2026-12-01")]                                                 // ❌ redundant
+[Route("api/[controller]")]
+public class TodosController : ControllerBase { /* ... */ }
+
+// ❌ Single shared controller that branches on the requested api-version.
+[ApiController]
+[ApiVersion("2026-03-26")]
+[ApiVersion("2026-12-01")]
+[Route("api/[controller]")]
+public class TodosController : ControllerBase
+{
+    [HttpGet("{id}")]
+    public ActionResult<object> GetById(TodoId id)
+    {
+        var version = HttpContext.RequestedApiVersion();
+        return version >= new ApiVersion(new DateOnly(2026, 12, 1))
+            ? (object)v2Projection(todo)                                   // ❌ projection seam
+            : (object)v1Projection(todo);
+    }
+}
+
+// ❌ DI uses attribute-based discovery (no VersionByNamespaceConvention).
+services.AddApiVersioning().AddMvc();                                      // ❌
+```
+- **Reference:** See `template/Api/src/2026-03-26/` and `template/Api/src/2026-12-01/` for the two-version reference layout, plus `template/Api/src/DependencyInjection.cs` for the DI wiring.
+
 ### Read the testing reference before writing tests
 
 - **Rule:** 🔴 MUST read `.github/trellis-api-testing-reference.md` before writing tests, and use Trellis testing assertions for `Result<T>` and `Maybe<T>`.

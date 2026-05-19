@@ -6,37 +6,39 @@ using TodoSample.Domain;
 using Trellis.EntityFrameworkCore;
 
 /// <summary>
-/// EF Core implementation of ITodoRepository.
+/// EF Core implementation of <see cref="ITodoRepository"/>.
+/// <para>
+/// Inherits <c>FindByIdAsync</c>, <c>QueryAsync</c>, <c>Add</c>, <c>Remove</c>, and
+/// <c>RemoveByIdAsync</c> from <see cref="RepositoryBase{TAggregate, TId}"/> — handlers stage
+/// changes here, and <c>TransactionalCommandBehavior</c> commits on handler success.
+/// Only the custom keyset-pagination query lives in this class.
+/// </para>
 /// </summary>
-internal class TodoRepository : ITodoRepository
+internal class TodoRepository : RepositoryBase<TodoItem, TodoId>, ITodoRepository
 {
-    private readonly AppDbContext _context;
-
-    public TodoRepository(AppDbContext context) => _context = context;
-
-    public async Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken) =>
-        await _context.TodoItems.FirstOrDefaultMaybeAsync(t => t.Id == id, cancellationToken);
-
-    public async Task<IReadOnlyList<TodoItem>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken) =>
-        await _context.TodoItems
-            .Where(specification)
-            .ToListAsync(cancellationToken);
-
-    public async Task<Result<Unit>> SaveAsync(TodoItem todo, CancellationToken cancellationToken)
+    public TodoRepository(AppDbContext context) : base(context)
     {
-        var entry = _context.Entry(todo);
-        if (entry.State == EntityState.Detached)
-            _context.TodoItems.Add(todo);
-
-        return await _context.SaveChangesResultUnitAsync(cancellationToken);
     }
 
-    public async Task<Result<Unit>> DeleteAsync(TodoId id, CancellationToken cancellationToken)
+    public async Task<(IReadOnlyList<TodoItem> Items, bool HasNext)> QueryPageAsync(
+        Specification<TodoItem> specification,
+        TodoId? afterId,
+        int limit,
+        CancellationToken cancellationToken)
     {
-        var maybe = await FindByIdAsync(id, cancellationToken);
-        return await maybe
-            .ToResult(Error.NotFound($"Todo {id} not found."))
-            .Tap(todo => _context.TodoItems.Remove(todo))
-            .BindAsync(_ => _context.SaveChangesResultUnitAsync(cancellationToken));
+        var query = DbSet
+            .Where(specification)
+            .OrderBy(t => t.Id);
+
+        if (afterId is not null)
+            query = (IOrderedQueryable<TodoItem>)query.Where(t => ((Guid)t.Id) > ((Guid)afterId));
+
+        // Peek one extra to detect a next page without a separate count query.
+        var rows = await query.Take(limit + 1).ToListAsync(cancellationToken);
+        var hasNext = rows.Count > limit;
+        var items = hasNext ? rows.Take(limit).ToList() : rows;
+        return (items, hasNext);
     }
 }
+
+
