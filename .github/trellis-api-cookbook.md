@@ -81,11 +81,15 @@ Use this table before writing code. If a task matches a row, read that recipe fi
 |---|---|
 | Create or load an aggregate with value objects | [Recipe 1](#recipe-1--crud-aggregate-ddd-value-objects--entity--repository-contract) |
 | Write a command handler that validates and persists | [Recipe 2](#recipe-2--command--handler--fluentvalidation--ef-persistence), then [Recipe 16](#recipe-16--unit-of-work-in-handlers-add-staging-vs-immediate-saveasync) |
-| Load multiple independent aggregates in one handler | [Recipe 21](#recipe-21--parallel-independent-loads-in-handlers-resultparallelasync--whenallasync) |
+| Load multiple independent resources in one handler (HTTP + DB, two upstream services, factory-created `DbContext`s) | [Recipe 21](#recipe-21--parallel-independent-loads-in-handlers-resultparallelasync--whenallasync) |
+| Multi-aggregate orchestration: side effect per element of a related-aggregate set | [Recipe 22](#recipe-22--multi-aggregate-orchestration-fail-loud-on-missing-related-aggregates) |
+| Apply an operation to every element of a related-aggregate set where per-element validation can fail (reserve stock per line item, etc.) — avoid partial mutation | [Recipe 25](#recipe-25--two-pass-validate-then-mutate-over-a-collection-of-related-aggregates) |
+| Concurrency control on mutating endpoints — when to require `If-Match` | [Recipe 23](#recipe-23--concurrency-control-on-aggregate-mutating-endpoints-when-to-require-if-match) |
 | Add a paginated list query | [Recipe 3](#recipe-3--query-handler-returning-paget-paginated-list-with-cursor) |
 | Add Minimal API or MVC endpoints | [Recipe 4](#recipe-4--minimal-api-endpoint-wiring-resultt--httpresponseoptionsbuilder--tohttpresponse), [Recipe 5](#recipe-5--mvc-controller-using-asactionresult) |
 | Map primitive DTO fields to value objects | [Recipe 18](#recipe-18--dto-primitives-to-value-object-command-no-test-only-unwrap) |
 | Add resource authorization | [Recipe 7](#recipe-7--authorization-iactorprovider--iauthorize--resource-based-auth) |
+| Authorize against a related resource one or more navigation hops away (cricket-style fan-out, owner chains) | [Recipe 24](#recipe-24--indirect-multi-hop-resource-authorization) |
 | Map `Maybe<T>` or composite value objects with EF Core | [Recipe 8](#recipe-8--ef-core-maybepropertymapping-for-nullable-value-objects), [Recipe 13](#recipe-13--composite-value-object-end-to-end-domain--api-json-binding--ef-core-ownership) |
 | Add optional request/response fields | [Recipe 14](#recipe-14--optional-fields-in-request-dtos-maybetscalar-vs-nullable-transport) |
 | Read optional HTTP resources where 404 means absent | [Recipe 19](#recipe-19--http-client-result-safety-and-optional-reads) |
@@ -104,10 +108,11 @@ These rows route recurring LLM lab mistakes to the most relevant reference befor
 
 | If the task involves... | Read first | Why |
 |---|---|---|
-| Loading independent aggregates before creating a command result | [Recipe 21](#recipe-21--parallel-independent-loads-in-handlers-resultparallelasync--whenallasync) | Sequential awaits over independent loads serialise latency. The framework idiom is `Result.ParallelAsync(...).WhenAllAsync()`. |
+| Loading independent resources before creating a command result | [Recipe 21](#recipe-21--parallel-independent-loads-in-handlers-resultparallelasync--whenallasync) | Sequential awaits over genuinely independent loads (HTTP + DB, two upstream services) serialise latency. `Result.ParallelAsync(...).WhenAllAsync()` is the framework idiom. **Do NOT use against repositories sharing a scoped `DbContext`** — that races EF Core and throws; sequential is correct there. |
 | Overdue/date-filter queries over `Maybe<DateTime>` | [Recipe 8](#recipe-8--ef-core-maybepropertymapping-for-nullable-value-objects), then [trellis-api-efcore.md](trellis-api-efcore.md#patterns-index) | Keep a typed specification and use `MaybeQueryableExtensions` in EF queries. |
 | State transitions on an aggregate | [Recipe 9](#recipe-9--state-machine-canfire--fire-pattern-with-fireresult), then [trellis-api-statemachine.md](trellis-api-statemachine.md#patterns-index) | Keep transition methods consistent and put domain mutation after `FireResult` succeeds. |
 | Cross-aggregate mutation such as cancel/return releasing stock | [Recipe 1](#recipe-1--crud-aggregate-ddd-value-objects--entity--repository-contract), [Recipe 2](#recipe-2--command--handler--fluentvalidation--ef-persistence), and [trellis-api-core.md](trellis-api-core.md#domain-driven-design) | The application handler orchestrates multiple aggregates; an aggregate mutates only itself. |
+| Single-loop mutate-as-you-validate over a collection of related aggregates (reserve stock per line item, etc.) | [Recipe 25](#recipe-25--two-pass-validate-then-mutate-over-a-collection-of-related-aggregates) | A later element's validation failure leaves earlier elements partially mutated in memory. Validate every fallible domain check across every participating aggregate before the first state-changing call. |
 | Result-returning ASP endpoints | [Recipe 4](#recipe-4--minimal-api-endpoint-wiring-resultt--httpresponseoptionsbuilder--tohttpresponse), [Recipe 5](#recipe-5--mvc-controller-using-asactionresult), then [trellis-api-asp.md](trellis-api-asp.md#patterns-index) | `AddTrellisAsp()` is required for Result-to-HTTP mapping; exception middleware is not the mapper. |
 | Failure-code OpenAPI metadata or `.http` examples | [trellis-api-asp.md](trellis-api-asp.md#endpoint-checklist-for-generated-apis), [trellis-api-testing-aspnetcore.md](trellis-api-testing-aspnetcore.md#api-failure-path-test-checklist) | Generated APIs need failure paths, not happy-path-only docs/tests. |
 | Resource authorization guards | [Recipe 7](#recipe-7--authorization-iactorprovider--iauthorize--resource-based-auth), then [trellis-api-authorization.md](trellis-api-authorization.md#patterns-index) | Use `Result.Ensure` for owner/admin boolean guards. |
@@ -274,7 +279,7 @@ public static class OrdersDi
 
 **What it shows.** The mediator pipeline already runs `ValidationBehavior<TMessage, TResponse>` before the handler — `AddTrellisFluentValidation` plugs every `IValidator<T>` into it via the open-generic `IMessageValidator<T>` adapter. `AddTrellisUnitOfWork<TContext>` registers `TransactionalCommandBehavior<,>` *after* the others, so it lands innermost and commits only when the handler returns success. The handler itself is pure: no `try`/`catch`, no primitive parsing, no `await db.SaveChangesAsync()` — that's the unit of work's job.
 
-> **Multiple independent loads in the handler?** Reach for [Recipe 21](#recipe-21--parallel-independent-loads-in-handlers-resultparallelasync--whenallasync) — `Result.ParallelAsync(...).WhenAllAsync()` is the framework idiom and is invisible at the call site if you don't know to look for it.
+> **Multiple independent resources in the handler?** Reach for [Recipe 21](#recipe-21--parallel-independent-loads-in-handlers-resultparallelasync--whenallasync) when the loads hit *different* stores (HTTP + DB, two upstream services, factory-created `DbContext`s). For two repository reads against the same scoped `DbContext`, stay sequential — that case races EF Core. The Recipe explains the rule and shows both shapes.
 
 > **Validation ownership.** Primitive→VO conversion happens at the transport seam. FluentValidation validates VO-shaped commands for cross-field rules and business invariants. Handlers receive value-object-shaped commands and must not parse primitives. See [Recipe 18](#recipe-18--dto-primitives-to-value-object-command-no-test-only-unwrap) for the canonical controller-seam adapter.
 
@@ -1020,6 +1025,59 @@ The string `"_lineItems"` is unfortunately part of the public mapping contract: 
 
 **Why no `[OwnedEntity]`-style convention for collections (yet).** `[OwnedEntity]` + `CompositeValueObjectConvention` discovers composite owned *value objects* by attribute. An equivalent collection convention would need to walk every aggregate, find `IReadOnlyList<T>` / `IReadOnlyCollection<T>` properties whose `T` is an entity, locate a matching `_camelCase` backing field, and register the `OwnsMany` against it. This is on the roadmap (tracked as the analogue of `MaybeConvention` for collections); for now the cookbook pattern above is the supported approach.
 
+### Supported property shapes inside a composite VO — when to map to a DTO instead
+
+`CompositeValueObjectJsonConverter<T>` is deliberately small. It supports a closed list of primitive types directly and routes Trellis scalar value objects through their underlying primitives. Anything else — including any `Maybe<T>`, arrays, collections, and nested composite VO properties — throws `TrellisJsonValidationException` at the first JSON access. The converter never delegates property reads/writes back to `JsonSerializer`, so adding `[JsonConverter]` to an inner composite type does not rescue the nested case. **EF Core persistence is more permissive** (`Maybe<T>`, arrays, and nested composites work) so the JSON gap only surfaces when the composite VO crosses an HTTP boundary.
+
+The intentional split is: keep the framework converter simple; route consumers with richer shapes through a wire-shape DTO at the controller/endpoint seam (Recipe 14 generalised).
+
+| Property type on a composite VO interior | JSON via `CompositeValueObjectJsonConverter`? | Recommended path |
+|---|---|---|
+| `string` | ✅ Supported as-is | Use directly. |
+| `decimal`, `int`, `long`, `short`, `byte`, `double`, `float`, `bool` | ✅ Supported as-is | Use directly. |
+| `Guid`, `DateTime`, `DateTimeOffset` | ✅ Supported as-is | Use directly. |
+| Trellis scalar VO (`RequiredString<>`, `RequiredInt<>`, `RequiredGuid<>`, `RequiredEnum<>`, `RequiredDateTime<>`, …) — and shipped concretes like `EmailAddress`, `PhoneNumber`, `Money.Currency` | ✅ Flattens to underlying primitive on the wire | Use directly. The composite converter detects `IScalarValue<,>` and reads/writes the inner primitive. |
+| **Nullable** Trellis scalar VO (`PropertyType? Optional` declared as a property on the composite VO) | ⚠️ **Write/read asymmetric.** Writing `null` produces JSON `null`; reading the same JSON throws a primitive-specific validation error (e.g. `Property '...' must be a string.` for a string-backed scalar like `RequiredString<>` / `RequiredEnum<>`; `must be an integer.` for `RequiredInt<>`; `must be a GUID.` for `RequiredGuid<>`). The converter doesn't propagate TryCreate parameter nullability through its metadata, so `ReadPrimitive` cannot distinguish a required scalar from a nullable scalar interior. | **Map to a DTO.** Same pattern as `Maybe<T>` below — declare the optional field on the wire-shape DTO as nullable, lift to `Maybe<TScalar>` (preferred) or keep nullable on the domain VO and resolve at the seam. The asymmetry is pinned by `CompositeVoBoundaryTests.Nullable_scalar_VO_interior_is_write_read_asymmetric_for_null_value`. |
+| Nested composite owned VO (e.g., a nested `Money` or `ShippingAddress` as a property of another composite VO) | ❌ **Not supported.** `CompositeValueObjectJsonConverter<TOuter>` does not delegate to `JsonSerializer` for property values — it only reads/writes its own primitive allowed list directly. Adding `[JsonConverter]` to the inner type does not help, because the outer converter never asks STJ for an inner converter; it tries to treat the nested type as one of its primitives and trips on the first access. | **Map to a DTO** — declare each nested composite as its own property on the wire-shape DTO. Nested composite VOs serialize correctly only when STJ sees them at the top of a property of a non-Trellis-composite-converter type (i.e., a plain record/class with `[JsonConverter]` on the nested VO type itself). |
+| `Maybe<T>` for any T (primitive, scalar VO, composite VO, array) | ❌ **Not supported.** Throws `TrellisJsonValidationException: "Unsupported primitive type 'Maybe`1...'"` regardless of value (`Some` or `None`). | **Map to a wire-shape DTO.** See Recipe 14 — the same `T?` + adapt-at-the-seam pattern applies whether the optional is on the DTO itself or inside a composite VO. |
+| Array (`T[]`), collection (`List<T>`, `IReadOnlyList<T>`, `IEnumerable<T>`) | ❌ Not supported. | **Map to a DTO** with the array on the wire-shape type. |
+
+**When to use a DTO at the seam (the general rule).** If a composite VO's interior holds any property shape outside the supported list — most commonly `Maybe<TPrimitive>` or arrays — keep the VO clean as a domain type and declare a wire-shape DTO at the controller/endpoint:
+
+```csharp
+// Domain VO: clean, persists fine via EF Core, but cannot serialize as-is.
+[OwnedEntity]
+public partial class CustomerProfile : ValueObject
+{
+    public OrderStatus Status { get; private set; } = null!;
+    public partial Maybe<int> AgeYears { get; private set; }             // not JSON-serializable on this VO
+    public partial Maybe<string> Nickname { get; private set; }          // not JSON-serializable
+    public partial Maybe<DateTime[]> LoginHistory { get; private set; }  // not JSON-serializable
+    // ...TryCreate, GetEqualityComponents...
+}
+
+// Wire-shape DTO at the API seam: everything as nullable transports the converter can serialize.
+public sealed record CustomerProfileDto(string Status, int? AgeYears, string? Nickname, DateTime[]? LoginHistory)
+{
+    public Result<CustomerProfile> ToDomain() =>
+        CustomerProfile.TryCreate(
+            Status,
+            AgeYears.AsMaybe(),
+            Nickname is null ? Maybe<string>.None : Maybe.From(Nickname),
+            LoginHistory is null ? Maybe<DateTime[]>.None : Maybe.From(LoginHistory));
+
+    public static CustomerProfileDto From(CustomerProfile vo) =>
+        new(vo.Status.Value,
+            vo.AgeYears.AsNullable(),
+            vo.Nickname.HasValue ? vo.Nickname.Value : null,
+            vo.LoginHistory.HasValue ? vo.LoginHistory.Value : null);
+}
+```
+
+The controller takes `CustomerProfileDto` on inbound requests, calls `.ToDomain()` to lift to the domain VO, and projects back via `CustomerProfileDto.From(...)` on responses. The Trellis scalar `Maybe<>` extensions (`AsMaybe` / `AsNullable`) and `Maybe.From` handle the lift cleanly.
+
+**Last-resort escape hatch — write your own `JsonConverter<TComposite>`.** If a service genuinely cannot tolerate the DTO indirection (rare — usually a sign the design wants tightening), the language's standard mechanism still applies: declare `[JsonConverter(typeof(YourCustomConverter))]` on the composite VO and implement `Read`/`Write` directly. The framework does not provide help for this path; the trade-off is more code per-VO in exchange for putting the domain shape directly on the wire. This is not the recommended path — favour the DTO seam unless there is a concrete reason not to.
+
 ---
 
 ## Recipe 14 — Optional fields in request DTOs: `Maybe<TScalar>` vs nullable transport
@@ -1032,6 +1090,10 @@ The answer depends on whether the inner type is a **scalar** (single-primitive) 
 |---|---|---|
 | `Maybe<TScalar>` where `TScalar : IScalarValue<TScalar, TPrimitive>` (e.g., `Maybe<EmailAddress>`, `Maybe<PhoneNumber>`) | **Use `Maybe<T>` directly on the DTO.** | `AddTrellisAsp()` registers `MaybeScalarValueJsonConverterFactory` (JSON) and `MaybeModelBinder<T,P>` (route/query/header); MVC child-validation suppression for `None` scalar-maybe values is handled internally by the Trellis MVC integration. Call `AddTrellisAsp(...)` before MVC model binding is configured. `null`/missing → `None`; valid → `Maybe.From(validated)`; invalid → ProblemDetails with the same field path the domain emits. |
 | `Maybe<TComposite>` where `TComposite : ValueObject` with multiple fields (e.g., `Maybe<ShippingAddress>`) | **Use a nullable transport (`TComposite?`) and adapt at the controller seam.** | No `MaybeCompositeValueObjectJsonConverterFactory` ships today — System.Text.Json would default-construct the inner type, bypassing `TryCreate`. Wrap with `Maybe.From(...)` inside the controller. |
+| `Maybe<TPrimitive>` (e.g., `Maybe<int>`, `Maybe<long>`, `Maybe<string>`, `Maybe<Guid>`, `Maybe<DateTime>`) | **Use `Maybe<T>` directly on the DTO.** | `AddTrellisAsp()` registers `MaybePrimitiveJsonConverterFactory` (JSON) and `MaybePrimitiveModelBinder<T>` (route/query/header). Same closed-primitive allowed list as `CompositeValueObjectJsonConverter` (`string`, `decimal`, `int`, `long`, `short`, `byte`, `double`, `float`, `bool`, `Guid`, `DateTime`, `DateTimeOffset`). `null`/missing → `None`; valid primitive → `Maybe.From(value)`. If the primitive carries domain meaning, you may still prefer wrapping it in a scalar value object (e.g., `Age : RequiredInt<Age>`) for the wire-time validation `TryCreate` provides; both shapes are factory-handled. |
+| `Maybe<TUnsupportedPrimitive>` (e.g., `Maybe<DateOnly>`, `Maybe<TimeOnly>`, `Maybe<uint>`) | **Use `TUnsupportedPrimitive?` on the DTO and `.AsMaybe()` at the seam.** | These types are outside both the composite-VO converter allowed list and the `Maybe<TPrimitive>` factory allowed list. The wire-shape DTO + adapter at the controller seam is the same pattern as `Maybe<TComposite>`. |
+
+> **The same DTO pattern applies inside a composite VO.** If a *composite value object's interior* contains `Maybe<TPrimitive>` / arrays / collections, `CompositeValueObjectJsonConverter` rejects them too (see Recipe 13 §"Supported property shapes inside a composite VO"). Keep the composite VO clean as a domain type and declare a wire-shape DTO with nullable transports, then lift on inbound (`.AsMaybe()` / `Maybe.From(...)`) and project on outbound (`.AsNullable()`).
 
 ### Pattern A — scalar `Maybe<T>` directly on the DTO
 
@@ -1062,7 +1124,7 @@ public sealed class CustomersController(ISender sender) : ControllerBase
 `AddTrellisAsp()` is the only wiring required:
 
 ```csharp
-services.AddTrellisAsp();      // MaybeScalarValueJsonConverterFactory + MaybeModelBinder + ValidationVisitor patch
+services.AddTrellisAsp();      // MaybeScalarValueJsonConverterFactory + MaybePrimitiveJsonConverterFactory + MaybeModelBinder + MaybePrimitiveModelBinder + ValidationVisitor patch
 services.AddControllers();
 ```
 
@@ -1094,7 +1156,7 @@ public sealed class CustomersController(ISender sender) : ControllerBase
 
 The composite VO must still carry `[JsonConverter(typeof(CompositeValueObjectJsonConverter<ShippingAddress>))]` (see Recipe 13) so its inner fields round-trip through `TryCreate`. The seam adapter only handles the optionality.
 
-**Why not just declare `Maybe<ShippingAddress>` on the DTO?** `MaybeScalarValueJsonConverterFactory.CanConvert` checks for `IScalarValue<,>` on the inner type. Composite VOs do not implement `IScalarValue`, so the factory returns false, and `Maybe<ShippingAddress>` falls back to default System.Text.Json serialization — which produces a default-constructed `ShippingAddress` (`{}`) wrapped in `Maybe.From`, silently bypassing `TryCreate`. That's a correctness bug, not just an ergonomics one.
+**Why not just declare `Maybe<ShippingAddress>` on the DTO?** `MaybeScalarValueJsonConverterFactory.CanConvert` checks for `IScalarValue<,>` on the inner type. Composite VOs do not implement `IScalarValue`, so the factory returns false, and `Maybe<ShippingAddress>` falls back to default System.Text.Json serialization — which produces a default-constructed `ShippingAddress` (`{}`) wrapped in `Maybe.From`, silently bypassing `TryCreate`. That's a correctness bug, not just an ergonomics one. **`TRLS020` enforces this rule at compile time**: any DTO property typed `Maybe<TComposite>` where `TComposite` is `[OwnedEntity]` is flagged as a warning, even when `TComposite` itself carries `[JsonConverter(typeof(CompositeValueObjectJsonConverter<TComposite>))]` — the converter operates on `TComposite`, not on `Maybe<TComposite>`, so the inner attribute does not rescue the wrapper shape.
 
 ### Anti-pattern → fix
 
@@ -1132,7 +1194,7 @@ o => o.Status == OrderStatus.Submitted
 
 is now both readable AND analyzer-clean inside any expression tree (specifications, FluentValidation, EF). The residual EF-Core/`FakeRepository` parity guidance — `AddTrellisInterceptors()`, `ApplyTrellisConventions`, and "share the same `Specification<T>` between EF and `FakeRepository` — never duplicate the predicate" — has moved into [Recipe 8](#recipe-8--ef-core-maybepropertymapping-for-nullable-value-objects). Ad-hoc query operators (`WhereLessThan`, `WhereHasValue`, etc.) live in [trellis-api-efcore.md](trellis-api-efcore.md).
 
-The recipe number is preserved as a stub so existing bookmark and search-index entries remain stable; future content should renumber from Recipe 22 rather than reusing 15.
+The recipe number is preserved as a stub so existing bookmark and search-index entries remain stable; future content should renumber from Recipe 24 rather than reusing 15.
 
 ---
 
@@ -1443,9 +1505,11 @@ return rows.TraverseAll(row => EmailAddress.TryCreate(row.Email));
 
 ## Recipe 21 — Parallel independent loads in handlers: `Result.ParallelAsync` + `WhenAllAsync`
 
-**Problem.** A handler needs two (or more) aggregates that are independent — a customer and a product, two upstream HTTP fetches, a user and that user's permissions. Written sequentially, each `await` blocks the next, so latency = sum of fetches. Written naively in parallel with `Task.WhenAll`, error handling falls back to throwing, you lose the `Result<T>` track, and the lab evidence shows that authors (human and AI) reach for the sequential form by default because it "looks correct" and the tests pass.
+**Problem.** A handler needs two (or more) loads that are *genuinely* independent — a customer record from one upstream service, a product record from another; an HTTP call to authn plus a DB read for profile; or two reads against two distinct EF Core `DbContext` instances. Written sequentially, each `await` blocks the next, so latency = sum of fetches. Written naively in parallel with `Task.WhenAll`, error handling falls back to throwing, you lose the `Result<T>` track, and the lab evidence shows that authors (human and AI) reach for the sequential form by default because it "looks correct" and the tests pass.
 
 `Result.ParallelAsync(...)` is the framework's opinionated entry point: factory-takes-no-args, eagerly invokes each factory so both tasks actually run concurrently, returns a tuple of `Task<Result<T>>` that the matching `.WhenAllAsync()` extension awaits with `Task.WhenAll` and folds via `Result.Combine` into a single `Result<(T1, T2, …)>`. Failures combine through `Error.Combine`, so two `Error.UnprocessableContent` failures merge their fields, heterogeneous failures become an `Error.Aggregate`.
+
+> 🛑 **Danger — `Result.ParallelAsync` against repositories that share a `DbContext` instance will race and throw.** The hard rule, independent of DI: **never start a second operation on a `DbContext` before the first one has completed.** EF Core's `DbContext` is documented as not thread-safe; the second concurrent operation throws `InvalidOperationException: A second operation was started on this context instance before a previous operation completed.` The typical Trellis EF wiring triggers this case by construction: `services.AddDbContext<TContext>(...)` registers the context with its default scoped lifetime (this is the default of the parameterless overload — `AddDbContext<TContext>(..., ServiceLifetime)` can override it), and `services.AddTrellisUnitOfWork<TContext>()` registers `IUnitOfWork` as scoped and consumes the scoped `TContext`. So **every repository resolved from the same request scope shares one `DbContext` instance**, and parallelising two repository reads parallelises two operations on that one context. Keep them sequential — see "When NOT to use it" below. `Result.ParallelAsync` is for genuinely cross-resource concurrency (HTTP + DB, two distinct upstream services, factory-created independent contexts), not for two repository reads against the same store.
 
 ```csharp
 using System.Threading;
@@ -1453,27 +1517,26 @@ using System.Threading.Tasks;
 using Mediator;
 using Trellis;
 
-public sealed record CreateDraftOrderCommand(CustomerId CustomerId, ProductId ProductId, int Quantity)
-    : ICommand<Result<DraftOrderId>>;
+public sealed record CheckoutCommand(UserId UserId, ProductSku Sku) : ICommand<Result<CheckoutQuote>>;
 
-public sealed class CreateDraftOrderHandler(
-    ICustomerRepository customers,
-    IProductRepository products,
-    IDraftOrderRepository orders) : ICommandHandler<CreateDraftOrderCommand, Result<DraftOrderId>>
+// Genuinely cross-resource: one upstream HTTP call + one read against a DIFFERENT
+// store (a pricing cache). These have no shared state and run safely in parallel.
+public sealed class CheckoutHandler(
+    IUserDirectoryClient directory,   // outbound HTTP
+    IPricingCache pricing)            // independent in-memory store
+    : ICommandHandler<CheckoutCommand, Result<CheckoutQuote>>
 {
-    public ValueTask<Result<DraftOrderId>> Handle(CreateDraftOrderCommand command, CancellationToken cancellationToken) =>
+    public ValueTask<Result<CheckoutQuote>> Handle(CheckoutCommand command, CancellationToken cancellationToken) =>
         new(Result.ParallelAsync(
                 //  ↑ takes parameterless factory funcs — NOT pre-started tasks.
-                //    Each factory is invoked eagerly here so both loads execute concurrently.
-                () => customers.FindByIdAsync(command.CustomerId, cancellationToken),
-                () => products.FindByIdAsync(command.ProductId, cancellationToken))
+                //    Each factory is invoked eagerly here so both fetches execute concurrently.
+                () => directory.FindUserAsync(command.UserId, cancellationToken),
+                () => pricing.GetQuoteAsync(command.Sku, cancellationToken))
             .WhenAllAsync()
-            //  ↑ awaits Task.WhenAll, folds the two Result<T> into Result<(Customer, Product)>
+            //  ↑ awaits Task.WhenAll, folds the two Result<T> into Result<(User, Quote)>
             //    via Result.Combine. Two Error.UnprocessableContent failures merge their
             //    Fields/Rules; heterogeneous errors flatten into Error.Aggregate.
-            .BindAsync(t => DraftOrder.CreateDraft(t.Item1, t.Item2, command.Quantity))
-            .TapAsync(orders.Add)
-            .MapAsync(o => o.Id));
+            .BindAsync(t => CheckoutQuote.Create(t.Item1, t.Item2, command.Sku)));
 }
 ```
 
@@ -1484,33 +1547,258 @@ public sealed class CreateDraftOrderHandler(
 - The combined `Result<(T1, T2)>` flows back into the standard ROP chain (`BindAsync`, `MapAsync`, `TapAsync`) — no `match` / `if (success)` branches.
 - `Result.ParallelAsync` ships overloads for 2–9 factories. For collections, prefer `TraverseAsync` ([Recipe 20](#recipe-20--fail-fast-vs-accumulating-sequencetraverse-vs-sequencealltraverseall)) — it's the right tool when the count is dynamic.
 
-**When NOT to use it.** The second load depends on the first. If you need the customer's tenant id to fetch the product, the loads are not independent — keep the sequential `BindAsync` chain. The rule is mechanical: if the second factory's body references a value produced by the first, they're sequential.
+**When NOT to use it.**
+
+1. **Two or more repositories sharing the same scoped `DbContext`.** The most common case in a typical Trellis service. The repos look independent at the C# level, but they all resolve `IRepositoryBase<T, TId>` from the same scoped `TContext`. Parallelising them races the underlying connection and throws `InvalidOperationException`. **Keep sequential `Bind` for this case** — the savings vs the sum-of-fetches are negligible against a local DB anyway, and the integrity loss is real.
+2. **The second factory's body references a value produced by the first.** Not independent — keep the sequential `BindAsync` chain. The rule is mechanical: if the second load requires data the first one produced (an id, a filter, a cursor), the two are sequential by definition.
+3. **Side-effecting writes.** `Result.ParallelAsync` is for reads. Parallel `repository.Add(...)` calls against a shared context have the same race as parallel reads, plus tracker contention; parallel writes against per-scope contexts need transaction coordination outside this helper.
 
 **Anti-pattern → fix.**
 
 ```csharp
-// ❌ Sequential await: latency = customers.Find + products.Find. Tests pass; the bug is
-// invisible at the call site because the code "looks" correct.
+// ❌ UNSAFE — two repository calls against repositories that share a scoped DbContext.
+// Looks "obviously parallelisable" but races the underlying EF context. `Task.WhenAll`
+// waits for both factories to complete (or one to throw), so the concrete failure mode
+// is an `InvalidOperationException("A second operation was started on this context...")`
+// thrown by EF Core when the second concurrent operation hits the shared connection.
+// Reproduction is timing-dependent: the throw is reliable under contention but can be
+// missed on a near-instant warm cache, which lulls authors into thinking it's correct.
+public ValueTask<Result<DraftOrderId>> Handle(CreateDraftOrderCommand command, CancellationToken cancellationToken) =>
+    new(Result.ParallelAsync(
+            () => _customers.FindByIdAsync(command.CustomerId, cancellationToken),  // shared DbContext
+            () => _products.FindByIdAsync(command.ProductId, cancellationToken))    // shared DbContext
+        .WhenAllAsync()
+        .BindAsync(t => DraftOrder.CreateDraft(t.Item1, t.Item2, command.Quantity))
+        .TapAsync(_orders.Add)
+        .MapAsync(o => o.Id));
+
+// ✅ Sequential against a shared DbContext — correct by construction. The latency
+// cost is the sum of two local reads, which is negligible in practice.
 public async ValueTask<Result<DraftOrderId>> Handle(CreateDraftOrderCommand command, CancellationToken cancellationToken)
 {
-    var customerResult = await customers.FindByIdAsync(command.CustomerId, cancellationToken);
-    var productResult  = await products.FindByIdAsync(command.ProductId, cancellationToken);  // serialised behind customer
+    var customerResult = await _customers.FindByIdAsync(command.CustomerId, cancellationToken);
+    var productResult  = await _products.FindByIdAsync(command.ProductId, cancellationToken);
 
     return Result.Combine(customerResult, productResult)
         .Bind(t => DraftOrder.CreateDraft(t.Item1, t.Item2, command.Quantity))
-        .Tap(orders.Add)
+        .Tap(_orders.Add)
         .Map(o => o.Id);
 }
 
-// ✅ Parallel with Result-track preserved — see the canonical example above.
+// ✅ Truly parallel — only when the two loads hit independent resources. The HTTP
+// call and the in-memory cache have no shared state; ParallelAsync is safe here.
+//
+// For two EF reads in genuine parallel, inject `IDbContextFactory<TContext>` and
+// open two short-lived contexts inside the handler:
+//
+//   await using var aCtx = await _factory.CreateDbContextAsync(ct);
+//   await using var bCtx = await _factory.CreateDbContextAsync(ct);
+//   // ... use aCtx and bCtx independently inside ParallelAsync factories ...
+//
+// The trade-off: two extra contexts and their connections per request, in exchange
+// for parallel reads. Worth it only when the queries are slow.
 ```
+
+---
+
+## Recipe 22 — Multi-aggregate orchestration: fail-loud on missing related aggregates
+
+**Problem.** A command needs to mutate one primary aggregate (an Order) and trigger a side effect on each element of a related-aggregate set (release reserved stock on every Product referenced by the Order's line items). The naive shape is a `foreach` with a dictionary lookup of the related aggregate by id. If a referenced related aggregate is missing from that lookup — invariant violation; under normal flow it should never happen — what is the correct behaviour?
+
+The wrong answer: `if (!dict.TryGetValue(id, out var related)) continue;` and move on. The handler appears to succeed, the primary aggregate transitions, the unit of work commits, and the side effect is silently skipped for the missing element. The orchestration has broken its own post-condition ("stock is released for every line item") with no signal to the caller and no rollback.
+
+The right answer: fail-loud. Return `Error.NotFound` referencing the missing related aggregate so the unit of work rolls back the primary aggregate's mutation. The invariant — "every line item resolves to a Product, or the command fails atomically" — is now enforced and observable.
+
+Two operating principles drive the snippet below:
+
+- **Preflight before mutating, not during.** An in-memory aggregate mutation persists through the rest of the handler's object graph even if the later database commit rolls back. So a release-then-discover pattern leaks partially-released stock into any subsequent read of the same aggregate within the request scope. Compute the missing-set *before* any side effect.
+- **Report the full problem.** That's the value of preflighting — surface every missing id in one round-trip via `Error.Aggregate`, with each missing id keeping its own structured `ResourceRef`. (This recipe assumes product ids are non-sensitive; if your threat model differs, drop the per-id refs and emit a single generic `NotFound`.)
+
+```csharp
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Mediator;
+using Trellis;
+
+public sealed class ReturnOrderHandler(
+    IOrderRepository orders,
+    IProductRepository products,
+    TimeProvider timeProvider) : ICommandHandler<ReturnOrderCommand, Result<Order>>
+{
+    public async ValueTask<Result<Order>> Handle(ReturnOrderCommand command, CancellationToken cancellationToken)
+    {
+        // Repository find returns Result<T> — matches Recipe 21's repository shape;
+        // .TryGetValue extracts the success value or short-circuits on the existing Error.
+        var orderResult = await orders.FindByIdAsync(command.OrderId, cancellationToken);
+        if (!orderResult.TryGetValue(out var order))
+            return orderResult;
+
+        // Batch fetch returns what it found — the set-difference is the orchestrator's job.
+        var productIds = order.LineItems.Select(li => li.ProductId).Distinct().ToArray();
+        var loaded = await products.GetByIdsAsync(productIds, cancellationToken);
+        var byId = loaded.ToDictionary(p => p.Id);
+
+        // Preflight: prove EVERY related aggregate is reachable BEFORE any side effect.
+        // NEVER `continue` past a missing related aggregate, and NEVER mutate before the
+        // set is fully reachable. Report ALL missing ids via Error.Aggregate.
+        static Error NotFoundFor(ProductId id) => new Error.NotFound(ResourceRef.For<Product>(id))
+        {
+            Detail = "Product referenced by line item is missing — cannot release stock.",
+        };
+        var missing = productIds.Where(id => !byId.ContainsKey(id)).ToArray();
+        if (missing.Length == 1)
+            return Result.Fail<Order>(NotFoundFor(missing[0]));
+        if (missing.Length > 1)
+            return Result.Fail<Order>(new Error.Aggregate(missing.Select(NotFoundFor).ToArray()));
+
+        // All related aggregates reachable. Safe to apply side effects.
+        foreach (var li in order.LineItems)
+        {
+            var product = byId[li.ProductId];
+            var release = product.ReleaseStock(li.Quantity);
+            if (release.Error is { } err)
+                return Result.Fail<Order>(err);
+        }
+
+        return order.Return(command.Reason, timeProvider.GetUtcNow()).Map(_ => order);
+    }
+}
+```
+
+**The test-design principle: Partial-Failure Atomicity.**
+
+> For every post-condition phrased as *"X is done for every Y in a set,"* write a test where one Y is unreachable at operation time. The post-condition must hold under one of two regimes:
+>
+> 1. **All-or-nothing:** the operation fails atomically; no X is performed.
+> 2. **Best-effort with explicit signal:** every reachable Y has X performed; every unreachable Y produces a recorded error in the result.
+>
+> The implementation must pick one explicitly. If a "for every" handler silently `continue`s past an unreachable Y with neither failure nor signal, it has broken the post-condition and the unit of work has committed an inconsistent state.
+>
+> The test must hold the related-aggregate's pre-operation state and assert that no partial side-effect leaked through.
+
+The generator test (the one a coverage-driven author would never produce from a happy-path-only mental model):
+
+```csharp
+[Fact]
+public async Task Return_with_missing_product_fails_atomically_and_does_not_release_stock()
+{
+    // Seed two products A and B; build a Delivered order with line items referencing both.
+    var (order, productA, productB) = await SeedDeliveredWithTwoProductsAsync();
+    var aStockBefore = productA.StockQuantity;
+    var bStockBefore = productB.StockQuantity;
+
+    // Disrupt the universally-quantified set: drop productB from the repository.
+    _products.Remove(productB);
+
+    var r = await _sender.Send(new ReturnOrderCommand(order.Id, _reason), cancellationToken);
+
+    // The orchestration MUST be atomic: either every line item's stock is released,
+    // or the operation fails and NOTHING is released.
+    r.Should().BeFailureOfType<Error.NotFound>();
+    productA.StockQuantity.Should().Be(aStockBefore);  // A NOT partially released
+    productB.StockQuantity.Should().Be(bStockBefore);  // B unmutated (the handler never reached it)
+    order.Status.Should().Be(OrderStatus.Delivered);    // Order NOT transitioned (UoW rolls back)
+}
+```
+
+**Generalisation.** Anywhere a handler does:
+
+```csharp
+foreach (var x in someSet)
+{
+    if (!cache.TryGetValue(x.RelatedId, out var related))
+        continue;                              // ❌ silent skip — see anti-pattern below
+    related.SideEffect(x.Args);
+}
+```
+
+…there is a hidden missing-related-aggregate path. Apply the Partial-Failure Atomicity test pattern to every such loop. Failing tests will not be caught by a happy-path-only suite because every test sets up a known-good related-aggregate set.
+
+**Anti-pattern → fix.**
+
+```csharp
+// ❌ Silent skip — passes every happy-path test, but if a Product disappears between
+// the order being created and the return being processed (or if a future refactor
+// adds a DeleteProduct endpoint), the return "succeeds" with a partially-released
+// stock state. No exception, no Result failure, no log entry. Data corruption.
+foreach (var li in order.LineItems)
+{
+    if (!byId.TryGetValue(li.ProductId, out var product))
+        continue;                              // ← invariant violation hidden here
+    product.ReleaseStock(li.Quantity);
+}
+
+// ✅ Fail-loud with full preflight — same shape as the worked example above.
+// Compute the missing set BEFORE any side effect; only enter the release loop
+// when every related aggregate is reachable.
+var missing = order.LineItems.Select(li => li.ProductId).Distinct()
+    .Where(id => !byId.ContainsKey(id))
+    .ToArray();
+if (missing.Length > 0)
+    return Result.Fail<Order>(missing.Length == 1
+        ? new Error.NotFound(ResourceRef.For<Product>(missing[0]))
+        : new Error.Aggregate(missing.Select(id =>
+            (Error)new Error.NotFound(ResourceRef.For<Product>(id))).ToArray()));
+
+foreach (var li in order.LineItems)
+{
+    var product = byId[li.ProductId];
+    var release = product.ReleaseStock(li.Quantity);
+    if (release.Error is { } err)
+        return Result.Fail<Order>(err);
+}
+```
+
+---
+
+## Recipe 23 — Concurrency control on aggregate-mutating endpoints: when to require `If-Match`
+
+**Problem.** RFC 9110 §13.1.1 lets clients send `If-Match: "etag"` on unsafe methods to detect stale-read race conditions: if the resource's current ETag doesn't match, the server returns `412 Precondition Failed` instead of overwriting concurrent changes. For mutating handlers, the framework provides `ETagHelper.ParseIfMatch(request)` to extract the typed `EntityTagValue[]` from the incoming `If-Match` header, plus the `Result<T>.OptionalETag(...)` / `RequireETag(...)` extensions (and their `*Async` overloads) that evaluate the precondition at the read-modify-write boundary inside the handler chain. (`opts.WithETag(...).EvaluatePreconditions()` on the response builder is a different feature — it only runs on `GET` / `HEAD` for `If-None-Match` → `304` and `If-Match` → `412` on safe-method reads; it is **not** the mutation hook.) The decision question: which mutating endpoints actually need this?
+
+A blanket "wire `RequireETag` on every mutation" rule is wrong — it adds ceremony to endpoints where there is no lost-update window to begin with. Use the decision table:
+
+| Endpoint shape | Lost-update window? | Use `If-Match`? |
+|---|---|---|
+| **Body-less state-transition POST** (`POST /orders/{id}/submit`, `.../approve`, `.../cancel`, `.../return`) | **No.** The state machine + transition guards check the current state. A stale client calling `.../approve` on an order that has already shipped gets `422 Unprocessable Content` from the transition guard; there is nothing to overwrite. | **No.** The state machine substitutes for the precondition. Ceremony without benefit. |
+| **Body-carrying full-update PUT** (`PUT /orders/{id}` with a full replacement body) | **Yes.** The body silently overwrites whatever the concurrent edit wrote. | **Yes — `RequireETag`.** RFC 6585 says `428 Precondition Required` when missing, RFC 9110 says `412 Precondition Failed` when stale. |
+| **Body-carrying partial-update PATCH** with a JSON Patch / JSON Merge Patch document | **Yes.** Same overwrite risk as full update. | **Yes — `RequireETag`.** |
+| **Destructive `DELETE /resources/{id}`** | **Yes.** A stale client can delete a version it has not seen after another writer changed it. | **Yes — `RequireETag`** as the default. EF Core's row-version concurrency tokens are **not** an equivalent substitute: they catch concurrent *writes* racing after the row was loaded by the handler, not stale-client reads from before the request. Drop the precondition only if the endpoint is explicitly modeled as a guarded state-machine transition where a stale caller's intent is already invalid by construction. |
+| **Additive set operation** (`POST /orders/{id}/line-items`, `POST /products/{id}/stock-additions +5`) | **Maybe.** Depends on commutativity. Two concurrent `+5` calls produce `+10` correctly; "remove the last line item" against a stale read of "list has 2 items" can drop the wrong item. | **Case-by-case.** Commutative additive ops can stay precondition-free; remove-by-position or "remove the last X" operations should `RequireETag` (or `OptionalETag` only when the endpoint deliberately admits unconditional callers). |
+| **Resource creation** (`POST /customers`, `POST /products`) | **N/A.** No prior version to match against. | **No.** |
+
+```csharp
+using Mediator;
+using Trellis;
+using Trellis.Asp;
+using Trellis.EntityFrameworkCore;
+
+// State-transition POST — no If-Match. The state machine guards the transition.
+app.MapPost("/orders/{id:guid}/approve", (OrderId id, ISender sender, CancellationToken ct) =>
+    sender.Send(new ApproveOrderCommand(id), ct)
+        .ToHttpResponseAsync(OrderResponse.From));
+
+// Full-update PUT — RequireETag at the read-modify-write boundary.
+// Missing If-Match → 428; stale → 412; current → proceeds.
+app.MapPut("/orders/{id:guid}", (OrderId id, ReplaceOrderRequest request, OrderDbContext db, HttpContext httpContext, CancellationToken ct) =>
+    db.Orders
+        .FirstOrDefaultResultAsync(o => o.Id == id, new Error.NotFound(ResourceRef.For<Order>(id)), ct)
+        .RequireETagAsync(ETagHelper.ParseIfMatch(httpContext.Request))
+        .BindAsync(o => o.Replace(request))
+        .CheckAsync(_ => db.SaveChangesResultUnitAsync(ct))
+        .ToHttpResponseAsync(OrderResponse.From, opts => opts.HonorPrefer()));
+```
+
+> **Direct `DbContext` in the Minimal API lambda vs command handler via Mediator.** Both shapes are canonical Trellis. This recipe shows the direct-`DbContext` shape because the precondition (`RequireETag`) belongs at the *read-modify-write* boundary — the same atomic unit where the read happens. If you prefer to dispatch through a command handler, move the same chain (`db.Orders.FirstOrDefaultResultAsync(...).RequireETagAsync(...).BindAsync(...).CheckAsync(_ => db.SaveChangesResultUnitAsync(ct))`) into the handler body; `TransactionalCommandBehavior` then owns the commit, and `db.SaveChangesResultUnitAsync(...)` becomes redundant (drop the `.CheckAsync` step). The precondition placement does not change — it still wraps the freshly-loaded aggregate and runs before any mutation.
+
+**Rationale.** The framework helper is fine; the decision is whether the endpoint's semantics admit a lost-update window. State machines, additive set operations, and resource creation each carry their own concurrency control inside the domain or in the absence of prior state. Only payload-carrying overwrites need explicit precondition checking.
 
 ---
 
 ## Cross-cutting tips
 
 - **Run analyzers in CI.** `Trellis.Analyzers` ships in the framework and runs as part of every `dotnet build`. Treat warnings as errors for `TRLS00x` once your codebase is clean.
-- **Two independent `await repo.X()` calls in a handler? Reach for `Result.ParallelAsync` + `WhenAllAsync`.** Sequential awaits over independent loads serialise latency to the sum instead of the max. The pattern is the same every time: paramless factories, `.WhenAllAsync()`, then back into the standard ROP chain. See [Recipe 21](#recipe-21--parallel-independent-loads-in-handlers-resultparallelasync--whenallasync). The rule for "independent": the second factory's body does not reference any value produced by the first.
+- **Two independent `await` calls in a handler?** `Result.ParallelAsync` + `WhenAllAsync` is the framework idiom — **but only when the loads hit different resources**. Two repository reads against the same scoped `DbContext` (the typical Trellis setup with `AddTrellisUnitOfWork<TContext>()`) race EF Core and throw `InvalidOperationException`; keep those sequential. The recipe spells out the safe shapes (HTTP + DB, two distinct upstream services, factory-created `DbContext`s via `IDbContextFactory<T>`) and the anti-pattern. See [Recipe 21](#recipe-21--parallel-independent-loads-in-handlers-resultparallelasync--whenallasync). The rule for "independent": the second factory's body does not reference any value produced by the first **and** the two factories hit distinct underlying resources.
 - **Do not mix sync chain methods with async lambdas.** `result.Map(async v => …)` triggers `TRLS009`; use `MapAsync`. The fix provider can apply this rewrite automatically.
 - **Construct errors via the closed ADT.** `new Error.NotFound(ResourceRef.For<Order>(id))` — never `new Error("not_found", "...")`, which won't compile against the abstract base record.
 - **Use `Result.Combine` (or `EnsureAll`) for accumulating validation.** Manual `IsSuccess` checks across multiple results trigger `TRLS008`.
@@ -1523,6 +1811,363 @@ public async ValueTask<Result<DraftOrderId>> Handle(CreateDraftOrderCommand comm
 
 ---
 
+## Recipe 24 — Indirect (multi-hop) resource authorization
+
+**Problem.** A command identifies a "leaf" resource by id (e.g. `MatchId`) but ownership/authorization is determined by a different resource one or more navigation hops away. Examples:
+
+- **Cricket fan-out**: actor must own home OR away team to upload a scorecard. `Match → {HomeTeam, AwayTeam}`, OR-ownership.
+- **Owner chain**: `Match → Team → Tournament` — authorize against tournament owner.
+- **Org hierarchy**: `Document → Folder` where `Folder` carries the org-unit owning the document.
+
+The naive workaround is a per-handler ownership guard (e.g. cricket's old `MatchOwnershipGuard`). It runs inside the handler body **after** the framework authorization pipeline has already passed, must be remembered in every handler, and is easy to forget — making it a recurring source of authorization gaps. `IAuthorizeResourceVia<TOwner>` moves the check into the framework pipeline as a declarative interface.
+
+**Decision table.**
+
+| Scenario | Recipe |
+|---|---|
+| Authorize against the resource the command identifies | `IAuthorizeResource<T>` (Recipe 7) |
+| Authorize against a single related resource one FK hop away | `IAuthorizeResourceVia<TOwner>` + `IIdentifyRelatedResource<TOwner, TOwnerId>` on the leaf |
+| Authorize against a set of related resources (cricket fan-out, OR-ownership) | `IAuthorizeResourceVia<TOwner>` + `IIdentifyRelatedResources<TOwner, TOwnerId>` on the leaf |
+| Authorize against a resource at the end of a chain (`Match → Team → Tournament`) | `IAuthorizeResourceVia<TFinalOwner>` + `IIdentifyRelatedResource<,>` declared on each intermediate entity |
+| Authorize against a recursive hierarchy (org-unit ancestors, comment-thread parents) | Materialize the ancestor chain on the loaded aggregate (closure-table projection) and use zero-hop `IAuthorizeResource<T>`; OR a custom `IResourceLoader<TMessage, TProjection>` |
+| Authorize against a composite shape (joins, projections, conditional paths, plural-in-middle) | `IResourceLoader<TMessage, TProjection>` returning a custom projection; put `IAuthorizeResource<TProjection>` on the command |
+
+### Cricket fan-out — end to end
+
+```csharp
+using Trellis;
+using Trellis.Authorization;
+
+public sealed partial class MatchId : RequiredGuid<MatchId>;
+public sealed partial class TeamId  : RequiredGuid<TeamId>;
+
+public sealed class Match : Aggregate<MatchId>, IIdentifyRelatedResources<Team, TeamId>
+{
+    public TeamId HomeTeamId { get; }
+    public TeamId AwayTeamId { get; }
+    public IReadOnlyList<TeamId> GetRelatedResourceIds() => [HomeTeamId, AwayTeamId];
+}
+
+public sealed class Team : Aggregate<TeamId>
+{
+    public string CreatedByActorId { get; }
+}
+
+public sealed record UploadScorecardCommand(MatchId MatchId, /* fields */)
+    : ICommand<Result<Unit>>,
+      IAuthorizeResourceVia<Team>,
+      IIdentifyResource<Match, MatchId>
+{
+    public MatchId GetResourceId() => MatchId;
+
+    public IResult Authorize(Actor actor, IReadOnlyList<Team> owners) =>
+        Result.Ensure(
+            owners.Any(t => t.CreatedByActorId == actor.Id),
+            new Error.Forbidden("match.upload-scorecard")
+                { Detail = "Actor does not own either match team." });
+}
+
+// Composition root — assembly scan registers everything.
+services.AddTrellisBehaviors();
+services.AddResourceAuthorization(typeof(UploadScorecardCommand).Assembly);
+```
+
+The pipeline:
+1. Resolves the actor.
+2. Loads the `Match` via the existing `SharedResourceLoaderById<Match, MatchId>` (bridged automatically because the command implements `IIdentifyResource<Match, MatchId>`).
+3. Calls `match.GetRelatedResourceIds()` → `[home, away]`, deduplicates, loads each via `SharedResourceLoaderById<Team, TeamId>`.
+4. Calls `command.Authorize(actor, [homeTeam, awayTeam])`.
+5. On any leaf-load failure, the loader's error bubbles. On any **intermediate** or owner-load failure, the pipeline collapses to `Error.Forbidden` (no existence leak). Empty ID list at any hop short-circuits to `Forbidden` without invoking `Authorize`.
+
+### Chain — `Match → Team → Tournament`
+
+```csharp
+public sealed class Match : Aggregate<MatchId>, IIdentifyRelatedResource<Team, TeamId>
+{
+    public TeamId TeamId { get; }
+    public TeamId GetRelatedResourceId() => TeamId;
+}
+
+public sealed class Team : Aggregate<TeamId>, IIdentifyRelatedResource<Tournament, TournamentId>
+{
+    public TournamentId TournamentId { get; }
+    public TournamentId GetRelatedResourceId() => TournamentId;
+}
+
+public sealed record CancelMatchCommand(MatchId MatchId)
+    : ICommand<Result<Unit>>,
+      IAuthorizeResourceVia<Tournament>,
+      IIdentifyResource<Match, MatchId>
+{
+    public MatchId GetResourceId() => MatchId;
+
+    public IResult Authorize(Actor actor, IReadOnlyList<Tournament> owners) =>
+        Result.Ensure(
+            owners[0].OwnerActorId == actor.Id,
+            new Error.Forbidden("match.cancel"));
+}
+```
+
+The resolver discovers the path `Match → Team → Tournament` at registration time using the entity-side `IIdentifyRelatedResource<,>` declarations. **Singular chains always pass `IReadOnlyList<TOwner>` of size 1** — index `[0]` is safe.
+
+### AOT / explicit registration
+
+`AddResourceAuthorization(Assembly[])` uses reflection. For Native AOT or trimming-strict deployments, register each via-command explicitly. The single-hop overload covers a leaf with one foreign key to its owner (singular extractor). It does **not** support fan-out — for that, drop to the hand-built `ResolvedAuthorizationPath` overload.
+
+```csharp
+// Single-hop scenario: Match has one Team FK; the actor must own that team.
+public sealed class Match : Aggregate<MatchId>, IIdentifyRelatedResource<Team, TeamId>
+{
+    public TeamId TeamId { get; }
+    public TeamId GetRelatedResourceId() => TeamId;
+}
+
+public sealed record DeleteMatchCommand(MatchId MatchId)
+    : ICommand<Result<Unit>>,
+      IAuthorizeResourceVia<Team>,
+      IIdentifyResource<Match, MatchId>
+{
+    public MatchId GetResourceId() => MatchId;
+
+    public IResult Authorize(Actor actor, IReadOnlyList<Team> owners) =>
+        Result.Ensure(
+            owners[0].CreatedByActorId == actor.Id,
+            new Error.Forbidden("match.delete"));
+}
+
+services.AddRelatedResourceAuthorization<
+    DeleteMatchCommand, Match, MatchId, Team, TeamId, Result<Unit>>(
+    extractOwnerId: match => match.TeamId);  // single-hop selector
+```
+
+For chains (`Match → Team → Tournament`) or fan-out (cricket `Match → {HomeTeam, AwayTeam}`), the single-hop overload cannot express the path. Build a `ResolvedAuthorizationPath` manually and use the `(this IServiceCollection, ResolvedAuthorizationPath)` overload — the hand-built path can carry multiple hops and a plural terminal hop.
+
+### What the framework rejects at startup
+
+- **Dual-mode commands** — implementing both `IAuthorizeResource<T>` and `IAuthorizeResourceVia<TOwner>` on one command. Security primitives are never silently composed.
+- **Via-command without `IIdentifyResource<TLeaf, TLeafId>`** — the scanner cannot infer the leaf, so a silent skip would leave the via-marker unprotected. Throws naming the offending command.
+- **Multiple distinct simple paths** from leaf to owner (ambiguous). Throws listing every discovered path; disambiguate by removing an `IIdentifyRelatedResource[s]` declaration or by switching to the explicit `IResourceLoader<TMessage, TProjection>` escape hatch.
+- **Plural hop in a non-terminal position** — fan-out cartesian expansion is intentionally out of scope for v1.
+- **No path** from leaf to owner — declare an `IIdentifyRelatedResource[s]<TOwner, ...>` somewhere along the chain or use the escape hatch.
+- **Missing `SharedResourceLoaderById<TTo, TToId>`** registration for any hop — throws `InvalidOperationException` at request time (deployment bug, not authorization denial).
+
+### TOCTOU note
+
+Resource authorization loads happen outside the handler's transaction. Multi-hop widens that window: ownership can change after auth but before handler state changes. If transactional consistency is required, drop to a custom `IResourceLoader<TMessage, TProjection>` that runs inside the handler's transaction or enforce ownership in the handler/repository layer.
+
+---
+
+## Recipe 25 — Two-pass validate-then-mutate over a collection of related aggregates
+
+**Problem.** A handler iterates a collection that maps one-to-many onto related aggregates and applies an operation that can fail per element (e.g., `SubmitOrderCommand` reserves stock on the `Product` referenced by every `LineItem`). The naïve single-loop shape — call the mutating operation, check the `Result`, return on failure — is the lab convergent miss across two cycles (`findings-2026-04-30.md §3.4`): two out of three models shipped this shape, and the bug only surfaces on tests that arrange a *later* element to fail.
+
+```csharp
+// ❌ Single-loop mutate-as-you-validate. Line 1 reserves; line 3 fails InsufficientStock;
+// line 1's product is left in the reserved state with no compensating rollback.
+foreach (var li in order.LineItems)
+{
+    var r = byId[li.ProductId].Reserve(li.Quantity);
+    if (r.Error is { } err)
+        return Result.Fail<Order>(err);
+}
+return order.Submit();
+```
+
+`TransactionalCommandBehavior` rolls the DB commit back on failure, but the in-memory aggregate state stays mutated for the rest of the request — visible to any subsequent code that reads the same aggregate within the request scope, and outright observable in unit tests that arrange the same `Product` instance and assert on its post-handler state.
+
+**The invariant the recipe teaches.**
+
+> Every fallible domain check across every participating aggregate must succeed BEFORE the first state-changing call. A "fallible domain check" is any `Result<T>`-returning operation that can encode a domain rejection. After validation succeeds, every Pass 2 call has a matching `Can*` predicate from Pass 1, so the mutation is provably non-failing — no compensating-rollback machinery required.
+
+**Two design moves make this work.**
+
+- **Pure `Can*` predicate alongside the mutator.** The aggregate exposes a side-effect-free `CanReserve(qty) → Result<Trellis.Unit>` that returns the same domain error the mutator would, and a `Reserve(qty)` that internally delegates to `CanReserve` before mutating. Same shape as Recipe 9's state-machine `CanFire`+`Fire`/`FireResult` pattern, lifted from "single transition on one aggregate" to "collection of operations across many aggregates."
+- **Mutation-plan grouping for duplicate keys.** If the input collection can name the same related aggregate twice (e.g., two line items with the same `ProductId`), aggregate the duplicates into a single `(Product, totalQuantity)` plan entry before validating. Validating each line independently against unchanged stock is **not** equivalent to mutating them sequentially: two `CanReserve(3)` calls against `Stock=5` both pass, but the second `Reserve(3)` then fails. Grouping eliminates the aliasing.
+
+> ⚠️ **Per-line invariants must be enforced before grouping.** The plan step (`g.Sum(li => li.Quantity)`) preserves the aggregated quantity but destroys per-line identity. If `LineItem.Quantity` could be `-4`, then a `(5, -4)` pair would group to a valid `1`, slipping a negative quantity past `CanReserve`. In Trellis services per-line invariants are typically enforced at line-item construction (value-object `Quantity : RequiredInt<Quantity>` validating `> 0`, or a private constructor + `TryCreate` factory). If your per-line invariants don't aggregate cleanly into a sum — e.g., "no single line may exceed 100 units" rather than "the total across lines must not exceed available stock" — add an explicit per-line validation pass *before* the grouping step and `Sequence` its results into Pass 1. Production code should also cap each line's `Quantity` (and/or the order's line count) so a sequence of valid positives cannot overflow `int` inside `g.Sum(...)`; `Sum` throws `OverflowException` rather than producing a `Result` failure, which would bypass the pipeline.
+
+**Worked example.**
+
+```csharp
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Mediator;
+using Trellis;
+
+public sealed class Product : Aggregate<ProductId>
+{
+    public int Stock { get; private set; }
+
+    // Pure predicate — runs in Pass 1, mutates nothing.
+    public Result<Trellis.Unit> CanReserve(int quantity) =>
+        Result.Ensure(
+            quantity > 0 && quantity <= Stock,
+            Error.UnprocessableContent.ForRule(
+                "stock.insufficient",
+                $"Cannot reserve {quantity} from stock of {Stock}."));
+
+    // Mutator — re-checks via CanReserve as defense in depth so it is safe to call
+    // outside the two-pass orchestration. When called after a matching Pass 1 CanReserve
+    // succeeded in a single-threaded handler with no intervening mutations, Reserve is
+    // provably non-failing.
+    public Result<Trellis.Unit> Reserve(int quantity) =>
+        CanReserve(quantity).Tap(() => Stock -= quantity);
+}
+
+public sealed class Order : Aggregate<OrderId>
+{
+    public IReadOnlyList<LineItem> LineItems { get; }
+    public bool IsSubmitted { get; private set; }
+
+    public Result<Trellis.Unit> CanSubmit() =>
+        Result.Ensure(
+            LineItems.Count > 0,
+            Error.UnprocessableContent.ForRule(
+                "order.empty",
+                "Order must have at least one line item to submit."));
+
+    public Result<Order> Submit() =>
+        CanSubmit().Tap(() => IsSubmitted = true).Map(_ => this);
+}
+
+public sealed class SubmitOrderHandler(
+    IOrderRepository orders,
+    IProductRepository products) : ICommandHandler<SubmitOrderCommand, Result<Order>>
+{
+    public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, CancellationToken cancellationToken)
+    {
+        var orderResult = await orders.FindByIdAsync(command.OrderId, cancellationToken);
+        if (!orderResult.TryGetValue(out var order))
+            return orderResult;
+
+        // Recipe 22 preflight (presence check). Every line-item ProductId must resolve
+        // BEFORE the plan step, otherwise byId[g.Key] would throw KeyNotFoundException
+        // and bypass the Result pipeline. Truncated here for focus — see Recipe 22 for the
+        // full Error.Aggregate-per-missing-id shape.
+        var productIds = order.LineItems.Select(li => li.ProductId).Distinct().ToArray();
+        var loaded = await products.GetByIdsAsync(productIds, cancellationToken);
+        var byId = loaded.ToDictionary(p => p.Id);
+        var missing = productIds.Where(id => !byId.ContainsKey(id)).ToArray();
+        if (missing.Length > 0)
+            return Result.Fail<Order>(missing.Length == 1
+                ? new Error.NotFound(ResourceRef.For<Product>(missing[0]))
+                : new Error.Aggregate(missing.Select(id =>
+                    (Error)new Error.NotFound(ResourceRef.For<Product>(id))).ToArray()));
+
+        // Aggregate duplicate line items into one reservation per product so the
+        // CanReserve checks operate on the same quantity the matching Reserve will deduct.
+        var plan = order.LineItems
+            .GroupBy(li => li.ProductId)
+            .Select(g => (Product: byId[g.Key], Quantity: g.Sum(li => li.Quantity)))
+            .ToArray();
+
+        // PASS 1 — validate every fallible domain check across every aggregate. No mutations.
+        // SequenceAll accumulates every violation so the response enumerates them rather than
+        // reporting only the first; use .Sequence() for fail-fast semantics (see Recipe 20
+        // for the decision criteria).
+        var validation = plan
+            .Select(p => p.Product.CanReserve(p.Quantity))
+            .Append(order.CanSubmit())
+            .SequenceAll();
+
+        if (validation.Error is { } err)
+            return Result.Fail<Order>(err);
+
+        // PASS 2 — apply every mutation. Each call is provably non-failing because its
+        // matched Can* predicate already passed in Pass 1 AND nothing has mutated the
+        // in-memory aggregate state between passes (single-threaded handler). Discard() is
+        // the idiomatic acknowledged-discard that suppresses TRLS001.
+        foreach (var (product, quantity) in plan)
+            product.Reserve(quantity).Discard();
+
+        return order.Submit();
+    }
+}
+```
+
+The complete compile-checked snippet (with duplicate-product-aware test stubs and the anti-pattern `WrongHandler` under `#if FALSE`) lives at `Examples/CookbookSnippets/Recipe25_TwoPassValidateThenMutate.cs` in the framework repository.
+
+**The Pass-2-cannot-fail invariant — what makes it hold.**
+
+The recipe's correctness rests on two preconditions:
+
+1. **Every Pass 2 call has a matching `Can*` in Pass 1.** This is a static property of the handler shape — every mutator invoked after the validation `if (validation.Error is { } err) return ...` boundary must have appeared, by name and arguments, in the Pass 1 expression.
+2. **Nothing mutates the participating aggregates between passes.** Trivially satisfied for a single-threaded async handler operating on aggregates loaded into the request scope. **Not satisfied** if Pass 1 and Pass 2 are split across threads, if another handler runs concurrently against the same instances, or if a Pass-1 callback (e.g., a logger) is allowed to mutate state. Do not parallelize the mutation pass.
+
+When both preconditions hold, `Discard()` on each Pass 2 mutator call is correct: TRLS001 is suppressed and the result really cannot fail. If you cannot prove (1) or (2) in your context, you are no longer using the two-pass pattern — you are doing transactional compensation, which needs explicit rollback machinery and is out of scope for this recipe.
+
+**Choosing fail-fast vs accumulating for the validation pass.**
+
+The worked example uses `SequenceAll()` so the response enumerates every violation (typical for form-style and stock-style invariants where the user benefits from seeing all problems at once). Switch to `Sequence()` for fail-fast semantics when later checks are expensive and a single failure is sufficient. See [Recipe 20](#recipe-20--fail-fast-vs-accumulating-sequencetraverse-vs-sequencealltraverseall) for the full decision criteria. Both forms short-circuit on the same boundary: nothing in Pass 2 runs until validation returns `Ok`.
+
+**How this fits with sibling recipes.**
+
+- [Recipe 9](#recipe-9--state-machine-canfire--fire-pattern-with-fireresult) — single-aggregate single-transition variant of the same `Can*`+`*` shape. Recipe 25 generalizes it across many aggregates and many operations.
+- [Recipe 20](#recipe-20--fail-fast-vs-accumulating-sequencetraverse-vs-sequencealltraverseall) — the `Sequence`/`SequenceAll` choice for the validation pass.
+- [Recipe 22](#recipe-22--multi-aggregate-orchestration-fail-loud-on-missing-related-aggregates) — presence preflight for *missing* related aggregates (a different failure mode from per-element invariants). The two preflights compose: Recipe 22 runs first (every required aggregate exists), then Recipe 25 (every present aggregate's invariants admit the operation).
+
+**Anti-pattern → fix.**
+
+```csharp
+// ❌ Single-loop mutate-as-you-validate. The bug is invisible to happy-path tests because
+// every test sets up a fully-satisfiable order. A test that arranges line 3 to fail —
+// e.g., line 3's product has Stock=0 — reveals that line 1's product is left reserved.
+foreach (var li in order.LineItems)
+{
+    var r = byId[li.ProductId].Reserve(li.Quantity);
+    if (r.Error is { } err)
+        return Result.Fail<Order>(err);
+}
+return order.Submit();
+
+// ✅ Two-pass validate-then-mutate — same shape as the worked example above. Pass 1
+// proves every Can* succeeds across every participating aggregate; Pass 2 then calls
+// the matching mutators with provably-non-failing semantics.
+var plan = order.LineItems
+    .GroupBy(li => li.ProductId)
+    .Select(g => (Product: byId[g.Key], Quantity: g.Sum(li => li.Quantity)))
+    .ToArray();
+
+var validation = plan
+    .Select(p => p.Product.CanReserve(p.Quantity))
+    .Append(order.CanSubmit())
+    .SequenceAll();
+if (validation.Error is { } err)
+    return Result.Fail<Order>(err);
+
+foreach (var (product, quantity) in plan)
+    product.Reserve(quantity).Discard();
+
+return order.Submit();
+```
+
+**Partial-Failure Atomicity test (the test the bug-shipping models never wrote).**
+
+Every two-pass handler needs a test where a *later* element of the collection is unsatisfiable while *earlier* elements are. Happy-path tests cannot reveal the partial-mutation bug.
+
+```csharp
+[Fact]
+public async Task Submit_with_one_unsatisfiable_line_does_not_reserve_any_stock()
+{
+    // Two line items; line 2 cannot be reserved (stock=0).
+    var (order, productA, productB) = SeedOrderWithTwoLineItemsAsync(
+        stockA: 10, qtyA: 3,   // line 1 satisfiable
+        stockB: 0,  qtyB: 1);  // line 2 unsatisfiable
+    var aStockBefore = productA.Stock;
+    var bStockBefore = productB.Stock;
+
+    var r = await _sender.Send(new SubmitOrderCommand(order.Id), cancellationToken);
+
+    r.Should().BeFailureOfType<Error.UnprocessableContent>();
+    productA.Stock.Should().Be(aStockBefore);   // NOT partially reserved
+    productB.Stock.Should().Be(bStockBefore);
+    order.IsSubmitted.Should().BeFalse();        // primary aggregate not transitioned
+}
+```
+
+Together with the duplicate-product case (two lines for the same product whose summed quantity exceeds available stock), these are the two failure-mode tests that catch every form of this bug.
 ## Cross-references
 
 - [trellis-api-core.md](trellis-api-core.md#extension-class-catalog-full-signatures) — every `Result*Extensions(Async)` family with full signatures.
