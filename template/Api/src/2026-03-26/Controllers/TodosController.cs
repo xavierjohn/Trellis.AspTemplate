@@ -34,8 +34,6 @@ using TodoSample.Domain;
 [Route("api/[controller]")]
 public class TodosController : ControllerBase
 {
-    private const string ApiVersion = "2026-03-26";
-
     private readonly ISender _sender;
 
     /// <summary>
@@ -120,7 +118,7 @@ public class TodosController : ControllerBase
             .ToHttpResponseAsync(
                 nextUrlBuilder: (c, applied) =>
                     $"{Request.Scheme}://{Request.Host}{Request.PathBase}/api/Todos/overdue" +
-                    $"?cursor={c.Token}&limit={applied.ToString(CultureInfo.InvariantCulture)}&api-version={ApiVersion}",
+                    $"?cursor={c.Token}&limit={applied.ToString(CultureInfo.InvariantCulture)}&api-version=2026-03-26",
                 body: TodoResponse.From)
             .AsActionResultAsync<PagedResponse<TodoResponse>>();
 
