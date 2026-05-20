@@ -468,23 +468,6 @@ public class TodosController : ControllerBase
 
 // ❌ DI uses attribute-based discovery (no VersionByNamespaceConvention).
 services.AddApiVersioning().AddMvc();                                      // ❌
-
-// ❌ v1 stub action returning NotFound() at a route that exists in a later version.
-// In Api/src/2026-03-26/Controllers/OrdersController.cs:
-[HttpPost("{id}/return")]
-public IActionResult Return(OrderId id) => NotFound();                     // ❌
-// Why this is wrong: Asp.Versioning's ApiVersionMatcherPolicy runs during
-// routing (before MVC model binding). When ONLY the v2 controller declares
-// the route, the matcher correctly short-circuits a v1 request with the
-// configured UnsupportedApiVersionStatusCode (400 by default). Adding a v1
-// stub introduces a v1 candidate at the same route, the matcher selects it,
-// MVC binds {id}, and a malformed id (`not-a-guid`) produces 422 instead of
-// the version-mismatch status — the stub's NotFound() body never runs.
-// Fix: delete the stub. If your spec requires a status other than 400 for
-// version mismatches, configure services.AddApiVersioning(o =>
-//     o.UnsupportedApiVersionStatusCode = StatusCodes.Status404NotFound) once
-// in DependencyInjection.cs — the matcher policy will then return that status
-// before binding, with no per-endpoint stub needed.
 ```
 - **Reference:** See `template/Api/src/2026-03-26/` and `template/Api/src/2026-12-01/` for the two-version reference layout, plus `template/Api/src/DependencyInjection.cs` for the DI wiring.
 
