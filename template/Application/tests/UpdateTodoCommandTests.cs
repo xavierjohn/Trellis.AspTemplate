@@ -34,7 +34,7 @@ public class UpdateTodoCommandTests
             timeProvider: timeProvider);
 
         result.Should().BeFailure()
-            .Which.Should().BeOfType<Error.UnprocessableContent>();
+            .Which.Should().BeOfType<Error.InvalidInput>();
     }
 
     [Fact]

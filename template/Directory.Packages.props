@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <TrellisVersion>3.0.0-alpha.294</TrellisVersion>
+    <TrellisVersion>3.0.0-alpha.297</TrellisVersion>
   </PropertyGroup>
   <!-- Runtime -->
   <ItemGroup>
@@ -32,6 +32,7 @@
     <PackageVersion Include="Trellis.Core" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.EntityFrameworkCore" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.FluentValidation" Version="$(TrellisVersion)" />
+    <PackageVersion Include="Trellis.Http.Abstractions" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Mediator" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Primitives" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.ServiceDefaults" Version="$(TrellisVersion)" />

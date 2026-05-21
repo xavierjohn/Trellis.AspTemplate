@@ -19,9 +19,10 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
     /// The ETag from the client's <c>If-Match</c> header.
     /// <para>
     /// Required (RFC 6585). When the array is <c>null</c>, the handler returns
-    /// <c>Error.PreconditionRequired</c> which surfaces as <c>428 Precondition Required</c>.
-    /// When provided, the handler validates it against the aggregate's current ETag
-    /// before mutation, returning <c>412 Precondition Failed</c> if stale (RFC 9110).
+    /// <c>new Error.TransportFault(new HttpError.PreconditionRequired(...))</c> which surfaces as
+    /// <c>428 Precondition Required</c>. When provided, the handler validates it against the
+    /// aggregate's current ETag before mutation, returning <c>412 Precondition Failed</c> if
+    /// stale (RFC 9110).
     /// </para>
     /// </summary>
     public EntityTagValue[]? IfMatchETags { get; }
@@ -49,7 +50,7 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
     /// <param name="timeProvider">Optional time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>
     public static Result<UpdateTodoCommand> TryCreate(TodoId todoId, Title title, DueDate dueDate, Maybe<Tag> tag, EntityTagValue[]? ifMatchETags = null, TimeProvider? timeProvider = null) =>
         Result.Ensure(dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
-                Error.UnprocessableContent.ForField("dueDate", "out_of_range", "Due date must be in the future."))
+                Error.InvalidInput.ForField("dueDate", "out_of_range", "Due date must be in the future."))
             .Map(_ => new UpdateTodoCommand(todoId, title, dueDate, tag, ifMatchETags));
 }
 

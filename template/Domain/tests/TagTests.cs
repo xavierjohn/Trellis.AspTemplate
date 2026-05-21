@@ -13,7 +13,7 @@ public class TagTests
         var result = Tag.TryCreate(value);
 
         result.Should().BeFailure()
-            .Which.Should().BeOfType<Error.UnprocessableContent>();
+            .Which.Should().BeOfType<Error.InvalidInput>();
     }
 
     [Theory]

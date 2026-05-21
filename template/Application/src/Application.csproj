@@ -8,6 +8,7 @@
     <PackageReference Include="FluentValidation" />
     <PackageReference Include="Trellis.Authorization" />
     <PackageReference Include="Trellis.FluentValidation" />
+    <PackageReference Include="Trellis.Http.Abstractions" />
     <PackageReference Include="Trellis.Mediator" />
   </ItemGroup>
   <ItemGroup>

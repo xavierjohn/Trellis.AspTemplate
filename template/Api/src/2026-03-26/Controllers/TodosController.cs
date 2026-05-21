@@ -62,10 +62,11 @@ public class TodosController : ControllerBase
             .ToHttpResponseAsync(
                 TodoResponse.From,
                 opts => opts
-                    .CreatedAtVersionedRoute("Todos_GetById", t => new Microsoft.AspNetCore.Routing.RouteValueDictionary
+                    .CreatedAtRoute("Todos_GetById", t => new Microsoft.AspNetCore.Routing.RouteValueDictionary
                     {
                         ["id"] = (Guid)t.Id,
                     })
+                    .WithVersionedRoute()
                     .WithETag(t => EntityTagValue.Strong(t.ETag))
                     .WithLastModified(t => t.LastModified))
             .AsActionResultAsync<TodoResponse>();

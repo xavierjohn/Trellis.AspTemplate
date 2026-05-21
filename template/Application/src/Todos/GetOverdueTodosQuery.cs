@@ -48,7 +48,7 @@ public sealed class GetOverdueTodosQueryHandler : IQueryHandler<GetOverdueTodosQ
         {
             if (!Guid.TryParseExact(query.Cursor, "N", out var afterGuid))
                 return Result.Fail<Page<TodoItem>>(
-                    Error.UnprocessableContent.ForField("cursor", "cursor.malformed", "Cursor is not a valid opaque token."));
+                    Error.InvalidInput.ForField("cursor", "cursor.malformed", "Cursor is not a valid opaque token."));
 
             afterId = TodoId.Create(afterGuid);
         }

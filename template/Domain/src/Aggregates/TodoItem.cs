@@ -97,7 +97,7 @@ public partial class TodoItem : Aggregate<TodoId>
     /// </summary>
     public Result<TodoItem> Update(Title title, DueDate dueDate, Maybe<Tag> tag) =>
         Status == TodoStatus.Completed
-            ? Result.Fail<TodoItem>(Error.UnprocessableContent.ForRule("todo.completed", "Cannot update a completed todo."))
+            ? Result.Fail<TodoItem>(Error.InvalidInput.ForRule("todo.completed", "Cannot update a completed todo."))
             : Result.Ok(this)
                 .Tap(_ =>
                 {

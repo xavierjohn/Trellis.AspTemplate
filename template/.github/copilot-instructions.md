@@ -45,8 +45,8 @@ using Trellis;
 
 public static Result<Order> TryCreate(OrderName name) =>
     string.IsNullOrWhiteSpace(name.Value)
-        ? Result.Failure<Order>(Error.Validation("Name is required.", "name"))
-        : Result.Success(new Order(name));
+        ? Result.Fail<Order>(Error.InvalidInput.ForField("name", "required", "Name is required."))
+        : Result.Ok(new Order(name));
 
 public partial class Customer : Aggregate<CustomerId>
 {
@@ -184,7 +184,7 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
         TimeProvider? timeProvider = null) =>
         Result.Ensure(
                 dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
-                Error.Validation("Due date must be in the future.", "dueDate"))
+                Error.InvalidInput.ForField("dueDate", "out_of_range", "Due date must be in the future."))
             .Map(_ => new UpdateTodoCommand(todoId, title, dueDate));
 }
 
@@ -223,7 +223,7 @@ public Result<Order> Approve() =>
 
 ### Return `Maybe<T>` from repository lookups
 
-- **Rule:** 🔴 MUST return `Maybe<T>` from repository lookups and convert to `Result<T>` in handlers with `.ToResult(Error.NotFound(...))`.
+- **Rule:** 🔴 MUST return `Maybe<T>` from repository lookups and convert to `Result<T>` in handlers with `.ToResult(new Error.NotFound(...))`.
 - **Rationale:** Absence is data, not failure; handlers own the domain meaning of “not found”.
 - **Correct:**
 ```csharp
@@ -237,7 +237,7 @@ public interface ITodoRepository
 public async ValueTask<Result<TodoItem>> Handle(GetTodoByIdQuery query, CancellationToken cancellationToken)
 {
     var maybe = await _repository.FindByIdAsync(query.TodoId, cancellationToken);
-    return maybe.ToResult(Error.NotFound("Todo not found.", query.TodoId));
+    return maybe.ToResult(new Error.NotFound(ResourceRef.For("Todo", query.TodoId)) { Detail = "Todo not found." });
 }
 ```
 - **Incorrect:**
@@ -544,7 +544,7 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 | Interceptors | `AddTrellisInterceptors()` | Reimplement timestamp or ETag plumbing |
 | Save changes in repositories | `SaveChangesResultUnitAsync()` | Bare `SaveChangesAsync()` |
 | Optional lookup | `FirstOrDefaultMaybeAsync(...)` | `FirstOrDefaultAsync(...)` + `null` |
-| Required lookup | `FirstOrDefaultResultAsync(..., Error.NotFound(...))` | Returning `null` or throwing |
+| Required lookup | `FirstOrDefaultResultAsync(..., new Error.NotFound(...))` | Returning `null` or throwing |
 | `Maybe<T>` comparisons in LINQ | `WhereLessThan`, `WhereHasValue`, `WhereEquals`, etc. | Direct `Value` access in LINQ |
 | Index containing `Maybe<T>` | `HasTrellisIndex(...)` | `HasIndex(...)` |
 | Entity configuration placement | `IEntityTypeConfiguration<T>` in Acl | Inline `OnModelCreating` configuration |
