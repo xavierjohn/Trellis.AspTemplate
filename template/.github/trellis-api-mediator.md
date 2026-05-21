@@ -29,7 +29,7 @@ public sealed class AuthorizationBehavior<TMessage, TResponse>(IActorProvider ac
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Resolves the current actor, checks `RequiredPermissions` with `HasAllPermissions`, and returns `TResponse.CreateFailure(Error.Forbidden("Insufficient permissions."))` when authorization fails. |
+| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Resolves the current actor, checks `RequiredPermissions` with `HasAllPermissions`, and returns `TResponse.CreateFailure(new Error.Forbidden("authorization.insufficient.permissions") { Detail = "Insufficient permissions." })` when authorization fails. |
 
 ### ExceptionBehavior<TMessage, TResponse>
 **Declaration**
@@ -54,7 +54,7 @@ public sealed partial class ExceptionBehavior<TMessage, TResponse> : IPipelineBe
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Catches unhandled exceptions except `OperationCanceledException`, logs them, and returns `TResponse.CreateFailure(Error.Unexpected("An unexpected error occurred while processing the request."))`. |
+| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Catches unhandled exceptions except `OperationCanceledException`, logs them, and returns `TResponse.CreateFailure(new Error.Unexpected(Guid.NewGuid().ToString("N")) { Detail = "An unexpected error occurred while processing the request." })`. |
 
 ### IValidate
 **Declaration**
@@ -127,7 +127,7 @@ public sealed class ResourceAuthorizationBehavior<TMessage, TResource, TResponse
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Resolves `IResourceLoader<TMessage, TResource>` from the current scope, returns loader failures directly, then calls `message.Authorize(actor, loadResult.Value)` before invoking the handler. This behavior is only active when registered explicitly or via `AddResourceAuthorization(...)`; it is not included in `AddTrellisBehaviors()` or `PipelineBehaviors`. |
+| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Resolves `IResourceLoader<TMessage, TResource>` from the current scope, returns loader failures directly via `TryGetValue(out var resource, out var loadError)`, then calls `message.Authorize(actor, resource)` before invoking the handler. This behavior is only active when registered explicitly or via `AddResourceAuthorization(...)`; it is not included in `AddTrellisBehaviors()` or `PipelineBehaviors`. |
 
 ### ServiceCollectionExtensions
 **Declaration**
@@ -210,7 +210,7 @@ public sealed class ValidationBehavior<TMessage, TResponse> : IPipelineBehavior<
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Calls `message.Validate()`. When validation fails, returns `TResponse.CreateFailure(validationResult.Error)` using whatever error object `Validate()` returned; it is not limited to `ValidationError`. |
+| `public ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Calls `message.Validate()`. When validation fails, returns `TResponse.CreateFailure(validationResult.Error)` using whatever error object `Validate()` returned; it is not limited to `Error.InvalidInput`. |
 
 ## Extension methods
 
@@ -268,19 +268,19 @@ public sealed record GetOrderQuery(string Id)
 
     public IResult Validate() =>
         string.IsNullOrWhiteSpace(Id)
-            ? Result.Failure(Error.Validation("Order ID is required.", nameof(Id)))
-            : Result.Success();
+            ? Result.Fail(Error.InvalidInput.ForField(nameof(Id), "validation_error", "Order ID is required."))
+            : Result.Ok();
 
     public IResult Authorize(Actor actor, Order resource) =>
         actor.IsOwner(resource.OwnerId)
-            ? Result.Success()
-            : Result.Failure(Error.Forbidden("Only the owner can view the order."));
+            ? Result.Ok()
+            : Result.Fail(new Error.Forbidden("owner.required") { Detail = "Only the owner can view the order." });
 }
 
 public sealed class GetOrderResourceLoader : IResourceLoader<GetOrderQuery, Order>
 {
     public Task<Result<Order>> LoadAsync(GetOrderQuery message, CancellationToken cancellationToken) =>
-        Task.FromResult(Result.Success(new Order(message.Id, "user-1")));
+        Task.FromResult(Result.Ok(new Order(message.Id, "user-1")));
 }
 
 public sealed class StaticActorProvider : IActorProvider

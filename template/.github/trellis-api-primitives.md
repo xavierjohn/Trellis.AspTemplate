@@ -848,17 +848,17 @@ public static class Example
     {
         var orderId = OrderId.NewUniqueV7();
         var name = CustomerName.Create("Ada");
-        var lines = LineCount.TryCreate("42", CultureInfo.InvariantCulture).Value;
+        var lines = LineCount.TryCreate("42", CultureInfo.InvariantCulture).TryGetValue(out var parsedLines) ? parsedLines : LineCount.Create(1);
         var submittedAt = SubmittedAt.Parse("2026-01-15T12:00:00Z", CultureInfo.InvariantCulture);
         var state = OrderState.Create("submitted");
 
-        var percentage = Percentage.FromFraction(0.15m).Value;
+        var percentage = Percentage.FromFraction(0.15m).TryGetValue(out var parsedPercentage) ? parsedPercentage : Percentage.Zero;
         var amount = MonetaryAmount.Create(12.34m);
         var taxAmount = percentage.Of(amount);
 
         var total = Money.Create(12.34m, "USD");
         var shipping = Money.Create(2.00m, "USD");
-        var grandTotal = total.Add(shipping).Value;
+        var grandTotal = total.Add(shipping).TryGetValue(out var combinedTotal) ? combinedTotal : total;
 
         _ = (orderId, name, lines, submittedAt, state, taxAmount, grandTotal);
     }

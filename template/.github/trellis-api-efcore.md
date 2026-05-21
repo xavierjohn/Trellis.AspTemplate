@@ -50,9 +50,9 @@ public static class DbContextExtensions
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, CancellationToken cancellationToken = default)` | `Task<Result<int>>` | Convenience overload for `SaveChangesResultAsync(context, true, cancellationToken)`. |
-| `public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<int>>` | Wraps `SaveChangesAsync`; maps `DbUpdateConcurrencyException` to `Conflict`, duplicate-key `DbUpdateException` to `Conflict`, and foreign-key `DbUpdateException` to `Domain`. |
-| `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes and maps a successful row count to `Unit`. |
-| `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes with explicit `acceptAllChangesOnSuccess` and maps success to `Unit`. |
+| `public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<int>>` | Wraps `SaveChangesAsync`; maps `DbUpdateConcurrencyException` to `new Error.Conflict(null, "concurrent_modification")`, duplicate-key `DbUpdateException` to `new Error.Conflict(null, "duplicate.key")`, and foreign-key `DbUpdateException` to `new Error.Conflict(null, "referential.integrity")`. |
+| `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes and discards the row count. |
+| `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes with explicit `acceptAllChangesOnSuccess`. |
 
 ### `QueryableExtensions`
 
@@ -409,13 +409,13 @@ public sealed class CustomerId : ScalarValueObject<CustomerId, Guid>, IScalarVal
 
     public static Result<CustomerId> TryCreate(Guid value, string? fieldName = null) =>
         value == Guid.Empty
-            ? Result.Failure<CustomerId>(Error.Validation("Customer ID is required.", fieldName ?? "customerId"))
-            : Result.Success(new CustomerId(value));
+            ? Result.Fail<CustomerId>(Error.InvalidInput.ForField(fieldName ?? "customerId", "validation_error", "Customer ID is required."))
+            : Result.Ok(new CustomerId(value));
 
     public static Result<CustomerId> TryCreate(string? value, string? fieldName = null) =>
         Guid.TryParse(value, out var guid)
             ? TryCreate(guid, fieldName)
-            : Result.Failure<CustomerId>(Error.Validation("Customer ID must be a GUID.", fieldName ?? "customerId"));
+            : Result.Fail<CustomerId>(Error.InvalidInput.ForField(fieldName ?? "customerId", "validation_error", "Customer ID must be a GUID."));
 }
 
 public partial class Customer : Aggregate<CustomerId>
@@ -458,7 +458,7 @@ await using var db = new AppDbContext(options);
 
 var result = await db.Customers.FirstOrDefaultResultAsync(
     x => x.Name == "missing",
-    Error.NotFound("Customer not found."));
+    new Error.NotFound(ResourceRef.For("Customer")) { Detail = "Customer not found." });
 
 var submittedCustomers = await db.Customers
     .WhereHasValue(x => x.SubmittedAt)

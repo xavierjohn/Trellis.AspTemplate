@@ -198,15 +198,15 @@ public class ErrorAssertions : ReferenceTypeAssertions<Error, ErrorAssertions>
 ```csharp
 public static class ValidationErrorAssertionsExtensions
 {
-    public static ValidationErrorAssertions Should(this ValidationError error);
+    public static ValidationErrorAssertions Should(this Error.InvalidInput error);
 }
 ```
 
 #### `ValidationErrorAssertions`
 ```csharp
-public class ValidationErrorAssertions : ReferenceTypeAssertions<ValidationError, ValidationErrorAssertions>
+public class ValidationErrorAssertions : ReferenceTypeAssertions<Error.InvalidInput, ValidationErrorAssertions>
 {
-    public ValidationErrorAssertions(ValidationError error);
+    public ValidationErrorAssertions(Error.InvalidInput error);
 
     public AndConstraint<ValidationErrorAssertions> HaveFieldError(
         string fieldName,
@@ -338,7 +338,7 @@ public sealed class TestActorScope : IAsyncDisposable, IDisposable
 
 - Synchronous assertions start from `Result<T>` or `Maybe<T>`:
   - `result.Should().BeSuccess()`
-  - `result.Should().BeFailureOfType<ValidationError>()`
+  - `result.Should().BeFailureOfType<Error.InvalidInput>()`
   - `maybe.Should().HaveValue()`
 - **Async assertions are extension methods on `Task<Result<T>>` and `ValueTask<Result<T>>`, not on `ResultAssertions<T>`.**
   - Correct: `await resultTask.BeSuccessAsync();`
@@ -350,7 +350,7 @@ public sealed class TestActorScope : IAsyncDisposable, IDisposable
 - `SaveAsync` and `DeleteAsync` return `Task<Result<Unit>>`.
 - `WithUniqueConstraint(Func<TAggregate, object?> propertySelector)` — fluent constraint registration
 - `Clear()`, `Exists(TId id)`, `Get(TId id)`, `GetAll()`, `Count` — direct inspection helpers
-- `GetByIdAsync` / `DeleteAsync` return `NotFoundError` details in the format:
+- `GetByIdAsync` / `DeleteAsync` return `Error.NotFound` details in the format:
   - `"{AggregateTypeName} with ID {id} not found"`
 - Unique-constraint conflicts return:
   - `"A {AggregateTypeName} with the same value already exists."`
@@ -364,10 +364,10 @@ using FluentAssertions;
 using Trellis;
 using Trellis.Testing;
 
-var success = Result.Success(42);
+var success = Result.Ok(42);
 success.Should().BeSuccess().Which.Should().Be(42);
 
-var notFound = Result.Failure<int>(Error.NotFound("Order 123 not found", "123"));
+var notFound = Result.Fail<int>(new Error.NotFound(ResourceRef.For("Order", "123")) { Detail = "Order 123 not found" });
 notFound.Should().BeFailure()
     .Which.Detail.Should().Be("Order 123 not found");
 ```
@@ -380,8 +380,8 @@ using FluentAssertions;
 using Trellis;
 using Trellis.Testing;
 
-Task<Result<int>> resultTask = Task.FromResult(Result.Success(42));
-ValueTask<Result<int>> valueTaskResult = ValueTask.FromResult(Result.Success(7));
+Task<Result<int>> resultTask = Task.FromResult(Result.Ok(42));
+ValueTask<Result<int>> valueTaskResult = ValueTask.FromResult(Result.Ok(7));
 
 (await resultTask.BeSuccessAsync()).Which.Should().Be(42);
 (await valueTaskResult.BeSuccessAsync()).Which.Should().Be(7);

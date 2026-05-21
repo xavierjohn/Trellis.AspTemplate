@@ -103,7 +103,7 @@ No public constructors.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `Task<Actor> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Actor>` | Returns the current actor. Implementations may throw when the request is unauthenticated or the actor cannot be resolved. |
+| `Task<Maybe<Actor>> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Maybe<Actor>>` | Returns the current authenticated actor, or `Maybe<Actor>.None` when no usable actor is available. The mediator authorization pipeline maps absence to `Error.AuthenticationRequired` (HTTP 401); throw only for provider infrastructure/configuration failures. |
 
 ### IAuthorize
 **Declaration**
@@ -501,9 +501,9 @@ Console.WriteLine(actor.HasPermission("orders:view", "tenant-1"));
 IResourceLoader<CancelOrderCommand, Order> loader = new CancelOrderLoader();
 var loadResult = await loader.LoadAsync(new CancelOrderCommand("order-1"), CancellationToken.None);
 
-if (loadResult.IsSuccess)
+if (loadResult.TryGetValue(out var order, out _))
 {
-    var authResult = new CancelOrderCommand(loadResult.Value.Id).Authorize(actor, loadResult.Value);
+    var authResult = new CancelOrderCommand(order.Id).Authorize(actor, order);
     Console.WriteLine(authResult.IsSuccess);
 }
 
@@ -513,8 +513,9 @@ public sealed record CancelOrderCommand(string OrderId) : IAuthorizeResource<Ord
 {
     public IResult Authorize(Actor actor, Order resource) =>
         actor.IsOwner(resource.OwnerId)
-            ? Result.Success()
-            : Result.Failure(Error.Forbidden("Only the owner can cancel the order."));
+            ? Result.Ok()
+            : Result.Fail(new Error.Forbidden("order.owner_only", ResourceRef.For("Order", resource.Id))
+                { Detail = "Only the owner can cancel the order." });
 }
 
 public sealed class CancelOrderLoader : ResourceLoaderById<CancelOrderCommand, Order, string>
@@ -522,7 +523,7 @@ public sealed class CancelOrderLoader : ResourceLoaderById<CancelOrderCommand, O
     protected override string GetId(CancelOrderCommand message) => message.OrderId;
 
     protected override Task<Result<Order>> GetByIdAsync(string id, CancellationToken cancellationToken) =>
-        Task.FromResult(Result.Success(new Order(id, "user-1")));
+        Task.FromResult(Result.Ok(new Order(id, "user-1")));
 }
 ```
 

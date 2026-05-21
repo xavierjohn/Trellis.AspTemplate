@@ -377,7 +377,13 @@ public sealed class TrellisAspOptions
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public TrellisAspOptions MapError<TError>(int statusCode) where TError : Error` | `TrellisAspOptions` | Overrides or adds an error-type-to-status-code mapping. Default mappings include `ValidationError=400`, `BadRequestError=400`, `UnauthorizedError=401`, `ForbiddenError=403`, `NotFoundError=404`, `MethodNotAllowedError=405`, `NotAcceptableError=406`, `ConflictError=409`, `GoneError=410`, `PreconditionFailedError=412`, `ContentTooLargeError=413`, `UnsupportedMediaTypeError=415`, `RangeNotSatisfiableError=416`, `DomainError=422`, `PreconditionRequiredError=428`, `RateLimitError=429`, `UnexpectedError=500`, `ServiceUnavailableError=503`. |
+| `public TrellisAspOptions MapError<TError>(int statusCode) where TError : Error` | `TrellisAspOptions` | Overrides or adds an error-type-to-status-code mapping. Default mappings include `Error.InvalidInput=422`, `Error.InvariantViolation=422`, `Error.AuthenticationRequired=401`, `Error.Forbidden=403`, `Error.NotFound=404`, `Error.Conflict=409`, `Error.Gone=410`, `Error.RateLimited=429`, `Error.Unexpected=500`, and `Error.Unavailable=503`. `Error.Unexpected { ReasonCode: "not_implemented" }` maps to `501`; `Error.TransportFault` unwraps HTTP-specific `HttpError` cases to their status codes (`405/406/412/413/415/416/428`). |
+
+### Domain to HTTP boundary mapping
+
+The ASP boundary keeps Trellis errors transport-neutral and translates them to Problem Details at the edge. `Error.InvalidInput` and `Error.InvariantViolation` map to `422` with the preserved wire `kind` token `unprocessable-content`; `Error.AuthenticationRequired`, `Error.RateLimited`, `Error.Unavailable`, and `Error.Unexpected` preserve the legacy wire `kind` tokens `unauthorized`, `too-many-requests`, `service-unavailable`, `internal-server-error`, and `not-implemented`. The top-level Problem Details `type` defaults to ASP.NET's status-code URL.
+
+When `Error.Conflict.ReasonCode == "concurrent_modification"` and the incoming request carried `If-Match`, the boundary emits `412 Precondition Failed` with wire `kind` `precondition-failed` instead of `409 conflict`. Other conflicts remain `409`.
 
 ### `ValidationErrorsContext`
 
@@ -390,11 +396,14 @@ public static class ValidationErrorsContext
 | Name | Type | Description |
 | --- | --- | --- |
 | `HasErrors` | `bool` | `true` when the current async-local scope contains at least one collected validation error. |
+| `CurrentPropertyName` | `string?` (get/set) | Async-local property name for the property currently being deserialized. |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public static IDisposable BeginScope()` | `IDisposable` | Starts a new async-local validation collection scope; disposing restores the previous scope and property name. |
-| `public static ValidationError? GetValidationError()` | `ValidationError?` | Returns the aggregated `ValidationError` for the current scope, or `null` when no errors were collected. |
+| `public static void AddError(string fieldName, string errorMessage)` | `void` | Appends a single field violation to the current scope. |
+| `public static void AddError(Error.InvalidInput invalidInput)` | `void` | Merges field and rule violations from an `Error.InvalidInput` into the current scope. |
+| `public static Error.InvalidInput? GetUnprocessableContent()` | `Error.InvalidInput?` | Returns the aggregated `Error.InvalidInput` for the current scope, or `null` when no errors were collected. |
 
 ### `WriteOutcome<T>`
 
@@ -812,7 +821,7 @@ public sealed class WidgetsController : ControllerBase
     [HttpGet("{id}")]
     public ActionResult<WidgetResponse> Get(string id)
     {
-        Result<string> result = Result.Success(id);
+        Result<string> result = Result.Ok(id);
         return result.ToActionResult(this, value => new WidgetResponse(value));
     }
 }
@@ -838,7 +847,7 @@ app.UseScalarValueValidation();
 
 app.MapGet("/widgets/{id}", (string id) =>
 {
-    Result<string> result = Result.Success(id);
+    Result<string> result = Result.Ok(id);
     return result.ToHttpResult();
 }).WithScalarValueValidation();
 
