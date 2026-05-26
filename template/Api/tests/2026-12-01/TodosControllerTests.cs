@@ -113,13 +113,46 @@ public class TodosControllerTests
         var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Complete me", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+        var etag = createResponse.Headers.ETag!;
 
-        var response = await client.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
+        using var complete = new HttpRequestMessage(HttpMethod.Post, $"api/Todos/{created.Id}/complete?{VersionParam}");
+        complete.Headers.IfMatch.Add(etag);
+        var response = await client.SendAsync(complete, TestContext.Current.CancellationToken);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var completed = await response.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         completed.Status.Should().Be("Completed");
         completed.CompletedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Complete_without_If_Match_returns_428_PreconditionRequired()
+    {
+        var client = CreateClient("owner-1", "todos:create", "todos:complete");
+        var dueDate = DateTime.UtcNow.AddDays(2);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Needs If-Match", dueDate }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+
+        var response = await client.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionRequired);
+    }
+
+    [Fact]
+    public async Task Complete_with_stale_If_Match_returns_412_PreconditionFailed()
+    {
+        var client = CreateClient("owner-1", "todos:create", "todos:complete");
+        var dueDate = DateTime.UtcNow.AddDays(2);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Stale complete", dueDate }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+
+        using var complete = new HttpRequestMessage(HttpMethod.Post, $"api/Todos/{created.Id}/complete?{VersionParam}");
+        complete.Headers.TryAddWithoutValidation("If-Match", "\"this-tag-does-not-match\"");
+        var response = await client.SendAsync(complete, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
     }
 
     [Fact]
@@ -132,7 +165,8 @@ public class TodosControllerTests
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
-        // Try to complete as different user
+        // Try to complete as different user. Resource-authorization runs before the handler, so the
+        // 403 wins without us needing to present a valid If-Match.
         var otherClient = CreateClient("other-user", "todos:complete");
         var response = await otherClient.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
 
@@ -147,10 +181,43 @@ public class TodosControllerTests
         var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Delete me", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+        var etag = createResponse.Headers.ETag!;
+
+        using var delete = new HttpRequestMessage(HttpMethod.Delete, $"api/Todos/{created.Id}?{VersionParam}");
+        delete.Headers.IfMatch.Add(etag);
+        var response = await client.SendAsync(delete, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task Delete_without_If_Match_returns_428_PreconditionRequired()
+    {
+        var client = CreateClient("user-1", "todos:create", "todos:delete");
+        var dueDate = DateTime.UtcNow.AddDays(1);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Needs If-Match to delete", dueDate }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
         var response = await client.DeleteAsync($"api/Todos/{created.Id}?{VersionParam}", TestContext.Current.CancellationToken);
 
-        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionRequired);
+    }
+
+    [Fact]
+    public async Task Delete_with_stale_If_Match_returns_412_PreconditionFailed()
+    {
+        var client = CreateClient("user-1", "todos:create", "todos:delete");
+        var dueDate = DateTime.UtcNow.AddDays(1);
+        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Stale delete", dueDate }, TestContext.Current.CancellationToken);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+
+        using var delete = new HttpRequestMessage(HttpMethod.Delete, $"api/Todos/{created.Id}?{VersionParam}");
+        delete.Headers.TryAddWithoutValidation("If-Match", "\"this-tag-does-not-match\"");
+        var response = await client.SendAsync(delete, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
     }
 
     [Fact]
@@ -273,13 +340,17 @@ public class TodosControllerTests
         getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // Complete
-        var completeResponse = await client.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
+        using var completeRequest = new HttpRequestMessage(HttpMethod.Post, $"api/Todos/{created.Id}/complete?{VersionParam}");
+        completeRequest.Headers.IfMatch.Add(getResponse.Headers.ETag!);
+        var completeResponse = await client.SendAsync(completeRequest, TestContext.Current.CancellationToken);
         completeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var completed = await completeResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         completed.Status.Should().Be("Completed");
 
-        // Delete
-        var deleteResponse = await client.DeleteAsync($"api/Todos/{created.Id}?{VersionParam}", TestContext.Current.CancellationToken);
+        // Delete (use the post-complete ETag — completing mutated the aggregate)
+        using var deleteRequest = new HttpRequestMessage(HttpMethod.Delete, $"api/Todos/{created.Id}?{VersionParam}");
+        deleteRequest.Headers.IfMatch.Add(completeResponse.Headers.ETag!);
+        var deleteResponse = await client.SendAsync(deleteRequest, TestContext.Current.CancellationToken);
         deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         // Verify deleted

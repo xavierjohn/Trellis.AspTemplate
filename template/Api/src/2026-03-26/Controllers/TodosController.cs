@@ -161,21 +161,31 @@ public class TodosController : ControllerBase
 
     /// <summary>
     /// Complete a todo item. Only the creator can complete their own todo.
+    /// <para>
+    /// State-transition POST. Requires <c>If-Match</c> (RFC 6585 — missing →
+    /// <c>428 Precondition Required</c>; stale → RFC 9110 <c>412 Precondition Failed</c>)
+    /// to prevent lost-update races against concurrent mutations.
+    /// </para>
     /// </summary>
     [HttpPost("{id}/complete")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType(StatusCodes.Status428PreconditionRequired)]
     public ValueTask<ActionResult<TodoResponse>> Complete(
         [CustomerResourceId] TodoId id,
-        CancellationToken cancellationToken) =>
-        _sender.Send(new CompleteTodoCommand(id), cancellationToken)
+        CancellationToken cancellationToken)
+    {
+        var ifMatchETags = ETagHelper.ParseIfMatch(Request);
+        return _sender.Send(new CompleteTodoCommand(id, ifMatchETags), cancellationToken)
             .ToHttpResponseAsync(
                 TodoResponse.From,
                 opts => opts
                     .WithETag(t => EntityTagValue.Strong(t.ETag))
                     .WithLastModified(t => t.LastModified))
             .AsActionResultAsync<TodoResponse>();
+    }
 
     /// <summary>
     /// This method throws to show the error handling middleware handles it.
@@ -189,14 +199,24 @@ public class TodosController : ControllerBase
 
     /// <summary>
     /// Delete a todo item.
+    /// <para>
+    /// Destructive mutation. Requires <c>If-Match</c> (RFC 6585 — missing →
+    /// <c>428 Precondition Required</c>; stale → RFC 9110 <c>412 Precondition Failed</c>)
+    /// to prevent lost-update races against concurrent mutations.
+    /// </para>
     /// </summary>
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType(StatusCodes.Status428PreconditionRequired)]
     public ValueTask<Microsoft.AspNetCore.Http.IResult> Delete(
         [CustomerResourceId] TodoId id,
-        CancellationToken cancellationToken) =>
-        _sender.Send(new DeleteTodoCommand(id), cancellationToken)
+        CancellationToken cancellationToken)
+    {
+        var ifMatchETags = ETagHelper.ParseIfMatch(Request);
+        return _sender.Send(new DeleteTodoCommand(id, ifMatchETags), cancellationToken)
             .ToHttpResponseAsync();
+    }
 }
 

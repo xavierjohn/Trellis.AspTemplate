@@ -6,9 +6,35 @@ using Trellis.Authorization;
 
 /// <summary>
 /// Deletes a todo item.
+/// <para>
+/// Destructive mutation. Requires <c>If-Match</c> (RFC 6585) to prevent the
+/// lost-update race: the client must have read the resource first and present
+/// its ETag, so a concurrent mutation between read and delete surfaces as
+/// <c>412 Precondition Failed</c> instead of silently destroying newer state.
+/// </para>
 /// </summary>
-public sealed record DeleteTodoCommand(TodoId TodoId) : ICommand<Result<Trellis.Unit>>, IAuthorize
+public sealed record DeleteTodoCommand : ICommand<Result<Trellis.Unit>>, IAuthorize
 {
+    public TodoId TodoId { get; }
+
+    /// <summary>
+    /// The ETag from the client's <c>If-Match</c> header.
+    /// <para>
+    /// Required (RFC 6585). When the array is <c>null</c>, the handler returns
+    /// <c>new Error.TransportFault(new HttpError.PreconditionRequired(...))</c> which surfaces as
+    /// <c>428 Precondition Required</c>. When provided, the handler validates it against the
+    /// aggregate's current ETag before deletion, returning <c>412 Precondition Failed</c> if
+    /// stale (RFC 9110).
+    /// </para>
+    /// </summary>
+    public EntityTagValue[]? IfMatchETags { get; }
+
+    public DeleteTodoCommand(TodoId todoId, EntityTagValue[]? ifMatchETags = null)
+    {
+        TodoId = todoId;
+        IfMatchETags = ifMatchETags;
+    }
+
     /// <inheritdoc />
     public IReadOnlyList<string> RequiredPermissions { get; } = [Permissions.TodosDelete];
 }
@@ -22,6 +48,13 @@ public sealed class DeleteTodoCommandHandler : ICommandHandler<DeleteTodoCommand
 
     public DeleteTodoCommandHandler(ITodoRepository repository) => _repository = repository;
 
-    public async ValueTask<Result<Trellis.Unit>> Handle(DeleteTodoCommand command, CancellationToken cancellationToken) =>
-        await _repository.RemoveByIdAsync(command.TodoId, cancellationToken);
+    public async ValueTask<Result<Trellis.Unit>> Handle(DeleteTodoCommand command, CancellationToken cancellationToken)
+    {
+        var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
+        return maybe
+            .ToResult(new Error.NotFound(new ResourceRef("Todo", command.TodoId.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = $"Todo {command.TodoId} not found." })
+            .RequireETag(command.IfMatchETags)
+            .Tap(_repository.Remove)
+            .Map(_ => Trellis.Unit.Value);
+    }
 }

@@ -1,0 +1,267 @@
+﻿---
+package: Trellis.Analyzers (applied form)
+namespaces: [Trellis, Trellis.Analyzers]
+types: [TRLS001, TRLS003, TRLS010, TRLS013, TRLS015, TRLS016, TRLS017, TRLS018, TRLS019, TRLS020, TRLS036, TRLS037, TRLS038]
+related_docs: [trellis-api-analyzers.md, trellis-api-cookbook.md]
+version: v4
+last_verified: 2026-05-11
+audience: [llm]
+---
+# Trellis Anti-Pattern → Fix Gallery
+
+> A condensed atlas mapping each common Trellis analyzer trigger to its idiomatic fix. **Read this file alongside `trellis-api-cookbook.md` whenever you are touching a Trellis pipeline.** Each section's WRONG/FIX pair captures the canonical control-flow shape the analyzer expects — preserve that shape and adapt identifiers, types, and error values to your caller. The snippets are pattern examples, not drop-in replacements.
+
+This file is the canonical reference for analyzer-triggered anti-patterns. It used to live as Recipe 11 in `trellis-api-cookbook.md` and was extracted so that:
+
+1. It can be loaded independently when you are debugging an analyzer warning.
+2. The reference list in `copilot-instructions.md` can name it directly, so AI sessions are more likely to load it.
+3. The cookbook's Patterns Index can route by symptom into this file when the symptom is "I am getting `TRLSxxx`."
+
+The analyzer rules themselves are documented in `trellis-api-analyzers.md` (severity, when they fire, suppression guidance). This file is the *applied* form — the snippets you adapt.
+
+## TRLS001 — Result return value not handled
+
+```csharp
+// WRONG — Result<T> dropped on the floor
+PlaceOrder(cmd);                                   // TRLS001
+
+// FIX 1 — propagate up the ROP chain (preferred when the caller is itself in a Result pipeline).
+return PlaceOrder(cmd).Map(_ => Unit.Value);
+
+// FIX 2 — terminal side-effect via Switch (void-returning; for fire-and-forget log/metric).
+PlaceOrder(cmd).Switch(
+    onSuccess: _       => logger.LogInformation("Order placed."),
+    onFailure: failure => logger.LogWarning("Order rejected: {Code}", failure.Code));
+
+// FIX 3 — terminal projection via Match (both branches return a value; use when the
+// caller needs an int/IActionResult/string back, not just a side effect).
+int statusCode = PlaceOrder(cmd).Match(
+    onSuccess: _       => 200,
+    onFailure: failure => 422);
+```
+
+> Don't throw from inside `Match` / `Switch` to "handle" failure — it defeats the point of `Result<T>`. Use `Switch` for void side-effects and propagate the `Result` up the chain instead. (Note: TRLS010 only fires inside chain methods like `Bind`/`Map`/`Tap`/`Ensure` — not `Match` or `Switch` — so the analyzer won't catch this; it's a Result-discipline guideline, not an analyzer rule.)
+
+## TRLS003 — Unsafe `Maybe.Value`
+
+```csharp
+// WRONG
+string city = customer.Email.Value;                // TRLS003
+
+// FIX 1 — guard
+if (customer.Email.HasValue) { var v = customer.Email.Value; }
+
+// FIX 2 — convert to Result
+Result<EmailAddress> r = customer.Email.ToResult(new Error.NotFound(ResourceRef.For("Email", customer.Id)));
+```
+
+## TRLS010 — Throwing in a Result chain
+
+```csharp
+// WRONG
+.Bind(o => throw new InvalidOperationException("bad"))   // TRLS010
+
+// FIX
+.Bind(o => Result.Fail<Order>(new Error.Conflict(ResourceRef.For<Order>(o.Id), "invalid_state")))
+```
+
+## TRLS016 — `HasIndex` on a `Maybe<T>` property
+
+```csharp
+// WRONG
+b.HasIndex(c => c.Email);                          // TRLS016 — silently no-op
+
+// FIX
+b.HasTrellisIndex(c => new { c.Email });
+```
+
+## TRLS017 — Wrong attribute namespace on a value object
+
+```csharp
+// WRONG — System.ComponentModel.DataAnnotations
+[System.ComponentModel.DataAnnotations.StringLength(10)]    // TRLS017 — generator ignores it
+public sealed partial class CurrencyCode : RequiredString<CurrencyCode>;
+
+// FIX
+[Trellis.StringLength(10)]
+public sealed partial class CurrencyCode : RequiredString<CurrencyCode>;
+```
+
+## TRLS018 — Unsafe `Result<T>` deconstruction
+
+```csharp
+// WRONG
+var (ok, value, err) = result;
+SendEmail(value);                                  // TRLS018 — value is default on failure
+
+// FIX
+var (ok, value, err) = result;
+if (!ok) return err.ToHttpResponse();
+SendEmail(value);                                  // gated by !ok early-return
+```
+
+## TRLS019 — `default(Result)` / `default(Maybe<T>)`
+
+```csharp
+// WRONG
+return default;                                    // TRLS019 — typed FAILURE, not success
+return default(Maybe<Email>);                      // TRLS019 — equivalent to .None but obscure
+
+// FIX
+return Result.Ok();
+return Maybe<Email>.None;
+```
+
+## TRLS013 — Unsafe `Maybe<T>.Value` in LINQ projection
+
+Direct `.Value` access on `Maybe<T>` inside Select-family LINQ projections throws for `None` elements unless an earlier `.Where(...)` lambda mentions `HasValue`.
+
+Pick FIX 1 for in-memory or analyzer-clean projection pipelines: filter first, then project.
+
+```csharp
+// WRONG — projection reads Maybe<T>.Value before proving every element has a value
+IEnumerable<int> numbers = values.Select(m => m.Value);
+
+// FIX 1 — prior Where lambda mentions HasValue before the Value projection
+IEnumerable<int> numbers = values
+    .Where(m => m.HasValue)
+    .Select(m => m.Value);
+```
+
+Pick FIX 2 for EF Core query composition over mapped `Maybe<T>` properties: register the interceptor and use the typed query helpers for predicates when they match the query.
+
+```csharp
+// FIX 2 — EF Core path: enable Trellis query rewriting and prefer typed Maybe predicates
+optionsBuilder.AddTrellisInterceptors();
+
+IQueryable<Order> submitted = db.Orders.WhereHasValue(o => o.SubmittedAt);
+```
+
+> TRLS013 suppression is keyword-presence based: the prior `.Where(...)` body only has to mention `HasValue`, so predicate-shape verification (for example, distinguishing `m => m.HasValue` from `m => !m.HasValue`) is a known limitation. The analyzer recognizes prior `.Where(...)` chains for projections; `MaybeQueryableExtensions` are the EF translation path, not a general-purpose TRLS013 suppression mechanism.
+
+## TRLS015 — Use `SaveChangesResultAsync` instead of `SaveChangesAsync`
+
+Direct `SaveChanges`/`SaveChangesAsync` calls bypass the Result pipeline and turn database errors into unhandled exceptions.
+
+Pick FIX 1 when the non-UoW caller discards the affected-row count.
+
+```csharp
+// WRONG — raw EF save bypasses Result error handling
+await db.SaveChangesAsync(ct);
+
+// FIX 1 — preserve Result pipeline semantics when the count is not needed
+await db.SaveChangesResultUnitAsync(ct);
+```
+
+Pick FIX 2 when the non-UoW caller needs the affected-row count.
+
+```csharp
+// WRONG — raw EF save returns an int by throwing on database failures
+int count = await db.SaveChangesAsync(ct);
+
+// FIX 2 — keep the affected-row count inside Result<int>
+Result<int> result = await db.SaveChangesResultAsync(ct);
+```
+
+> Under `AddTrellisUnitOfWork<TContext>`, repositories should stage changes only and not call `SaveChanges`/`SaveChangesAsync` at all. `TransactionalCommandBehavior` owns commit.
+
+## TRLS020 — Composite value object DTO property missing `CompositeValueObjectJsonConverter`
+
+Composite value objects exposed through request/response DTOs must carry `[JsonConverter(typeof(CompositeValueObjectJsonConverter<T>))]` on the value-object type so JSON binding round-trips through `TryCreate`. The analyzer only inspects DTOs that are visible through a controller `[FromBody]` parameter or response type, a minimal API endpoint handler parameter, or a Mediator message type — the DTO type alone is not enough to trip the rule.
+
+```csharp
+// WRONG — composite [OwnedEntity] value object exposed as a [FromBody] DTO property without the converter
+[OwnedEntity]
+public sealed partial class Money : ValueObject
+{
+    public string Currency { get; }
+    public decimal Amount { get; }
+
+    protected override IEnumerable<IComparable?> GetEqualityComponents()
+    {
+        yield return Currency;
+        yield return Amount;
+    }
+}
+
+public sealed record CreateInvoiceRequest(Money Total);
+
+[ApiController]
+[Route("invoices")]
+public sealed class InvoicesController : ControllerBase
+{
+    [HttpPost]
+    public IActionResult Create([FromBody] CreateInvoiceRequest request) => Ok();
+}
+
+// FIX 1 — put the converter on the composite value object type
+[JsonConverter(typeof(CompositeValueObjectJsonConverter<Money>))]
+[OwnedEntity]
+public sealed partial class Money : ValueObject
+{
+    // ...same body as above...
+}
+```
+
+> The current TRLS020 analyzer checks the composite value object **type** for the converter attribute, not the DTO property. A property-level `JsonConverter` may be a valid `System.Text.Json` technique, but it is not the analyzer-clean shape in the current source/tests.
+
+## TRLS036 — `[OwnedEntity]` type must be `partial`
+
+Type is decorated with `[OwnedEntity]` but is not declared `partial`, so the source generator cannot emit the private parameterless constructor.
+
+```csharp
+// WRONG — generator cannot add the EF constructor to a non-partial type
+[OwnedEntity]
+public sealed class Address : ValueObject
+{
+}
+
+// FIX 1 — make the owned value object partial so generation can extend it
+[OwnedEntity]
+public sealed partial class Address : ValueObject
+{
+}
+```
+
+> Severity: Error. TRLS038 is reported first when the type also fails to inherit from `ValueObject`, so a non-partial non-`ValueObject` type emits TRLS038 rather than both diagnostics.
+
+## TRLS037 — `[OwnedEntity]` type already declares a parameterless constructor
+
+Type already has a parameterless constructor; remove it to let the `[OwnedEntity]` source generator emit one, or remove the `[OwnedEntity]` attribute.
+
+```csharp
+// WRONG — hand-written parameterless constructor suppresses generator emission
+[OwnedEntity]
+public sealed partial class Address : ValueObject
+{
+    public Address() { }
+}
+
+// FIX 1 — delete the hand-written parameterless constructor and let the generator own it
+[OwnedEntity]
+public sealed partial class Address : ValueObject
+{
+}
+```
+
+> Severity: Warning. Any explicit parameterless constructor suppresses the generated one. Default guidance is to delete it; keep a private one only with a documented reason and the understanding that generator emission is intentionally suppressed.
+
+## TRLS038 — `[OwnedEntity]` type must inherit from `ValueObject`
+
+Type is decorated with `[OwnedEntity]` but does not inherit from `Trellis.ValueObject`; `[OwnedEntity]` is only supported on `ValueObject`-derived types.
+
+```csharp
+// WRONG — [OwnedEntity] is applied to a plain class
+[OwnedEntity]
+public sealed partial class Address
+{
+}
+
+// FIX 1 — make the owned entity a Trellis ValueObject
+[OwnedEntity]
+public sealed partial class Address : ValueObject
+{
+}
+```
+
+> Severity: Error. When TRLS038 fires, the generator skips source generation for that type.
