@@ -94,7 +94,7 @@ GET {{host}}/api/Todos/00000000-0000-0000-0000-000000000001?api-version={{apiVer
 Accept: application/json
 X-Test-Actor: {{userActor}}
 
-### Throw (error handling middleware test)
+### Throw — demonstrates the exception handling pipeline (UseExceptionHandler + ProblemDetails)
 GET {{host}}/api/Todos/throw?api-version={{apiVersion}}
 Accept: application/json
 

@@ -188,7 +188,8 @@ public class TodosController : ControllerBase
     }
 
     /// <summary>
-    /// This method throws to show the error handling middleware handles it.
+    /// This method throws to demonstrate the exception handling pipeline
+    /// (UseExceptionHandler + ProblemDetails) wraps unhandled exceptions in an RFC 9457 body.
     /// </summary>
     /// <exception cref="NotImplementedException"></exception>
     [HttpGet("throw")]

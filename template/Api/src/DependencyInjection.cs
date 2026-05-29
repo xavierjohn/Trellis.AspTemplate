@@ -1,5 +1,6 @@
 ﻿namespace TodoSample.Api;
 
+using System.Diagnostics;
 using Asp.Versioning.Conventions;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
@@ -7,7 +8,6 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Scalar.AspNetCore;
 using Trellis.ServiceLevelIndicators;
-using TodoSample.Api.Middleware;
 using Trellis.Asp;
 using Trellis.Asp.Authorization;
 
@@ -17,13 +17,42 @@ internal static class DependencyInjection
     {
         services.ConfigureOpenTelemetry();
         services.ConfigureServiceLevelIndicators();
-        services.AddProblemDetails();
+        services.AddProblemDetails(options =>
+        {
+            options.CustomizeProblemDetails = ctx =>
+            {
+                // Always surface the active trace id so clients can correlate the error with
+                // server-side spans / log entries. Falls back to the ASP.NET connection-level
+                // trace identifier when no diagnostic Activity is current.
+                var traceId = Activity.Current?.Id ?? ctx.HttpContext.TraceIdentifier;
+                ctx.ProblemDetails.Extensions["traceId"] = traceId;
+
+                // For 500 responses do not leak raw exception detail to the client; replace the
+                // default detail with a support-friendly message that nudges the user toward
+                // filing a ticket with the trace id.
+                if (ctx.ProblemDetails.Status == StatusCodes.Status500InternalServerError)
+                {
+                    ctx.ProblemDetails.Detail =
+                        "An error occurred in our API. Please refer the trace id with our support team.";
+                }
+
+                // RFC 9110 §15.5.6: the Allow header lists methods the resource supports.
+                // ASP.NET routing already emits the header on a 405; surface it in the body
+                // as a structured array so clients that ignore response headers still discover
+                // the supported methods.
+                if (ctx.ProblemDetails.Status == StatusCodes.Status405MethodNotAllowed &&
+                    ctx.HttpContext.Response.Headers.TryGetValue("Allow", out var allow))
+                {
+                    ctx.ProblemDetails.Extensions["allow"] =
+                        allow.ToString().Split(", ", StringSplitOptions.RemoveEmptyEntries);
+                }
+            };
+        });
         services.AddControllers().AddScalarValueValidation();
         services.AddApiVersioning()
                 .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()))
                 .AddApiExplorer()
                 .AddOpenApi(options => options.Document.AddScalarTransformers());
-        services.AddScoped<ErrorHandlingMiddleware>();
         services.AddHealthChecks();
 
         if (environment.IsDevelopment())
