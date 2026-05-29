@@ -223,6 +223,25 @@ public Result<Order> Approve() =>
 - **Incorrect:** Create all files across all projects first, then attempt a single build after generated code is already required by downstream layers.
 - **Reference:** See the `## Implementation Order and Build Checkpoints` section below.
 
+### Run `dotnet test` without legacy VSTest arguments
+
+- **Rule:** 🔴 MUST NOT pass legacy VSTest arguments such as `--nologo`, `--logger`, `-l`, or `--results-directory` to `dotnet test`. Test projects in this template use xUnit v3 + Microsoft.Testing.Platform (MTP), which forwards unknown arguments to the test host and exits with code 5 plus `Zero tests ran` when it sees a flag it doesn't recognize — easily misread as a test failure.
+- **Rationale:** MTP does not share a CLI surface with the legacy VSTest runner. `Unknown option '--nologo'` followed by `Zero tests ran` and `Exit code: 5` is the diagnostic signature of this mistake.
+- **Correct:**
+```powershell
+dotnet test                                     # all defaults
+dotnet test --no-build                          # skip rebuild
+dotnet test --filter-not-trait "Category=Integration"
+dotnet test --coverage --report-trx
+```
+- **Incorrect:**
+```powershell
+dotnet test --nologo                            # Unknown option '--nologo' -> exit code 5
+dotnet test --logger trx                        # Unknown option '--logger' -> exit code 5
+dotnet test -l "console;verbosity=minimal"      # rejected by MTP runner
+```
+- **Reference:** `template/runtests.cmd` and `.github/workflows/build.yml` show the CI invocation. For the full MTP option list, run any compiled test exe directly: `./bin/Debug/net10.0/*.Tests.exe --help`.
+
 ### Return `Maybe<T>` from repository lookups
 
 - **Rule:** 🔴 MUST return `Maybe<T>` from repository lookups and convert to `Result<T>` in handlers with `.ToResult(new Error.NotFound(...))`.
