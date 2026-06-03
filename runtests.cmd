@@ -1,1 +1,1 @@
-dotnet test template\TrellisAspTemplate.slnx
+dotnet test --solution template\TrellisAspTemplate.slnx

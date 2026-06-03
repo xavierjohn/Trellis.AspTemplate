@@ -240,7 +240,7 @@ dotnet test --nologo                            # Unknown option '--nologo' -> e
 dotnet test --logger trx                        # Unknown option '--logger' -> exit code 5
 dotnet test -l "console;verbosity=minimal"      # rejected by MTP runner
 ```
-- **Reference:** `template/runtests.cmd` and `.github/workflows/build.yml` show the CI invocation. For the full MTP option list, run any compiled test exe directly: `./bin/Debug/net10.0/*.Tests.exe --help`.
+- **Reference:** `runtests.cmd` (at the repo root) and `.github/workflows/build.yml` show the CI invocation. For the full MTP option list, run any compiled test exe directly: `./bin/Debug/net10.0/*.Tests.exe --help`.
 
 ### Return `Maybe<T>` from repository lookups
 
