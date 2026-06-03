@@ -42,7 +42,10 @@ public partial class TodoItem : Aggregate<TodoId>
             ConfigureStateMachine);
     }
 
-    private TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider timeProvider)
+    /// <summary>
+    /// Creates a new todo item in Pending state.
+    /// </summary>
+    public TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider? timeProvider = null)
         : base(TodoId.NewUniqueV7())
     {
         Title = title;
@@ -56,14 +59,8 @@ public partial class TodoItem : Aggregate<TodoId>
             s => Status = s,
             ConfigureStateMachine);
 
-        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, timeProvider.GetUtcNow()));
+        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, (timeProvider ?? TimeProvider.System).GetUtcNow()));
     }
-
-    /// <summary>
-    /// Creates a new todo item in Pending state.
-    /// </summary>
-    public static Result<TodoItem> TryCreate(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider? timeProvider = null) =>
-        Result.Ok(new TodoItem(title, dueDate, tag, createdByActorId, timeProvider ?? TimeProvider.System));
 
     /// <summary>
     /// Starts the todo, transitioning from Pending to Active.

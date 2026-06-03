@@ -48,7 +48,8 @@ internal static class DependencyInjection
                 }
             };
         });
-        services.AddControllers().AddScalarValueValidation();
+        services.AddControllers();
+        services.AddTrellisAspWithScalarValidation();
         services.AddApiVersioning()
                 .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()))
                 .AddApiExplorer()

@@ -44,7 +44,7 @@ public record TodoResponse
     public bool IsOverdue { get; init; }
 
     /// <summary>Maps from domain aggregate to API response.</summary>
-    public static TodoResponse From(TodoItem todo) => new()
+    public static TodoResponse From(TodoItem todo, DateTime now) => new()
     {
         Id = todo.Id.Value,
         Title = todo.Title.Value,
@@ -56,6 +56,6 @@ public record TodoResponse
         CreatedAt = todo.CreatedAt,
         LastModified = todo.LastModified,
         IsOverdue = (todo.Status == TodoStatus.Active || todo.Status == TodoStatus.Pending)
-            && todo.DueDate.Value < DateTime.UtcNow
+            && todo.DueDate.Value < now
     };
 }

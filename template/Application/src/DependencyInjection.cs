@@ -12,6 +12,7 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddMediator(options => options.ServiceLifetime = ServiceLifetime.Scoped);
         services.AddTrellisBehaviors();
+        services.AddDomainEventDispatch(typeof(CreateTodoCommandHandler).Assembly);
         services.AddTrellisFluentValidation(typeof(CreateTodoCommandValidator).Assembly);
         return services;
     }

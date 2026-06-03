@@ -29,17 +29,21 @@ using TodoSample.Domain;
 /// </list>
 /// </summary>
 [ApiController]
-[Consumes("application/json")]
 [Produces("application/json")]
 [Route("api/[controller]")]
 public class TodosController : ControllerBase
 {
     private readonly ISender _sender;
+    private readonly TimeProvider _timeProvider;
 
     /// <summary>
     /// Constructor.
     /// </summary>
-    public TodosController(ISender sender) => _sender = sender;
+    public TodosController(ISender sender, TimeProvider timeProvider)
+    {
+        _sender = sender;
+        _timeProvider = timeProvider;
+    }
 
     /// <summary>
     /// Create a new todo item.
@@ -52,6 +56,7 @@ public class TodosController : ControllerBase
     /// </para>
     /// </summary>
     [HttpPost]
+    [Consumes("application/json")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
@@ -60,7 +65,7 @@ public class TodosController : ControllerBase
         CancellationToken cancellationToken) =>
         _sender.Send(new CreateTodoCommand(request.Title, request.DueDate, request.Tag), cancellationToken)
             .ToHttpResponseAsync(
-                TodoResponse.From,
+                todo => TodoResponse.From(todo, _timeProvider.GetUtcNow().UtcDateTime),
                 opts => opts
                     .CreatedAtRoute("Todos_GetById", t => new Microsoft.AspNetCore.Routing.RouteValueDictionary
                     {
@@ -89,7 +94,7 @@ public class TodosController : ControllerBase
         CancellationToken cancellationToken) =>
         _sender.Send(new GetTodoByIdQuery(id), cancellationToken)
             .ToHttpResponseAsync(
-                TodoResponse.From,
+                todo => TodoResponse.From(todo, _timeProvider.GetUtcNow().UtcDateTime),
                 opts => opts
                     .WithETag(t => EntityTagValue.Strong(t.ETag))
                     .WithLastModified(t => t.LastModified)
@@ -120,7 +125,7 @@ public class TodosController : ControllerBase
                 nextUrlBuilder: (c, applied) =>
                     $"{Request.Scheme}://{Request.Host}{Request.PathBase}/api/Todos/overdue" +
                     $"?cursor={c.Token}&limit={applied.ToString(CultureInfo.InvariantCulture)}&api-version=2026-12-01",
-                body: TodoResponse.From)
+                body: todo => TodoResponse.From(todo, _timeProvider.GetUtcNow().UtcDateTime))
             .AsActionResultAsync<PagedResponse<TodoResponse>>();
 
     /// <summary>
@@ -133,6 +138,7 @@ public class TodosController : ControllerBase
     /// </para>
     /// </summary>
     [HttpPut("{id}")]
+    [Consumes("application/json")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -154,7 +160,7 @@ public class TodosController : ControllerBase
                     .SetLastModified(t.LastModified)
                     .Build()))
             .ToHttpResponseAsync(
-                TodoResponse.From,
+                todo => TodoResponse.From(todo, _timeProvider.GetUtcNow().UtcDateTime),
                 opts => opts.HonorPrefer())
             .AsActionResultAsync<TodoResponse>();
     }
@@ -180,7 +186,7 @@ public class TodosController : ControllerBase
         var ifMatchETags = ETagHelper.ParseIfMatch(Request);
         return _sender.Send(new CompleteTodoCommand(id, ifMatchETags), cancellationToken)
             .ToHttpResponseAsync(
-                TodoResponse.From,
+                todo => TodoResponse.From(todo, _timeProvider.GetUtcNow().UtcDateTime),
                 opts => opts
                     .WithETag(t => EntityTagValue.Strong(t.ETag))
                     .WithLastModified(t => t.LastModified))
@@ -193,6 +199,7 @@ public class TodosController : ControllerBase
     /// </summary>
     /// <exception cref="NotImplementedException"></exception>
     [HttpGet("throw")]
+    [ApiExplorerSettings(IgnoreApi = true)]
     public string Throw()
     {
         throw new NotImplementedException("Catch me middleware.");

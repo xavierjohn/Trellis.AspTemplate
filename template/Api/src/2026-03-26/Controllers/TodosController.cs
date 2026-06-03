@@ -29,7 +29,6 @@ using TodoSample.Domain;
 /// </list>
 /// </summary>
 [ApiController]
-[Consumes("application/json")]
 [Produces("application/json")]
 [Route("api/[controller]")]
 public class TodosController : ControllerBase
@@ -52,6 +51,7 @@ public class TodosController : ControllerBase
     /// </para>
     /// </summary>
     [HttpPost]
+    [Consumes("application/json")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
@@ -133,6 +133,7 @@ public class TodosController : ControllerBase
     /// </para>
     /// </summary>
     [HttpPut("{id}")]
+    [Consumes("application/json")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -193,6 +194,7 @@ public class TodosController : ControllerBase
     /// </summary>
     /// <exception cref="NotImplementedException"></exception>
     [HttpGet("throw")]
+    [ApiExplorerSettings(IgnoreApi = true)]
     public string Throw()
     {
         throw new NotImplementedException("Catch me middleware.");

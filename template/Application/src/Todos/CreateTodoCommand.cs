@@ -50,8 +50,9 @@ public sealed class CreateTodoCommandHandler : ICommandHandler<CreateTodoCommand
     {
         var actor = (await _actorProvider.GetCurrentActorAsync(cancellationToken))
             .GetValueOrThrow("Actor must be present; IAuthorize pipeline guarantees this.");
-        return TodoItem.TryCreate(command.Title, command.DueDate, command.Tag, actor.Id, _timeProvider)
-            .Bind(todo => todo.Start().Map(_ => todo))
+        var todo = new TodoItem(command.Title, command.DueDate, command.Tag, actor.Id, _timeProvider);
+        return todo.Start()
+            .Map(_ => todo)
             .Tap(_repository.Add);
     }
 }
