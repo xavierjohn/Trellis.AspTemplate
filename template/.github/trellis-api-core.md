@@ -1,7 +1,7 @@
-﻿---
+---
 package: Trellis.Core
 namespaces: [Trellis]
-types: [Result, "Result<T>", IResult, "IResult<TValue>", "IFailureFactory<TSelf>", "Maybe<T>", Maybe, MaybeInvariant, Error, ITransportFault, RetryAdvice, Unit, "Page<T>", Page, Cursor, PageSize, CursorCodec, PageBuilder, "EquatableArray<T>", EquatableArray, ResourceRef, InputPointer, FieldViolation, RuleViolation, IAggregate, "Aggregate<TId>", IEntity, "Entity<TId>", IDomainEvent, ValueObject, "ScalarValueObject<TSelf,T>", "IScalarValue<TSelf,TPrimitive>", "IFormattableScalarValue<TSelf,TPrimitive>", "RequiredString<TSelf>", "RequiredInt<TSelf>", "RequiredLong<TSelf>", "RequiredDecimal<TSelf>", "RequiredBool<TSelf>", "RequiredGuid<TSelf>", "RequiredDateTime<TSelf>", "RequiredEnum<TSelf>", "RequiredEnumJsonConverter<T>", "ParsableJsonConverter<T>", ResultRequiresExplicitHttpMappingConverter, PrimitiveValueObjectTrace, "Specification<T>", TrellisJsonValidationException, RangeAttribute, StringLengthAttribute, NotDefaultAttribute, TrimAttribute, RailwayTrackAttribute, TrackBehavior, EnumValueAttribute, ResultDebugSettings]
+types: [Result, "Result<T>", IResult, "IResult<TValue>", "IFailureFactory<TSelf>", IPersistOnFailure, "Maybe<T>", Maybe, MaybeInvariant, Error, ITransportFault, RetryAdvice, RetryClassification, ErrorRetryExtensions, Unit, "Page<T>", Page, Cursor, PageSize, CursorCodec, PageBuilder, "EquatableArray<T>", EquatableArray, ResourceRef, InputPointer, FieldViolation, RuleViolation, IAggregate, "Aggregate<TId>", IEntity, "Entity<TId>", IDomainEvent, ITrackedAggregateSource, ValueObject, "ScalarValueObject<TSelf,T>", "IScalarValue<TSelf,TPrimitive>", "IFormattableScalarValue<TSelf,TPrimitive>", "RequiredString<TSelf>", "RequiredInt<TSelf>", "RequiredLong<TSelf>", "RequiredDecimal<TSelf>", "RequiredBool<TSelf>", "RequiredGuid<TSelf>", "RequiredDateTime<TSelf>", "RequiredDateTimeOffset<TSelf>", "RequiredEnum<TSelf>", "RequiredEnumJsonConverter<T>", "ParsableJsonConverter<T>", ResultRequiresExplicitHttpMappingConverter, PrimitiveValueObjectTrace, "Specification<T>", TrellisJsonValidationException, RangeAttribute, StringLengthAttribute, NotDefaultAttribute, TrimAttribute, AllowEmptyAttribute, AllowWhitespaceAttribute, NoTrimAttribute, AllowZeroAttribute, AllowMinValueAttribute, PositiveAttribute, NonNegativeAttribute, NegativeAttribute, NonPositiveAttribute, RailwayTrackAttribute, TrackBehavior, EnumValueAttribute, ResourceCollectionNameAttribute, ResultDebugSettings]
 version: v3
 last_verified: 2026-05-06
 audience: [llm]
@@ -29,7 +29,9 @@ Use this table before searching the long type catalog.
 | Goal | Canonical API | See |
 |---|---|---|
 | Return success/failure without payload | `Result.Ok()` / `Result.Fail(error)` (returns `Result<Unit>`) | [`Result`](#public-static-partial-class-result) |
-| Return success/failure with payload | `Result.Ok(value)` / `Result.Fail<T>(error)` | [`Result<TValue>`](#public-readonly-struct-resulttvalue--iresulttvalue-iequatableresulttvalue-ifailurefactoryresulttvalue) |
+| Return success/failure with payload | `Result.Ok(value)` / `Result.Fail<T>(error)` | [`Result<TValue>`](#public-readonly-struct-resulttvalue--iresulttvalue-iequatableresulttvalue-ifailurefactoryresulttvalue-ipersistonfailure) |
+| Fail but still persist staged work (worker pattern) | `Result.FailAfterCommit<T>(error)` / `Result.FailAfterCommit(error)` | [`Result`](#public-static-partial-class-result), [`IPersistOnFailure`](#public-interface-ipersistonfailure) |
+| Classify an `Error` for a worker/consumer retry loop | `error.Classify()` / `error.IsTransient()` / `error.IsPermanent()` / `error.IsFailFast()` / `error.GetRetryAdvice()` | [`Retry classification`](#retry-classification-errorretryextensions) |
 | Turn a boolean guard into a result | `Result.Ensure(condition, error)` or `.Ensure(...)` in a chain | [`Result`](#public-static-partial-class-result), [`Ensure family`](#ensure-family--ensureextensions-ensureextensionsasync-ensureallextensions-ensureallextensionsasync) |
 | Start independent async result-producing operations concurrently | `Result.ParallelAsync(...)`, then combine the returned tasks | [`Result`](#public-static-partial-class-result) |
 | Combine multiple validated *typed* fields into a tuple | static `Result.Combine<T1,T2>(Result<T1>, Result<T2>)` or instance `r1.Combine(r2)`, then `.Map(...)` | [`Combine family`](#combine-family--combineextensions-combineextensionsasync-combineerrorextensions) |
@@ -83,7 +85,6 @@ public Task<Result<Unit>> Handle(CancelOrderCommand cmd, CancellationToken ct) =
 | --- | --- | --- |
 | `CS1929: 'Task<Result<T>>' does not contain a definition for 'Bind'` | `LoadAsync(...).Bind(x => ...)` | Use `BindAsync` (which extends `Task<Result<T>>`), or `await` first then `.Bind(...)` |
 | `CS0411: type arguments for 'Map<TOut>' cannot be inferred` | `someTaskResult.Map(...)` after a `CheckAsync` whose result type can't be inferred | `await` the precondition into a concrete `Result<T>` before projecting; or use `MapAsync<TOut>(...)` |
-| `CS0121: ambiguous between 'BindAsync<...>(Result<T>, Func<T, Task<Result<R>>>)' and 'BindAsync<...>(Result<T>, Func<T, ValueTask<Result<R>>>)'` | A sync `Result<T>` (not `Task<Result<T>>`) receiver with an inline `async` lambda whose return type can't be inferred between `Task` and `ValueTask` — both delegate-shape overloads exist on the sync receiver. | Either extract the lambda to a named method with an explicit `Task<Result<R>>` return type, or pin the delegate type at the call site: `Func<T, Task<Result<R>>> next = c => ...; result.BindAsync(next);`. See [`Bind family — Task vs ValueTask ambiguity`](#bind-family--bindextensions-bindextensionsasync-bindzipextensions-bindzipextensionsasync) |
 
 
 ## Common traps
@@ -115,10 +116,10 @@ Migration notes for users moving from the previous `Trellis.Core` API surface.
 | Conditional factory | `Result.SuccessIf(cond, value, error)` / `Result.SuccessIf(cond, t1, t2, error)` | *(removed)* | Use a ternary: `cond ? Result.Ok(value) : Result.Fail<T>(error)` | <!-- stale-doc-ok: migration-comparison row intentionally cites removed v1 factory -->
 | Inverse-conditional factory | `Result.FailureIf(cond, value, error)` / `Result.FailureIf(predicate, value, error)` | *(removed)* | Use a ternary: `cond ? Result.Fail<T>(error) : Result.Ok(value)` | <!-- stale-doc-ok: migration-comparison row intentionally cites removed v1 factory -->
 | Async-conditional factories | `Result.SuccessIfAsync(predicate, value, error)` / `Result.FailureIfAsync(predicate, value, error)` | *(removed)* | `(await predicate()) ? Result.Ok(value) : Result.Fail<T>(error)` (invert as needed; parens required because `await` binds tighter than `?:`) | <!-- stale-doc-ok: migration-comparison row intentionally cites removed v1 factory -->
-| Exception → result helpers | `Result.FromException(ex)` / `Result.FromException<T>(ex)` | *(removed)* | Use `Result.Fail(new Error.Unexpected("unhandled_exception", faultId) { Detail = ex.Message, Cause = ... })` or rely on `Result.Try` / `Result.TryAsync` for inline exception capture. |
+| Exception → result helpers | `Result.FromException(ex)` / `Result.FromException<T>(ex)` | *(removed)* | Use `Result.Try` / `Result.TryAsync` for inline exception capture, or log the exception and return `Result.Fail(new Error.Unexpected("unhandled_exception", faultId) { Detail = "An unexpected error occurred while processing the request." })`. Do not copy `ex.Message` into public `Detail`. |
 | Implicit operators on `Result<T>` | `Result<T> r = value;` and `Result<T> r = error;` | *(removed)* | Use the explicit factory: `Result.Ok(value)` / `Result.Fail<T>(error)`. The compiler flags every site with CS0029. |
 | Non-generic `Result` for void flows | `Result` was a separate `readonly struct` for success/failure with no payload, distinct from `Result<T>`. | The non-generic `Result` instance type was removed. `Result` is now a `public static partial class` factory only; for no-payload success/failure use `Result<Unit>` (returned by parameterless `Result.Ok()` / `Result.Fail(error)` / `Result.Ensure(...)` / `Result.Try(...)` factories). The `Trellis.Unit` type is a public `readonly record struct` with a single value (`Unit.Default`). | Replace `Result` parameter/return types with `Result<Unit>`; replace `Task<Result>` with `Task<Result<Unit>>`; in lambdas after `.Bind(...)` / `BindAsync(...)` accept the `Unit` argument explicitly (`_ =>` or `(Unit _) =>`). |
-| `Error` as open class hierarchy | `Error` was a `class` with 18 hand-written subclasses (`ValidationError`, `NotFoundError`, …) and static factory helpers (`Error.Validation(...)`, `Error.NotFound(...)`, …). | `Error` is an `abstract record` with **12 nested `sealed record` cases** (`Error.NotFound`, `Error.InvalidInput`, …). Closed via `private` constructor; no static factories. | Replace `Error.X("msg")` factories with `new Error.X(payload) { Detail = "msg" }`. Replace concrete subclass type names (`ValidationError`, `NotFoundError`) with `Error.InvalidInput`, `Error.NotFound`. See "Error Cases (closed ADT)" below. | <!-- v1-stale-ok: migration-comparison row intentionally cites removed v1 factories -->
+| `Error` as open class hierarchy | `Error` was a `class` with 18 hand-written subclasses (`ValidationError`, `NotFoundError`, …) and static factory helpers (`Error.Validation(...)`, `Error.NotFound(...)`, …). | `Error` is an `abstract record` with **12 nested `sealed record` cases** (`Error.NotFound`, `Error.InvalidInput`, …). Closed via `private` constructor; no static factories. | Replace not-found factories with `new Error.NotFound(ResourceRef.For<TResource>(id)) { Detail = "..." }`. Replace validation factories with `Error.InvalidInput.ForField(field, code, detail)` or `Error.InvalidInput.ForRule(code, detail)`. Replace concrete subclass type names (`ValidationError`, `NotFoundError`) with `Error.InvalidInput`, `Error.NotFound`. See "Error Cases (closed ADT)" below. | <!-- v1-stale-ok: migration-comparison row intentionally cites removed v1 factories -->
 | `MatchErrorExtensions` | `result.MatchError(onValidation: ..., onNotFound: ..., onUnexpected: ...)` | *(removed)* | Use a `switch` expression on the closed ADT: `result.Match(_ => ..., e => e switch { Error.NotFound nf => ..., Error.InvalidInput uc => ..., _ => ... })`. C# verifies exhaustiveness against the closed catalog. |
 | `FlattenValidationErrorsExtensions` | `result.FlattenValidationErrors()` | *(removed)* | `Combine` over multiple `Result<T>` automatically merges `Error.InvalidInput.Fields` and `.Rules`. |
 | `Error.Instance` field | `error.Instance` (string-shaped HTTP vocabulary) | *(removed)* | The ASP wire layer populates `ProblemDetails.Instance` from the server-relative request path+query (RFC 9457 §3.1). Typed payloads expose `ResourceRef` directly via fields like `Error.NotFound.Resource` for callers that need to assert on the resource identity. |
@@ -224,6 +225,8 @@ Static factory and helper surface for `Result<TValue>`. There is no non-generic 
 | `public static Result<Unit> Ok()` | Success without payload (returns `Result<Unit>`) |
 | `public static Result<TValue> Fail<TValue>(Error error)` | Failure factory |
 | `public static Result<Unit> Fail(Error error)` | Failure without payload (returns `Result<Unit>`) |
+| `public static Result<TValue> FailAfterCommit<TValue>(Error error)` | Persist-on-failure factory. Still a failure (`IsFailure == true`), but sets [`IPersistOnFailure.PersistOnFailure`](#public-interface-ipersistonfailure) so `TransactionalCommandBehavior` (and any other opt-in pipeline behavior) commits staged changes alongside the failure. Canonical use: worker handler that converts a transient external-service rejection into a persisted `permanently_failed` row. Throws `ArgumentNullException` on null `error`. |
+| `public static Result<Unit> FailAfterCommit(Error error)` | No-payload persist-on-failure factory (returns `Result<Unit>`). |
 | `public static Result<Unit> Ensure(bool flag, Error error)` | Converts a boolean to `Result<Unit>` |
 | `public static Result<Unit> Ensure(Func<bool> predicate, Error error)` | Deferred predicate version |
 | `public static Task<Result<Unit>> EnsureAsync(Func<Task<bool>> predicate, Error error)` | Async predicate version |
@@ -235,15 +238,42 @@ Static factory and helper surface for `Result<TValue>`. There is no non-generic 
 | `public static Result<(T1, ..., T9)> Combine<...>(...)` | Additional generated arities up to 9 |
 | `public static (Task<Result<T1>>, ..., Task<Result<T9>>) ParallelAsync<...>(...)` | Starts async result-producing operations in parallel, arities 2-9 |
 
-The default exception mapper produces `new Error.Unexpected("unhandled_exception", Guid.NewGuid().ToString("N")) { Detail = ex.Message }`. `OperationCanceledException` is always rethrown rather than mapped.
+The default exception mapper produces `new Error.Unexpected("unhandled_exception", Guid.NewGuid().ToString("N")) { Detail = "An unexpected error occurred while processing the request." }`. It never copies `Exception.Message` into public `Detail`; log exception details at the call site or provide a custom mapper with safe, domain-specific text. `OperationCanceledException` is always rethrown rather than mapped.
 
 #### Factory Methods
 
-`Ok`, `Fail`, `Ensure`, `Try`, `TryAsync`, `Combine`, and `ParallelAsync`. Removed from the current API (see "Breaking changes from v1" above): `Success`, `Failure`, `Success(Func<T>)`, `Failure<T>(Func<Error>)`, `SuccessIf`, `FailureIf`, `SuccessIfAsync`, `FailureIfAsync`, `FromException`, and the non-generic `Result` instance type itself (`CreateFailure`, `IFailureFactory<Result>`, `IEquatable<Result>`, etc.).
+`Ok`, `Fail`, `FailAfterCommit`, `Ensure`, `Try`, `TryAsync`, `Combine`, and `ParallelAsync`. Removed from the current API (see "Breaking changes from v1" above): `Success`, `Failure`, `Success(Func<T>)`, `Failure<T>(Func<Error>)`, `SuccessIf`, `FailureIf`, `SuccessIfAsync`, `FailureIfAsync`, `FromException`, and the non-generic `Result` instance type itself (`CreateFailure`, `IFailureFactory<Result>`, `IEquatable<Result>`, etc.).
 
 ---
 
-### `public readonly struct Result<TValue> : IResult<TValue>, IEquatable<Result<TValue>>, IFailureFactory<Result<TValue>>`
+### `public interface IPersistOnFailure`
+
+Opt-in marker carried by result types whose **failure** outcome should still trigger any post-handler persistence step (notably `TransactionalCommandBehavior`'s commit). The canonical producer is `Result.FailAfterCommit<T>(error)`; the canonical consumer is `TransactionalCommandBehavior`, which checks `result is IPersistOnFailure { PersistOnFailure: true }` to decide whether to commit a failed handler outcome.
+
+> **Per-instance, not type-level.** `Result<T>` implements `IPersistOnFailure` unconditionally — the same struct represents both ordinary failures and persist-on-failure failures, and the per-instance `PersistOnFailure` property discriminates. A type-only `is IPersistOnFailure` check is therefore *insufficient* and would incorrectly include ordinary `Result.Fail<T>(error)` values; consumers must use the property-bound pattern `result is IPersistOnFailure { PersistOnFailure: true }`.
+
+#### Properties
+
+| Name | Type | Notes |
+| --- | --- | --- |
+| `PersistOnFailure` | `bool` | `true` for instances created via `Result.FailAfterCommit<T>(error)` / `Result.FailAfterCommit(error)`, and for failures projected or aggregated from such an instance by railway operators (e.g. `Map`, `Bind`, `Combine`). The flag is sticky once propagated. `Result.Ok(...)`, `Result.Fail(...)`, and `default(Result<T>)` all return `false`. |
+
+#### Pipeline composition
+
+| Behavior | Persist-on-failure handling |
+| --- | --- |
+| `TransactionalCommandBehavior` (`Trellis.EntityFrameworkCore`) | Commits staged changes on success **or** persist-on-failure. Commit error on a persist-on-failure outcome replaces the handler error in the returned response. |
+| `DomainEventDispatchBehavior` (`Trellis.Mediator`) | Treats persist-on-failure as failure: events are **not** dispatched. Events the handler raised on aggregates remain on those in-memory instances and are discarded with the request scope — they are not a durable retry buffer. Model post-failure side effects via an outbox row or a dedicated follow-up command. |
+
+#### Anti-pattern — composing `FailAfterCommit` with aggregating operators
+
+`Result.FailAfterCommit<T>(error)` is a **leaf** worker-handler operation: it converts a single aggregate's transient external rejection into a persisted `permanently_failed` state and returns. Threading that result through `Combine` / `TraverseAll` / `SequenceAll` / `WhenAllAsync` OR-accumulates the `PersistOnFailure` flag onto the aggregated failure — `TransactionalCommandBehavior` then commits the staged permanent-failure mutation alongside whatever the other legs produced, which is almost never what the handler author intended.
+
+**Restructure** such handlers so the aggregating step runs to its terminal outcome first and `FailAfterCommit` is invoked at the end (or in a follow-up command), never as a leg inside a multi-aggregate composition. See [`trellis-api-anti-patterns.md`](trellis-api-anti-patterns.md#no-analyzer--resultfailaftercommit-composed-with-aggregating-operators) for the WRONG / FIX gallery entry.
+
+---
+
+### `public readonly struct Result<TValue> : IResult<TValue>, IEquatable<Result<TValue>>, IFailureFactory<Result<TValue>>, IPersistOnFailure`
 
 Represents either a successful `TValue` or a failure `Error`.
 
@@ -275,8 +305,8 @@ Represents either a successful `TValue` or a failure `Error`.
 | `public bool TryGetValue([MaybeNullWhen(false)] out TValue value, [NotNullWhen(false)] out Error? error)` | Combined extractor — binds both `value` (on success) and `error` (on failure) in one call, eliminating the need for `result.Error!` after a failed single-out `TryGetValue`. |
 | `public bool TryGetError([NotNullWhen(true)] out Error? error)` | Non-throwing failure extractor; on `default(Result<T>)` returns `true` with the `Error.Unexpected` sentinel. |
 | `public void Deconstruct(out bool isSuccess, out TValue? value, out Error? error)` | Deconstruction support: `var (ok, value, error) = result;`. |
-| `public Result<Unit> AsUnit()` | Discards the success value, returning a `Result<Unit>`. On a default-initialized failure, returns an explicit `Result.Fail(sentinel)` (never another `default`). |
-| `public bool Equals(Result<TValue> other)` | Value equality. Equal if both are success with `EqualityComparer<TValue>.Default.Equals` over the values, or both are failure with equal `Error`. Default-initialized failures route through the shared sentinel. |
+| `public Result<Unit> AsUnit()` | Discards the success value, returning a `Result<Unit>`. On a default-initialized failure, returns an explicit `Result.Fail(sentinel)` (never another `default`). Preserves the persist-on-failure flag when the source was created via `Result.FailAfterCommit<T>(error)`. |
+| `public bool Equals(Result<TValue> other)` | Value equality. Equal if both are success with `EqualityComparer<TValue>.Default.Equals` over the values, or both are failure with equal `Error` *and* equal persist-on-failure intent. Default-initialized failures route through the shared sentinel; an ordinary `Result.Fail(error)` and a `Result.FailAfterCommit(error)` with the same `Error` are **not** equal. |
 | `public override bool Equals(object? obj)` | Object equality. |
 | `public override int GetHashCode()` | Hash code matching `Equals`. |
 | `public override string ToString()` | `"Success({value})"` or `"Failure({Code}: {Detail})"`. |
@@ -511,6 +541,36 @@ Domain code treats `ITransportFault` as opaque and does not inspect concrete tra
 `RetryAdvice` is a transport-neutral retry hint: `public readonly record struct RetryAdvice(TimeSpan? After = null, DateTimeOffset? At = null);`. `Error.RateLimited` and `Error.Unavailable` carry it so the boundary can emit `Retry-After` without teaching the domain about HTTP headers.
 
 HTTP-specific status codes, headers, and problem-details `type` tokens are not the domain's responsibility. See [trellis-api-asp.md](trellis-api-asp.md#trellisaspoptions) for the boundary mapping table.
+
+#### Retry classification (ErrorRetryExtensions)
+
+`ErrorRetryExtensions` (static class in the `Trellis` namespace) and the `RetryClassification` enum (`Transient = 0`, `Permanent = 1`, `FailFast = 2`) translate the closed `Error` catalog into the three decisions a worker, message-broker consumer, or outbound-gateway caller has to make on every failed item: retry, give up, or halt the batch.
+
+| Extension on `Error` | Returns | Purpose |
+| --- | --- | --- |
+| `RetryClassification Classify(this Error error)` | `RetryClassification` | Default mapping for every nested `Error` case. Throws `ArgumentNullException` on `null`. |
+| `bool IsTransient(this Error error)` | `bool` | Shorthand for `Classify(error) == RetryClassification.Transient`. |
+| `bool IsPermanent(this Error error)` | `bool` | Shorthand for `Classify(error) == RetryClassification.Permanent`. |
+| `bool IsFailFast(this Error error)` | `bool` | Shorthand for `Classify(error) == RetryClassification.FailFast`. |
+| `RetryAdvice? GetRetryAdvice(this Error error)` | `RetryAdvice?` | Returns advice carried by `Error.RateLimited` / `Error.Unavailable`. Returns `null` for every other case, including `Error.Aggregate` (intentional — see below). |
+
+**Default classification table.** Every non-aggregate nested case of `Error` is enumerated; the catalog is closed so the table is exhaustive at framework-publish time:
+
+| Error case | Classification |
+| --- | --- |
+| `Error.Unavailable`, `Error.RateLimited`, `Error.Unexpected` | `Transient` |
+| `Error.AuthenticationRequired` | `FailFast` |
+| `Error.Forbidden`, `Error.InvalidInput`, `Error.InvariantViolation`, `Error.NotFound`, `Error.Gone`, `Error.Conflict`, `Error.TransportFault` | `Permanent` |
+
+`Error.Aggregate` is classified by max-severity over its inner errors (the constructor flattens nested aggregates, so the inners are never themselves `Aggregate`): `FailFast` if any inner classifies as `FailFast`; otherwise `Permanent` if any inner classifies as `Permanent`; otherwise `Transient`. The rule answers "should I retry the operation that produced this aggregate **as an indivisible unit?**" — a mixed `Aggregate(Permanent, Transient)` is `Permanent` because retrying the unit will not change the permanent inner's outcome. Callers that want per-inner retry granularity must iterate over `agg.Errors` themselves.
+
+**`GetRetryAdvice` for `Error.Aggregate` always returns `null`.** Two reasons: (1) returning the first transient inner's advice would contradict `Classify` whenever the aggregate is `Permanent` or `FailFast`, and (2) under-waiting is order-dependent (a `RateLimited(1s)` followed by a `RateLimited(60s)` would suggest 1 s). Callers that want a merged hint must define their own policy over the inner errors.
+
+**Conflict and eventually-consistent reads.** `Error.Conflict` defaults to `Permanent` because a generic outer retry loop cannot perform the conflict-specific work (rowversion reload, natural-key regeneration) that 409-shaped failures usually require. Domains with a meaningful conflict retry strategy should override locally — branch on the concrete shape first and only call `Classify()` in the fallback arm — or use a dedicated primitive such as `DbContext.SaveChangesWithRetryAsync` (see [trellis-api-efcore.md](trellis-api-efcore.md)). `Error.NotFound` and `Error.Gone` default to `Permanent`; services whose reads are eventually consistent should override the mapping locally rather than expect the framework default to infer their consistency model.
+
+**Why `Error.Unexpected` is `Transient`.** `Error.Unexpected` wraps unhandled exceptions and "this should not have happened" conditions. A retry can hide a deterministic bug or recover a momentary failure; the default favours availability. Producers should reserve `Error.Unexpected` for unknown internal faults and surface deterministic failures as `Error.InvariantViolation`, `Error.InvalidInput`, or `Error.Conflict` instead. Consumers must still cap retries.
+
+**Why `Error.TransportFault` is `Permanent`.** `ITransportFault` is opaque from `Trellis.Core`'s perspective; concrete payloads (such as `HttpError` in `Trellis.Http.Abstractions`) are defined by transport-specific packages. The retryable transient outcomes those transports produce (HTTP 429, HTTP 503, gRPC `UNAVAILABLE`) are mapped at the boundary to `Error.RateLimited` and `Error.Unavailable` — which carry `RetryAdvice` — and never reach `Error.TransportFault`. Every `HttpError` case shipped today (405, 406, 412, 413, 415, 416, 428) is a caller-side error that will not succeed by waiting and retrying. Transport packages that surface their own retryable transient faults via `Error.TransportFault` should provide a transport-aware classification extension that overrides this default for the specific faults that are genuinely retryable.
 
 #### Supporting types
 
@@ -848,12 +908,16 @@ Result<Order> Place(OrderId id) =>
         .Bind((customer, cart) => Charge(customer, cart));
 ```
 
-> **Trap — `BindAsync` Task vs ValueTask overload ambiguity (`CS0121`).** When the lambda passed to `BindAsync` is an inline expression whose return type can't be inferred between `Task<Result<R>>` and `ValueTask<Result<R>>`, the compiler reports both overloads as candidates. Two reliable fixes:
->
-> 1. **Named method with explicit return type** — extract the lambda body to a method declared as `private Task<Result<R>> NextStage(T value, CancellationToken ct) { ... }` and pass `NextStage` (the method group resolves unambiguously).
-> 2. **Typed local delegate** — `Func<T, Task<Result<R>>> next = c => ...; .BindAsync(next);` forces the `Task` overload.
->
-> Avoid storing the lambda inline as `var next = ...;` because the inferred type may still be ambiguous.
+> **Async-lambda overload resolution.** The sync-`Result<T>`-receiver `BindAsync` / `MapAsync` /
+> `TapAsync` / `CheckAsync` / `EnsureAsync` / `MatchAsync` Task-delegate overloads carry
+> `[OverloadResolutionPriority(1)]` so inline `async` lambdas whose return type would otherwise
+> be ambiguous between `Task<Result<R>>` and `ValueTask<Result<R>>` resolve to the Task overload.
+> Callers who specifically want the ValueTask overload still get it by passing a strongly-typed
+> `Func<T, ValueTask<Result<R>>>` delegate (the Task overload is not applicable, so priority is
+> not consulted). The LINQ `SelectMany` overloads in `Trellis.Core/src/Result/Extensions/Linq.*Right.cs`
+> are an exception: the priority attribute is applied for documentation but does not currently
+> disambiguate across the two distinct extension classes; LINQ query syntax over async Result
+> composition still benefits from a typed local delegate when the async return type is ambiguous.
 
 #### Map family — `MapExtensions`, `MapExtensionsAsync`, `MapIfExtensions`, `MapOnFailureExtensions`
 
@@ -1294,9 +1358,9 @@ public static class CursorCodec
 | Member | Description |
 | --- | --- |
 | `Encode<TKey>(TKey)` | Single-key cursor: URL-safe base64 of the key's invariant-culture string form. Supported keys include `Guid`, `long`, `int`, and `string`. Project Trellis value-object IDs to their underlying primitive (`.Value`) before calling. |
-| `TryDecode<TKey>(Cursor, string?)` | Inverse of the single-key `Encode`. Returns `Error.InvalidInput` (reason code `cursor.malformed`, field `fieldName ?? "cursor"`) on malformed base64 or unparseable payload. |
+| `TryDecode<TKey>(Cursor, string?)` | Inverse of the single-key `Encode`. Returns `Error.InvalidInput` (reason code `cursor.malformed`, field `fieldName ?? "cursor"`) on malformed base64, oversized tokens, invalid UTF-8, or unparseable payload. |
 | `Encode<TKey>(DateTimeOffset, TKey)` | Composite cursor for stable time-ordered seek: URL-safe base64 of `"{createdAt:O}&#124;{id}"` in invariant culture. |
-| `TryDecodeComposite<TKey>` | Inverse of the composite `Encode`. Splits at the **first** `&#124;` only, so an Id that happens to contain a pipe is still unambiguous. |
+| `TryDecodeComposite<TKey>` | Inverse of the composite `Encode`. Returns `Error.InvalidInput` (reason code `cursor.malformed`, field `fieldName ?? "cursor"`) on malformed base64, oversized tokens, invalid UTF-8, missing separator, or unparseable segments. Splits at the **first** `&#124;` only, so an Id that happens to contain a pipe is still unambiguous. |
 
 **Opacity, not anti-tamper.** Cursors are server-opaque so that clients don't reverse-engineer the sort key, but the encoding is **not** signed. Services that need to defend against tampering must wrap or replace this codec with a signed variant; authorization filtering must always apply to the underlying query.
 
@@ -1343,9 +1407,9 @@ public async Task<Result<Page<OrderListItem>>> Handle(ListOrdersQuery query, Can
                 Error.InvalidInput.ForField("cursor", "cursor.malformed", "Cursor must not be empty."));
 
         var decoded = CursorCodec.TryDecode<Guid>(new Cursor(cursorToken), fieldName: "cursor");
-        if (decoded.IsFailure)
-            return Result.Fail<Page<OrderListItem>>(decoded.Error!);
-        decoded.TryGetValue(out var id);
+        if (!decoded.TryGetValue(out var id, out var cursorError))
+            return Result.Fail<Page<OrderListItem>>(cursorError);
+
         afterId = id;
     }
 
@@ -1533,6 +1597,22 @@ public interface IDomainEvent
 | --- | --- | --- |
 | — | — | No methods. |
 
+### `ITrackedAggregateSource`
+
+```csharp
+public interface ITrackedAggregateSource
+```
+
+Sidecar contract for a unit-of-work that snapshots the aggregates it persisted during the most recent successful commit. Read by `Trellis.Mediator.TrackedAggregateDomainEventDispatchBehavior<,>` so it can drain events from each tracked aggregate after the commit succeeds, regardless of the command's response shape. `Trellis.EntityFrameworkCore.EfUnitOfWork<TContext>` implements this interface; custom `IUnitOfWork` implementations that need to compose with the tracked dispatcher must also implement it (`AddTrellisUnitOfWork<TContext>()` forwards via cast from `IUnitOfWork` and throws `InvalidOperationException` at first resolve if the cast fails).
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `CommittedAggregates` | `IReadOnlyList<IAggregate>` | The aggregates the unit-of-work persisted on its most recent successful commit. Empty before any commit, empty after a failed or thrown commit (cleared before save and only repopulated on success), and unchanged during deferred nested commits — only the outermost commit owns the snapshot. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| — | — | No methods. |
+
 ### `ValueObject`
 
 ```csharp
@@ -1659,24 +1739,29 @@ Marker subclass of `System.Text.Json.JsonException` thrown by Trellis JSON conve
 
 ## Primitive value object base classes
 
-These types ship in `Trellis.Core`. They are the building blocks for strongly-typed primitive value objects — derive a `partial class` from one of the `Required*<TSelf>` bases and the bundled `Trellis.Core.Generator` source generator emits the `TryCreate` / `Create` / `Parse` / `TryParse` / `JsonConverter` boilerplate. The validation attributes (`StringLengthAttribute`, `RangeAttribute`, `NotDefaultAttribute`, `TrimAttribute`, `EnumValueAttribute`) attach declarative invariants that the generator wires into the generated validation. The concrete primitives that derive from these bases (`EmailAddress`, `Money`, etc.) live in `Trellis.Primitives` — see [trellis-api-primitives.md](trellis-api-primitives.md).
+These types ship in `Trellis.Core`. They are the building blocks for strongly-typed primitive value objects — derive a `partial class` from one of the `Required*<TSelf>` bases and the bundled `Trellis.Core.Generator` source generator emits the `TryCreate` / `Create` / `Parse` / `TryParse` / `JsonConverter` boilerplate. The validation attributes (`StringLengthAttribute`, `RangeAttribute`, `EnumValueAttribute`), strict-default opt-out attributes (`AllowEmptyAttribute`, `AllowWhitespaceAttribute`, `NoTrimAttribute`, `AllowZeroAttribute`, `AllowMinValueAttribute`), numeric sign attributes (`PositiveAttribute`, `NonNegativeAttribute`, `NegativeAttribute`, `NonPositiveAttribute`), and vestigial compatibility attributes (`NotDefaultAttribute`, `TrimAttribute`) attach declarative metadata that the generator wires into validation. The concrete primitives that derive from these bases (`EmailAddress`, `Money`, etc.) live in `Trellis.Primitives` — see [trellis-api-primitives.md](trellis-api-primitives.md).
 
-#### `Required*<TSelf>` default behavior and the `[NotDefault]` / `[Trim]` opt-ins
+#### `Required*<TSelf>` default behavior and opt-outs
 
-Every `Required*<TSelf>` base now follows the same rule: **the generated `TryCreate` rejects only `null`**. Per-type "zero value" rejection (`""` for strings, `0` for numerics, `Guid.Empty`, `DateTime.MinValue`) is opt-in via `[NotDefault]`. String trim is opt-in via `[Trim]`. This realigns the family with `RequiredInt<TSelf>(0)` — which has always succeeded — and matches the Principle of Least Astonishment.
+Every `Required*<TSelf>` base is **strict by default**. The generated `TryCreate` rejects `null` for every base and also rejects each base's sentinel value where one exists. Use the per-base opt-out attributes only when that sentinel is a legitimate domain value. `[NotDefault]` and `[Trim]` are now vestigial no-ops: the generator ignores them and emits informational diagnostics (`TRLS046`, `TRLS047`). `[AllowDefault]` was removed; use the specific opt-out name instead.
 
-| Base | Default (no attributes) rejects | Add `[NotDefault]` to also reject |
+| Base | Default rejects | Opt-out |
 |---|---|---|
-| `RequiredInt<TSelf>` / `RequiredLong<TSelf>` / `RequiredDecimal<TSelf>` | `null` | `0` (per-type message "cannot be zero.") |
-| `RequiredString<TSelf>` | `null` | `""` (after `[Trim]` if present; per-type message "cannot be empty.") |
-| `RequiredGuid<TSelf>` | `null` | `Guid.Empty` (per-type message "cannot be Guid.Empty.") |
-| `RequiredDateTime<TSelf>` | `null` | `DateTime.MinValue` (per-type message "cannot be DateTime.MinValue.") |
-| `RequiredBool<TSelf>` | `null` | **compile-time error** (TRLS040 — a bool that rejects `false` is degenerate). |
-| `RequiredEnum<TSelf>` | `null` and unknown member name | **compile-time error** (TRLS042 — smart-enum has no CLR default). |
+| `RequiredString<TSelf>` | `null`, `""`, whitespace-only | `[AllowEmpty]`, `[AllowWhitespace]`, `[NoTrim]` |
+| `RequiredGuid<TSelf>` | `null`, `Guid.Empty` | `[AllowEmpty]` |
+| `RequiredDateTime<TSelf>` | `null`, `DateTime.MinValue` | `[AllowMinValue]` |
+| `RequiredDateTimeOffset<TSelf>` | `null`, `DateTimeOffset.MinValue` | `[AllowMinValue]` |
+| `RequiredInt<TSelf>` | `null`, `0` | `[AllowZero]` |
+| `RequiredLong<TSelf>` | `null`, `0` | `[AllowZero]` |
+| `RequiredDecimal<TSelf>` | `null`, `0m` | `[AllowZero]` |
+| `RequiredBool<TSelf>` | `null` | (no opt-out — `false` remains valid) |
+| `RequiredEnum<TSelf>` | `null`, undeclared member names | (smart-enum lookup via `TryFromName`) |
 
-Generated `TryCreate` validation order: `null → [Trim] → [NotDefault] → [StringLength] / [Range] → ValidateAdditional`. With `[Trim]` absent, `[StringLength]` measures the raw input.
+`RequiredString<TSelf>` validation order is: `null` check → raw whitespace-only check (skipped by `[AllowWhitespace]`) → trim (skipped by `[NoTrim]`) → final empty check (skipped by `[AllowEmpty]`, or when raw whitespace was accepted by `[AllowWhitespace]`) → `[StringLength]` → `ValidateAdditional`. `[AllowWhitespace]` without `[NoTrim]` accepts whitespace-only input but stores `""` after trim.
 
-The `[NotDefault]` rule also drives the EF Core `TrellisScalarConverter` read path: rows containing the per-type sentinel value materialize successfully for lenient types and throw `TrellisPersistenceMappingException` for strict types. Add `[NotDefault]` to any `RequiredGuid` / `RequiredDateTime` used as an `Aggregate<TId>` / `Entity<TId>` ID or as an EF-mapped property to keep the strict-on-rehydration guarantee.
+Numeric Required bases (`RequiredInt`, `RequiredLong`, `RequiredDecimal`) accept four convenience sign-check attributes — `[Positive]`, `[NonNegative]`, `[Negative]`, `[NonPositive]` — mutually exclusive with each other. `RequiredInt` and `RequiredLong` translate them into the equivalent `[Range]` bounds; `RequiredDecimal` emits a direct sign comparison (the full `decimal` range exceeds what `double`-backed `[Range]` could express). Applying a convenience attribute to a non-numeric base is TRLS043; applying more than one is TRLS044. `[AllowZero]` conflicts with `[Positive]` and `[Negative]` because those attributes reject zero by definition (TRLS053).
+
+The same strict defaults drive the EF Core `TrellisScalarConverter` read path: persisted sentinel values for strict types throw `TrellisPersistenceMappingException` during materialization. Add `[AllowEmpty]`, `[AllowZero]`, or `[AllowMinValue]` only for columns where the sentinel value is valid persisted domain state.
 
 ### `ResultRequiresExplicitHttpMappingConverter`
 
@@ -1690,7 +1775,7 @@ Default `[JsonConverter]` factory attached to `Result<T>`, `IResult`, and `IResu
 2. **Non-HTTP path** — unwrap the value with `Match` / `TryGetValue` before serialization.
 3. **Explicit override** — register a converter (or a `JsonConverterFactory`) in `JsonSerializerOptions.Converters`. Option-registered converters take precedence over the type-level `[JsonConverter]` attribute. **The override must match the declared static type:** a `JsonConverter<Result<T>>` only covers `Result<T>`-declared values; `IResult<T>`-declared values need `JsonConverter<IResult<T>>`; `IResult`-declared values need `JsonConverter<IResult>`. Use a `JsonConverterFactory` whose `CanConvert` matches every shape to cover the mixed case in one registration.
 
-The attribute lives on both the struct AND the interfaces because STJ resolves `[JsonConverter]` against the static declared type: an endpoint declared as `Task<IResult<int>> GetAsync()` would otherwise bypass a converter attached only to the struct, silently producing the same struct-dump JSON shape (`{"IsSuccess": true, "Value": ..., "Error": null}`) the converter exists to prevent.
+The attribute lives on both the struct AND the interfaces because STJ resolves `[JsonConverter]` against the static declared type: an endpoint declared as `Task<IResult<int>> GetAsync()` would otherwise bypass a converter attached only to the struct, silently producing a public-state dump (for example, `{"IsSuccess": true, "IsFailure": false, "Error": null}` for a success, with no success value) instead of using the explicit HTTP mapping the converter exists to enforce.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -1737,7 +1822,7 @@ public sealed class StringLengthAttribute : Attribute
 public sealed class NotDefaultAttribute : Attribute
 ```
 
-Marker attribute consumed at compile time by `Trellis.Core.Generator`. When present on a partial class derived from `RequiredString` / `RequiredInt` / `RequiredLong` / `RequiredDecimal` / `RequiredGuid` / `RequiredDateTime`, the generator emits an additional check that rejects the type's "zero value" (see the per-type behavior table at the top of this section). Not valid on `RequiredBool` (TRLS040) or `RequiredEnum` (TRLS042); the generator emits a compile-time error in those cases.
+Vestigial compatibility attribute. Before the strict-default flip this opted into sentinel rejection; sentinel rejection is now the default for every applicable `Required*<TSelf>` base. The generator ignores `[NotDefault]` and emits informational diagnostic TRLS046 so legacy code keeps compiling while new code can remove the attribute.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -1750,11 +1835,76 @@ Marker attribute consumed at compile time by `Trellis.Core.Generator`. When pres
 public sealed class TrimAttribute : Attribute
 ```
 
-Marker attribute consumed at compile time by `Trellis.Core.Generator`. When present on a `RequiredString<TSelf>`-derived partial class, the generator emits `value.Trim()` before any subsequent check. Combine with `[NotDefault]` to recover the pre-realignment "reject null + empty + whitespace; trim" default — the recommended setup for any string mapped to a database column. Only valid on `RequiredString`; the generator emits TRLS041 if applied to any other Required base.
+Vestigial compatibility attribute. Before the strict-default flip this opted into trimming on `RequiredString<TSelf>`; trim now runs by default. The generator ignores `[Trim]` and emits informational diagnostic TRLS047. Use `[NoTrim]` to opt out of automatic trim.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public TrimAttribute()` | `TrimAttribute` | Marker only — no constructor arguments. |
+
+### `AllowEmptyAttribute`
+
+```csharp
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class AllowEmptyAttribute : Attribute
+```
+
+Opt-out attribute consumed by `Trellis.Core.Generator`. On `RequiredString<TSelf>`, permits the final stored value to be `string.Empty` after trimming; it does not by itself permit whitespace-only raw input. On `RequiredGuid<TSelf>`, permits `Guid.Empty`. Applying it to numeric or date Required bases is TRLS049.
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public AllowEmptyAttribute()` | `AllowEmptyAttribute` | Marker only — no constructor arguments. |
+
+### `AllowWhitespaceAttribute`
+
+```csharp
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class AllowWhitespaceAttribute : Attribute
+```
+
+Opt-out attribute consumed by `Trellis.Core.Generator`. Permits whitespace-only raw input on `RequiredString<TSelf>`. Unless `[NoTrim]` is also present, accepted whitespace-only input is trimmed to `string.Empty` for storage. Applying it to any non-string Required base is TRLS051.
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public AllowWhitespaceAttribute()` | `AllowWhitespaceAttribute` | Marker only — no constructor arguments. |
+
+### `NoTrimAttribute`
+
+```csharp
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class NoTrimAttribute : Attribute
+```
+
+Opt-out attribute consumed by `Trellis.Core.Generator`. Skips the automatic trim step on `RequiredString<TSelf>` so leading and trailing whitespace are stored verbatim. It does not change acceptance by itself: whitespace-only input still needs `[AllowWhitespace]`, and literal empty input still needs `[AllowEmpty]`. Applying it to any non-string Required base is TRLS052.
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public NoTrimAttribute()` | `NoTrimAttribute` | Marker only — no constructor arguments. |
+
+### `AllowZeroAttribute`
+
+```csharp
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class AllowZeroAttribute : Attribute
+```
+
+Opt-out attribute consumed by `Trellis.Core.Generator`. Permits `0` on `RequiredInt<TSelf>`, `RequiredLong<TSelf>`, and `RequiredDecimal<TSelf>`. Applying it to non-numeric Required bases is TRLS048. Combining it with `[Positive]` or `[Negative]` is contradictory because those attributes reject zero (TRLS053).
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public AllowZeroAttribute()` | `AllowZeroAttribute` | Marker only — no constructor arguments. |
+
+### `AllowMinValueAttribute`
+
+```csharp
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class AllowMinValueAttribute : Attribute
+```
+
+Opt-out attribute consumed by `Trellis.Core.Generator`. Permits `DateTime.MinValue` on `RequiredDateTime<TSelf>` and `DateTimeOffset.MinValue` on `RequiredDateTimeOffset<TSelf>`. Applying it to a non-date Required base is TRLS050.
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public AllowMinValueAttribute()` | `AllowMinValueAttribute` | Marker only — no constructor arguments. |
 
 ### `EnumValueAttribute`
 
@@ -1770,6 +1920,26 @@ public sealed class EnumValueAttribute : Attribute
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public EnumValueAttribute(string value)` | `EnumValueAttribute` | Overrides the default field-name-based symbolic value. |
+
+### `ResourceCollectionNameAttribute`
+
+```csharp
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
+public sealed class ResourceCollectionNameAttribute : Attribute
+```
+
+Overrides the default URI collection name (`{TypeName.ToLowerInvariant()}s`) used when `Trellis.Asp` synthesises `ProblemDetails.Instance` from a failing `ResourceRef`. Apply to the aggregate type whose default naive plural is wrong or unwanted (for example `[ResourceCollectionName("people")]` on `Person`, or `[ResourceCollectionName("statuses")]` on `Status`).
+
+The attribute validates the supplied name at construction time so misconfiguration fails fast at host start when `services.AddResourceCollectionNames(...)` scans the assembly. The name must be a non-empty single URL path segment composed entirely of RFC 3986 `unreserved` characters: ASCII letters and digits plus `-`, `.`, `_`, and `~`. Reserved characters (`/`, `?`, `#`), percent (`%`), `+`, and whitespace are rejected because the value is emitted unencoded into the synthesised URI. When the attribute is absent and no DI override is registered, the writer falls back to `{TypeName.ToLowerInvariant()}s`.
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `Name` | `string` | The URL collection segment (for example `"people"`). |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public ResourceCollectionNameAttribute(string name)` | `ResourceCollectionNameAttribute` | Throws `ArgumentNullException` if `name` is `null`; throws `ArgumentException` if `name` is empty/whitespace or contains any character outside RFC 3986 `unreserved`. |
+| `public static bool IsSafePathSegment(string? name)` | `bool` | Predicate used by the attribute constructor and by `Trellis.Asp.ResourceCollectionNameRegistry` to validate names from DI helpers. Returns `false` for `null`, empty, or whitespace input. Exposed publicly so other layers can apply the same rule. |
 
 ### `StringExtensions`
 
@@ -1801,7 +1971,8 @@ public sealed class RequiredEnumJsonConverter<[DynamicallyAccessedMembers(Dynami
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public override TRequiredEnum? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)` | `TRequiredEnum?` | Accepts only JSON `string` and `null`; string values are resolved through `RequiredEnum<TRequiredEnum>.TryFromName(name)`. |
+| `public override bool HandleNull` | `bool` | `true`; routes JSON `null` tokens through the converter so required enums can reject them explicitly. |
+| `public override TRequiredEnum? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)` | `TRequiredEnum?` | Accepts only JSON `string`; string values are resolved through `RequiredEnum<TRequiredEnum>.TryFromName(name)`, and `null` throws `JsonException`. |
 | `public override void Write(Utf8JsonWriter writer, TRequiredEnum value, JsonSerializerOptions options)` | `void` | Writes `value.Value` as a JSON string. |
 
 ### `RequiredString<TSelf>`
@@ -1818,9 +1989,13 @@ public abstract class RequiredString<TSelf> : ScalarValueObject<TSelf, string>
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public bool StartsWith(string value)` | `bool` | Delegates to `string.StartsWith(string)`. |
-| `public bool Contains(string value)` | `bool` | Delegates to `string.Contains(string)`. |
-| `public bool EndsWith(string value)` | `bool` | Delegates to `string.EndsWith(string)`. |
+| `public bool StartsWith(string value)` | `bool` | Delegates to `string.StartsWith(string)` for EF Core-translatable query predicates. |
+| `public bool StartsWith(string value, StringComparison comparisonType)` | `bool` | Delegates to `string.StartsWith(string, StringComparison)`. This overload is not EF Core translatable; use the single-argument overload for queries. |
+| `public bool Contains(string value)` | `bool` | Delegates to `string.Contains(string)` for EF Core-translatable query predicates. |
+| `public bool Contains(string value, StringComparison comparisonType)` | `bool` | Delegates to `string.Contains(string, StringComparison)`. This overload is not EF Core translatable; use the single-argument overload for queries. |
+| `public bool Contains(char value, StringComparison comparisonType)` | `bool` | Delegates to `string.Contains(char, StringComparison)`. This overload is not EF Core translatable; use the single-argument overload for queries. |
+| `public bool EndsWith(string value)` | `bool` | Delegates to `string.EndsWith(string)` for EF Core-translatable query predicates. |
+| `public bool EndsWith(string value, StringComparison comparisonType)` | `bool` | Delegates to `string.EndsWith(string, StringComparison)`. This overload is not EF Core translatable; use the single-argument overload for queries. |
 | `public static TSelf Create(string value)` | `TSelf` | Inherited throwing scalar factory. Source-generated overloads are listed below. |
 
 ### `RequiredGuid<TSelf>`
@@ -1914,6 +2089,22 @@ public abstract class RequiredDateTime<TSelf> : ScalarValueObject<TSelf, DateTim
 | `public override string ToString()` | `string` | Formats `Value` using invariant round-trip format `"O"`. |
 | `public static TSelf Create(DateTime value)` | `TSelf` | Inherited throwing scalar factory. Source-generated overloads are listed below. |
 
+### `RequiredDateTimeOffset<TSelf>`
+
+```csharp
+public abstract class RequiredDateTimeOffset<TSelf> : ScalarValueObject<TSelf, DateTimeOffset>
+    where TSelf : RequiredDateTimeOffset<TSelf>, IScalarValue<TSelf, DateTimeOffset>
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `Value` | `DateTimeOffset` | Inherited scalar value. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public override string ToString()` | `string` | Formats `Value` using invariant round-trip format `"O"`. |
+| `public static TSelf Create(DateTimeOffset value)` | `TSelf` | Inherited throwing scalar factory. Source-generated overloads are listed below. |
+
 ### `RequiredEnum<TSelf>`
 
 ```csharp
@@ -1947,7 +2138,7 @@ public class ParsableJsonConverter<T> : JsonConverter<T>
     where T : IParsable<T>
 ```
 
-Core-owned JSON converter emitted by the `Required*<TSelf>` source generator for non-enum generated primitives. It accepts JSON strings, numbers, booleans, and null tokens; null throws because generated scalar value objects are non-nullable. Numeric scalar value objects write JSON numbers when their string representation parses invariantly as a decimal; all other values write JSON strings.
+Core-owned JSON converter emitted by the `Required*<TSelf>` source generator for non-enum generated primitives. It reads JSON strings, numbers, and booleans; JSON `null` is routed to the generated parse path and fails because generated scalar value objects are non-nullable. Numeric scalar value objects write JSON numbers when their string representation parses invariantly as a decimal; all other values write JSON strings.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -1985,7 +2176,7 @@ public static explicit operator TSelf(string value)
 static partial void ValidateAdditional(string value, string fieldName, ref string? errorMessage)
 ```
 
-- Built-in validation: `null` rejection. Add `[NotDefault]` to also reject `""` (after `[Trim]` if present). `[StringLength]` operates on the post-`[Trim]` value when both are present, on the raw input otherwise.
+- Built-in validation: rejects `null`, literal empty input, and whitespace-only raw input; trims by default. `[StringLength]` operates on the normalized value after trim. Use `[AllowEmpty]`, `[AllowWhitespace]`, and/or `[NoTrim]` only when the domain explicitly permits those values.
 
 #### `RequiredGuid<TSelf>`
 
@@ -1993,6 +2184,7 @@ static partial void ValidateAdditional(string value, string fieldName, ref strin
 [JsonConverter(typeof(ParsableJsonConverter<TSelf>))]
 public static TSelf NewUniqueV4()
 public static TSelf NewUniqueV7()
+public static TSelf NewUniqueV7(TimeProvider timeProvider)
 public static Result<TSelf> TryCreate(Guid value, string? fieldName = null)
 public static Result<TSelf> TryCreate(Guid? requiredGuidOrNothing, string? fieldName = null)
 public static Result<TSelf> TryCreate(string? stringOrNull, string? fieldName = null)
@@ -2004,7 +2196,8 @@ public static explicit operator TSelf(Guid value)
 static partial void ValidateAdditional(Guid value, string fieldName, ref string? errorMessage)
 ```
 
-- Built-in validation: `null` rejection. Add `[NotDefault]` to also reject `Guid.Empty` (recommended for any GUID used as an `Aggregate<TId>` / `Entity<TId>` ID or EF-mapped property — see EF read-path note above).
+- Built-in validation: rejects `null` and `Guid.Empty`. Use `[AllowEmpty]` only when the all-zero GUID is legitimate persisted domain state.
+- `NewUniqueV7(TimeProvider timeProvider)` uses `timeProvider.GetUtcNow()` as the Version 7 timestamp and throws `ArgumentNullException` when `timeProvider` is `null`.
 
 #### `RequiredInt<TSelf>`
 
@@ -2022,7 +2215,7 @@ public static explicit operator TSelf(int value)
 static partial void ValidateAdditional(int value, string fieldName, ref string? errorMessage)
 ```
 
-- Built-in validation: `null` rejection for nullable inputs, optional `[Range(int, int)]`. Add `[NotDefault]` to also reject `0`.
+- Built-in validation: rejects `null` for nullable inputs and rejects `0`; optional `[Range(int, int)]` and sign-check attributes run after the zero check. Use `[AllowZero]` only when zero is valid.
 
 #### `RequiredDecimal<TSelf>`
 
@@ -2040,7 +2233,7 @@ public static explicit operator TSelf(decimal value)
 static partial void ValidateAdditional(decimal value, string fieldName, ref string? errorMessage)
 ```
 
-- Built-in validation: `null` rejection for nullable inputs, optional `[Range(int, int)]` or `[Range(double, double)]`. Add `[NotDefault]` to also reject `0m`.
+- Built-in validation: rejects `null` for nullable inputs and rejects `0m`; optional `[Range(int, int)]`, `[Range(double, double)]`, and sign-check attributes run after the zero check. Use `[AllowZero]` only when zero is valid.
 - String parsing: the plain `TryCreate(string?, string?)` overload uses invariant culture; use the `IFormatProvider` overload for culture-aware decimal formats.
 
 #### `RequiredLong<TSelf>`
@@ -2059,7 +2252,7 @@ public static explicit operator TSelf(long value)
 static partial void ValidateAdditional(long value, string fieldName, ref string? errorMessage)
 ```
 
-- Built-in validation: `null` rejection for nullable inputs, optional `[Range(long, long)]`. Add `[NotDefault]` to also reject `0L`.
+- Built-in validation: rejects `null` for nullable inputs and rejects `0L`; optional `[Range(long, long)]` and sign-check attributes run after the zero check. Use `[AllowZero]` only when zero is valid.
 
 #### `RequiredBool<TSelf>`
 
@@ -2076,7 +2269,7 @@ public static explicit operator TSelf(bool value)
 static partial void ValidateAdditional(bool value, string fieldName, ref string? errorMessage)
 ```
 
-- Built-in validation: `null` rejection for nullable inputs; `false` is valid. `[NotDefault]` is not supported on `RequiredBool` (TRLS040 — a bool that rejects `false` would be degenerate).
+- Built-in validation: rejects `null` for nullable inputs; both `true` and `false` are valid. There is no strictness opt-out for `RequiredBool<TSelf>`.
 
 #### `RequiredDateTime<TSelf>`
 
@@ -2094,7 +2287,25 @@ public static explicit operator TSelf(DateTime value)
 static partial void ValidateAdditional(DateTime value, string fieldName, ref string? errorMessage)
 ```
 
-- Built-in validation: `null` rejection. Add `[NotDefault]` to also reject `DateTime.MinValue` (recommended for any DateTime used as an EF-mapped property — see EF read-path note above).
+- Built-in validation: rejects `null` and `DateTime.MinValue`. Use `[AllowMinValue]` only when the BCL minimum value is legitimate persisted domain state.
+
+#### `RequiredDateTimeOffset<TSelf>`
+
+```csharp
+[JsonConverter(typeof(ParsableJsonConverter<TSelf>))]
+public static Result<TSelf> TryCreate(DateTimeOffset value, string? fieldName = null)
+public static Result<TSelf> TryCreate(DateTimeOffset? valueOrNothing, string? fieldName = null)
+public static Result<TSelf> TryCreate(string? stringOrNull, string? fieldName = null)
+public static Result<TSelf> TryCreate(string? value, IFormatProvider? provider, string? fieldName = null)
+public static new TSelf Create(DateTimeOffset value)
+public static TSelf Create(string stringValue)
+public static TSelf Parse(string s, IFormatProvider? provider)
+public static bool TryParse([NotNullWhen(true)] string? s, IFormatProvider? provider, [MaybeNullWhen(false)] out TSelf result)
+public static explicit operator TSelf(DateTimeOffset value)
+static partial void ValidateAdditional(DateTimeOffset value, string fieldName, ref string? errorMessage)
+```
+
+- Built-in validation: rejects `null` and `DateTimeOffset.MinValue`. Use `[AllowMinValue]` only when the BCL minimum value is legitimate persisted domain state.
 
 #### `RequiredEnum<TSelf>`
 
@@ -2187,20 +2398,7 @@ Notes:
 using System;
 using Trellis;
 
-public sealed class OrderId : ScalarValueObject<OrderId, Guid>, IScalarValue<OrderId, Guid>
-{
-    private OrderId(Guid value) : base(value) { }
-
-    public static Result<OrderId> TryCreate(Guid value, string? fieldName = null) =>
-        value == Guid.Empty
-            ? Result.Fail<OrderId>(Error.InvalidInput.ForField(fieldName ?? "orderId", "required", "Order ID is required."))
-            : Result.Ok(new OrderId(value));
-
-    public static Result<OrderId> TryCreate(string? value, string? fieldName = null) =>
-        Guid.TryParse(value, out var guid)
-            ? TryCreate(guid, fieldName)
-            : Result.Fail<OrderId>(Error.InvalidInput.ForField(fieldName ?? "orderId", "must_be_guid", "Order ID must be a GUID."));
-}
+public sealed partial class OrderId : RequiredGuid<OrderId>;
 
 public sealed record OrderPlaced(OrderId OrderId, DateTimeOffset OccurredAt) : IDomainEvent;
 
@@ -2212,7 +2410,7 @@ public sealed class Order : Aggregate<OrderId>
 
     public static Result<Order> Create(string description)
     {
-        var order = new Order(OrderId.Create(Guid.NewGuid()), description);
+        var order = new Order(OrderId.NewUniqueV7(), description);
         order.DomainEvents.Add(new OrderPlaced(order.Id, DateTimeOffset.UtcNow));
         return Result.Ok(order);
     }

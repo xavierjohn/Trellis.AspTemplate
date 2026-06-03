@@ -1,7 +1,7 @@
-﻿---
+---
 package: Trellis.Asp
-namespaces: [Trellis.Asp, Trellis.Asp.Authorization, Trellis.Asp.ModelBinding, Trellis.Asp.Routing, Trellis.Asp.Validation]
-types: [TrellisHttpResult, ToHttpResponse, AsActionResult, HttpResponseOptionsBuilder<T>, CacheControl, MaybePrimitiveJsonConverter<T>, MaybePrimitiveJsonConverterFactory, MaybePrimitiveModelBinder<T>, MaybePrimitives, ClaimsActorProvider, EntraActorProvider, DevelopmentActorProvider, CachingActorProvider]
+namespaces: [Trellis.Asp, Trellis.Asp.Authorization, Trellis.Asp.Idempotency, Trellis.Asp.ModelBinding, Trellis.Asp.Routing, Trellis.Asp.Validation]
+types: [TrellisHttpResult, ToHttpResponse, AsActionResult, HttpResponseOptionsBuilder<T>, CacheControl, MaybePrimitiveJsonConverter<T>, MaybePrimitiveJsonConverterFactory, MaybePrimitiveModelBinder<T>, MaybePrimitives, ClaimsActorProvider, NestedJsonPathClaimsActorOptions, NestedJsonPathClaimsActorProvider, EntraActorProvider, DevelopmentActorProvider, CachingActorProvider, AddTrellisProblemDetails, UseTrellisProblemDetails, ResourceCollectionNameRegistry, ResourceCollectionNameOverride, AddResourceCollectionName, AddResourceCollectionNames, IdempotentAttribute, IdempotencyOptions, IIdempotencyStore, InMemoryIdempotencyStore, IIdempotencyScopeResolver, DefaultIdempotencyScopeResolver, AnonymousIdempotencyScopeResolver, ActorIdempotencyScopeResolver, IdempotencyReservationOutcome, IdempotencyResponseSnapshot, IdempotencyKeyParser, IdempotencyFingerprint, CapturingResponseBodyFeature, IdempotencyMiddleware, AddTrellisIdempotency, AddInMemoryIdempotencyStore, UseTrellisIdempotency]
 version: v3
 last_verified: 2026-05-01
 audience: [llm]
@@ -9,7 +9,7 @@ audience: [llm]
 # Trellis.Asp — API Reference
 
 **Package:** `Trellis.Asp` (bundles the AOT-friendly `Trellis.AspSourceGenerator.dll` at `analyzers/dotnet/cs/` — installing `Trellis.Asp` attaches the generator automatically — and contains the ASP.NET actor providers formerly published as `Trellis.Asp.Authorization`).
-**Namespaces:** `Trellis.Asp`, `Trellis.Asp.Authorization`, `Trellis.Asp.ModelBinding`, `Trellis.Asp.Routing`, `Trellis.Asp.Validation`
+**Namespaces:** `Trellis.Asp`, `Trellis.Asp.Authorization`, `Trellis.Asp.Idempotency`, `Trellis.Asp.ModelBinding`, `Trellis.Asp.Routing`, `Trellis.Asp.Validation`
 **Purpose:** ASP.NET Core integration for mapping Trellis `Result`/`Result<T>`/`WriteOutcome<T>`/`Page<T>` values to HTTP responses, evaluating HTTP preconditions and `Prefer` preferences, hydrating actors from JWT claims, validating scalar value objects in MVC and Minimal APIs, and emitting AOT-friendly `JsonConverter`s for Trellis scalar values.
 
 The single supported response verb is `result.ToHttpResponse(...)`. It returns `Microsoft.AspNetCore.Http.IResult` and works in both Minimal API and MVC hosts (.NET 7+ executes `IResult` natively in MVC). For typed `ActionResult<T>` signatures, chain `.AsActionResult<T>()`. Configure protocol semantics via the fluent `HttpResponseOptionsBuilder<T>` (`WithETag`, `WithLastModified`, `Vary`, `WithCacheControl`, `Created`/`CreatedAtRoute`/`CreatedAtAction`, `EvaluatePreconditions`, `HonorPrefer`, `WithErrorMapping`, …).
@@ -38,8 +38,11 @@ See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using t
 | Add `Cache-Control` directive (per endpoint) | `.WithCacheControl(CacheControl.NoStore())` / `.WithCacheControl(CacheControl.Public(TimeSpan.FromMinutes(5)))` / `.WithCacheControl(t => …)` | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain), [`CacheControl`](#cachecontrol) |
 | Honor `Prefer: return=minimal` | `.HonorPrefer()` on write responses | [`HttpResponseOptionsBuilder<TDomain>`](#httpresponseoptionsbuildertdomain) |
 | Return paginated list responses | `Result<Page<T>>.ToHttpResponse(nextUrlBuilder, bodySelector, ...)` | [`PagedResponse<TResponse>`](#pagedresponsetresponse) |
-| Resolve actors from requests | `AddClaimsActorProvider`, `AddEntraActorProvider`, or `AddDevelopmentActorProvider` | [`Trellis.Asp.Authorization`](#namespace-trellisaspauthorization) |
-| Bind scalar value objects from routes/query/body | `AddTrellisAsp()` plus route constraints / validation middleware as needed | [`Trellis.Asp.ModelBinding`](#namespace-trellisaspmodelbinding), [`Trellis.Asp.Validation`](#namespace-trellisaspvalidation) |
+| Resolve actors from requests | `AddClaimsActorProvider`, `AddNestedJsonPathClaimsActorProvider`, `AddEntraActorProvider`, or `AddDevelopmentActorProvider` | [`Trellis.Asp.Authorization`](#namespace-trellisaspauthorization) |
+| Compose a system actor for background workers | `AddTrellisWorkerActor` | [`Trellis.Asp.Authorization`](#namespace-trellisaspauthorization) |
+| Bind scalar value objects from routes/query/body | `AddTrellisAspWithScalarValidation()` (or `AddTrellisAsp()` + `AddScalarValueValidation()`), plus route constraints / validation middleware as needed | [`Trellis.Asp.ModelBinding`](#namespace-trellisaspmodelbinding), [`Trellis.Asp.Validation`](#namespace-trellisaspvalidation) |
+| Add Trellis ProblemDetails recipe (trace id from `Activity.Current`, friendly 500 detail, `allow` extension on 405) | `services.AddTrellisProblemDetails()` plus `app.UseTrellisProblemDetails()` (or `options.UseProblemDetails()` via [`Trellis.ServiceDefaults`](trellis-api-servicedefaults.md#trellisservicebuilder)) | [`ServiceCollectionExtensions`](#servicecollectionextensions), [`ApplicationBuilderExtensions`](#applicationbuilderextensions) |
+| Add the IETF `Idempotency-Key` middleware to opted-in `POST` / `PATCH` endpoints | `services.AddTrellisIdempotency(...)` (or `options.UseIdempotency(...)`), `services.AddInMemoryIdempotencyStore()`, `app.UseTrellisIdempotency()`, and mark each opted-in endpoint with `[Idempotent]` | [`Trellis.Asp.Idempotency`](#namespace-trellisaspidempotency), Cookbook [Recipe 29](trellis-api-cookbook.md#recipe-29--ietf-idempotency-key-middleware-on-post--patch-with-usetrellisidempotency) |
 
 ## Endpoint checklist for generated APIs
 
@@ -168,6 +171,8 @@ Configuration registered via `AddTrellisAsp(...)` that maps domain `Error` types
 | Name | Type | Description |
 | --- | --- | --- |
 | `SystemDefault` | `static TrellisAspOptions` (internal) | Read-only default instance used when DI cannot resolve a configured `TrellisAspOptions` (e.g. the host did not call `AddTrellisAsp`). Internal — not callable from user code. Hosts customize the mappings by passing a configure delegate to `AddTrellisAsp(o => o.MapError<...>(...))`; raw `AddSingleton(new TrellisAspOptions())` is unsupported and will be replaced by the bridge factory the next time `AddTrellisAsp` runs. |
+| `FailFastOnSilentVersionInjection` | `bool` | When `true`, every `.WithVersionedRoute()` (or pinned overload) call that would silently skip `api-version` injection because the target endpoint has no `ApiVersionMetadata` throws `InvalidOperationException` instead of logging a single warning per endpoint. Defaults to `false` (warn-once-per-(endpoint, AppDomain) via the `Trellis.Asp.ApiVersioning` `ILogger` category). Intended for non-Production environments to surface mid-migration regressions where `AddApiVersioning(...)` was removed but `.WithVersionedRoute()` chains remain. |
+| `SynthesizeProblemDetailsInstanceFromResourceRef` | `bool` | When `true` (the default), `ResponseFailureWriter` populates `ProblemDetails.Instance` from the failing `ResourceRef` (`/{collectionName}/{id}`) when the request URL does not already identify the resource, and preserves the original request URL under `Extensions["request"]`. Applies to `NotFound`, `Gone`, `Conflict`, `Forbidden`, `InvariantViolation`, and `TransportFault(HttpError.PreconditionFailed)`. Set to `false` to retain the historical request-URL-only `Instance`. Collection name defaults to `{Type.ToLowerInvariant()}s`; override via `[ResourceCollectionName(name)]` on the aggregate or `services.AddResourceCollectionName<T>(name)`. |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -213,6 +218,47 @@ The wire token shown above is emitted in the problem-details `extensions.kind` m
 ### Concurrent modification override
 
 When `Error.Conflict.ReasonCode == "concurrent_modification"` and the incoming request carried `If-Match`, the boundary emits `412 Precondition Failed` with wire `kind` `precondition-failed` instead of `409 conflict`. The top-level Problem Details `type` continues to default to the ASP.NET status-code URL for 412. The domain `code` stays `"concurrent_modification"`.
+
+### `ProblemDetails.Instance` synthesis from `ResourceRef`
+
+When `TrellisAspOptions.SynthesizeProblemDetailsInstanceFromResourceRef` is `true` (the default), `ResponseFailureWriter` populates `ProblemDetails.Instance` from the failing `ResourceRef` rather than the request URL whenever:
+
+1. The error carries a non-null `ResourceRef` (`NotFound`, `Gone`, `Conflict?`, `Forbidden?`, `InvariantViolation?`, or `TransportFault(HttpError.PreconditionFailed)`).
+2. `ResourceRef.Type` and `ResourceRef.Id` are both non-empty and non-whitespace.
+3. The request URL does not already identify the same resource (segment-and-query-value-aware exact match against the raw id; percent-encoded path segments are decoded for the comparison, and form-encoded `+` is treated as space in query values).
+
+The synthesised value is `/{collection}/{escapedId}` (no `/api/` prefix, no api-version segment, no query string), where:
+
+- `{collection}` defaults to `ResourceRef.Type.ToLowerInvariant() + "s"`; override via `[ResourceCollectionName(name)]` on the aggregate type or via `services.AddResourceCollectionName<T>(name)` / `services.AddResourceCollectionNames(assembly)`. Overrides are emitted verbatim — the lowercase guarantee applies only to the naive plural fallback, so register lowercase names if you want to preserve the convention.
+- `{escapedId}` is `Uri.EscapeDataString(ResourceRef.Id)`.
+
+The original request URI is preserved under `ProblemDetails.Extensions["request"]` so callers needing both have it. When synthesis is suppressed (toggle off, URL already identifies the resource, or `ResourceRef` is malformed), `Instance` falls back to the request URL and no `request` extension is emitted. `Error.Aggregate` never promotes a child's `ResourceRef`; the envelope itself carries no resource identity.
+
+Synthesis is defensive: any failure during URI construction (malformed `ResourceRef`, name not a safe URL path segment, registry not registered) is swallowed silently and the request URL is used. The synthesis path can never turn a domain 404/409 into a 500.
+
+### `ResourceCollectionNameRegistry`
+
+**Declaration**
+
+```csharp
+public sealed class ResourceCollectionNameRegistry
+```
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public ResourceCollectionNameRegistry()` | `ResourceCollectionNameRegistry` | Empty registry — every `ResourceRef.Type` resolves to its naive lowercase plural. Used as the static fallback when `HttpContext.RequestServices` is null. |
+| `public ResourceCollectionNameRegistry(IEnumerable<ResourceCollectionNameOverride> overrides)` | `ResourceCollectionNameRegistry` | Builds the registry from DI. Validates each override (non-empty type/name; name must pass `ResourceCollectionNameAttribute.IsSafePathSegment`). Throws `InvalidOperationException` if two overrides map the same type name (case-insensitive) to different collection names. Identical duplicates are coalesced silently. Registered as a singleton by `AddTrellisAsp`. |
+| `public string Resolve(string resourceType)` | `string` | Case-insensitive override lookup; falls back to `resourceType.ToLowerInvariant() + "s"` if no override is registered. Safe to call from concurrent request threads (the underlying dictionary is built once at construction and read-only thereafter). |
+
+### `ResourceCollectionNameOverride`
+
+**Declaration**
+
+```csharp
+public sealed record ResourceCollectionNameOverride(string ResourceType, string CollectionName);
+```
+
+DI-friendly carrier record. Register one per type via `services.AddSingleton(new ResourceCollectionNameOverride("Person", "people"))` (or use the `AddResourceCollectionName*` extensions, which do the same). `ResourceCollectionNameRegistry` consumes them via `IEnumerable<ResourceCollectionNameOverride>` in its constructor — Microsoft DI auto-injects an empty enumerable when no overrides are registered.
 
 ### `RuleViolationProblemDetail`
 
@@ -349,8 +395,108 @@ The main DI surface for `Trellis.Asp` (in folder `Extensions/`).
 | `public static IApplicationBuilder UseScalarValueValidation(this IApplicationBuilder app)` | `IApplicationBuilder` | Adds `ScalarValueValidationMiddleware` so `ValidatingJsonConverter<TValue,TPrimitive>` can collect errors per request. |
 | `public static IServiceCollection AddScalarValueValidationForMinimalApi(this IServiceCollection services)` | `IServiceCollection` | Configures only the Minimal API JSON pipeline. |
 | `public static RouteHandlerBuilder WithScalarValueValidation(this RouteHandlerBuilder builder)` | `RouteHandlerBuilder` | Adds `ScalarValueValidationEndpointFilter` to the route handler. |
-| `public static IServiceCollection AddTrellisAsp(this IServiceCollection services)` | `IServiceCollection` | Registers `TrellisAspOptions` with default error mappings, then calls `AddScalarValueValidation()`. |
+| `public static IServiceCollection AddTrellisAsp(this IServiceCollection services)` | `IServiceCollection` | Registers `TrellisAspOptions` with default error mappings and `ResourceCollectionNameRegistry`. **Does NOT register scalar-value validation** — see `AddTrellisAspWithScalarValidation` or call `AddScalarValueValidation()` explicitly. The split exists so the global `MvcOptions`/`JsonOptions` mutation that scalar validation performs is opt-in instead of silent. |
 | `public static IServiceCollection AddTrellisAsp(this IServiceCollection services, Action<TrellisAspOptions> configure)` | `IServiceCollection` | Same as above, with a `MapError<TError>(...)` callback for overrides. **Calls compose** — when `AddTrellisAsp(o => ...)` is invoked more than once (e.g. by a library and the application), every `configure` delegate runs in registration order against the same `TrellisAspOptions` instance built lazily by `OptionsFactory<TrellisAspOptions>`. Same-`TError` mappings still follow last-wins, but mappings for different error types from earlier calls are preserved. |
+| `public static IServiceCollection AddTrellisAspWithScalarValidation(this IServiceCollection services)` | `IServiceCollection` | Convenience composition of `AddTrellisAsp()` and `AddScalarValueValidation()` for greenfield projects that want error mapping plus scalar-value model binding / JSON converters in a single call. |
+| `public static IServiceCollection AddTrellisAspWithScalarValidation(this IServiceCollection services, Action<TrellisAspOptions> configure)` | `IServiceCollection` | Convenience composition of `AddTrellisAsp(configure)` and `AddScalarValueValidation()`. |
+| `public static IServiceCollection AddTrellisProblemDetails(this IServiceCollection services)` | `IServiceCollection` | Registers `IProblemDetailsService` (via `AddProblemDetails`) and applies the Trellis recipe: trace id projected from `Activity.Current?.Id ?? HttpContext.TraceIdentifier`, friendly detail rewrite for `500` responses, and `allow` extension array on `405` projected from the `Allow` header (split on `,` with whitespace trimmed). Composes with consumer customizations: Trellis defaults run first, then any prior or subsequent `AddProblemDetails(o => o.CustomizeProblemDetails = ...)` callback runs last and wins on collisions. Idempotent — additional calls are no-ops. Pair with `app.UseTrellisProblemDetails()` in the request pipeline. Composition-root consumers can opt in via the `options.UseProblemDetails()` slot on [`TrellisServiceBuilder`](trellis-api-servicedefaults.md#trellisservicebuilder); direct + builder composition is idempotent (one Trellis post-configure layer). |
+| `public static IServiceCollection AddResourceCollectionName<T>(this IServiceCollection services, string collectionName)` | `IServiceCollection` | Maps the simple type name of `T` (as produced by `ResourceRef.For<T>()`) to a URL collection segment used when synthesising `ProblemDetails.Instance` from a `ResourceRef`. AOT- and trim-friendly. Registers `ResourceCollectionNameRegistry` via `TryAddSingleton` so callers can use this extension without first calling `AddTrellisAsp`. |
+| `public static IServiceCollection AddResourceCollectionName(this IServiceCollection services, string resourceType, string collectionName)` | `IServiceCollection` | Same as the typed overload but takes the `ResourceRef.Type` string directly — for cases where the consumer wants to bind a type name that does not exist as a CLR type, or to keep registration centralised. Validates the `collectionName` is a safe single URL path segment. |
+| `public static IServiceCollection AddResourceCollectionNames(this IServiceCollection services, Assembly assembly)` | `IServiceCollection` | Scans the supplied assembly for types decorated with `[ResourceCollectionName]` and registers one `ResourceCollectionNameOverride` per type. Marked `[RequiresUnreferencedCode]` because it uses reflection over the assembly's types; AOT/trim-published apps should prefer the explicit `AddResourceCollectionName<T>(...)` overload. Conflicting registrations (same type name → different collection names) throw at registry activation; identical registrations coalesce silently. |
+| `public static IServiceCollection AddResourceCollectionNames(this IServiceCollection services, params Assembly[] assemblies)` | `IServiceCollection` | Convenience overload that scans each supplied assembly in order via the single-`Assembly` overload. Identical overrides across assemblies coalesce silently when the registry is activated; conflicting overrides throw. |
+| `public static IServiceCollection AddTrellisIdempotency(this IServiceCollection services, Action<IdempotencyOptions>? configure = null)` | `IServiceCollection` | Registers `IdempotencyOptions` (with the optional `configure` callback and startup validation), the default `IIdempotencyScopeResolver` (per-actor, falling back to anonymous), and an internal marker that `UseTrellisIdempotency()` uses to detect the wiring at startup. **Does not register a store** — composition is explicit; call `AddInMemoryIdempotencyStore()` for dev / tests, or register an EF-backed store for multi-instance production hosts. Composition-root consumers can opt in via the `options.UseIdempotency(...)` slot on [`TrellisServiceBuilder`](trellis-api-servicedefaults.md#trellisservicebuilder). |
+| `public static IServiceCollection AddInMemoryIdempotencyStore(this IServiceCollection services)` | `IServiceCollection` | Registers `InMemoryIdempotencyStore` as the singleton `IIdempotencyStore`. Single-process only; multi-instance hosts need a shared store. |
+
+### `ApplicationBuilderExtensions`
+
+**Declaration**
+
+```csharp
+public static class ApplicationBuilderExtensions
+```
+
+The middleware pipeline surface for `Trellis.Asp` (in folder `Extensions/`).
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static IApplicationBuilder UseTrellisProblemDetails(this IApplicationBuilder app)` | `IApplicationBuilder` | Wires the canonical ProblemDetails request pipeline: `UseExceptionHandler()` then `UseStatusCodePages()`. Must be registered **early** in the pipeline — `UseStatusCodePages` only rewrites status-code responses produced by middleware registered after it (routing, authorization, endpoint execution). Pair with `services.AddTrellisProblemDetails()` so the rewritten responses pick up Trellis defaults (trace id, friendly 500 detail, 405 `allow` array). |
+| `public static IApplicationBuilder UseTrellisIdempotency(this IApplicationBuilder app)` | `IApplicationBuilder` | Mounts `IdempotencyMiddleware` in the request pipeline. The middleware is a no-op on endpoints that do not carry `IdempotentAttribute` and on methods outside `IdempotencyOptions.Methods` (default `POST` and `PATCH`). Throws `InvalidOperationException` at startup if `services.AddTrellisIdempotency(...)` was not called. The `IIdempotencyStore` registration is validated at startup when the container exposes `IServiceProviderIsService` (the default Microsoft.Extensions.DependencyInjection container does); otherwise the missing-store failure surfaces as a per-request resolution error on the first opted-in request. Mount after `UseRouting()` so opted-in endpoints' metadata is resolvable, and after `UseAuthentication()` / `UseAuthorization()` so the default `DefaultIdempotencyScopeResolver` sees the authenticated `Actor` and partitions the store by it; mounting before authentication causes every authenticated request to fall back to the shared `anonymous` scope, which can let different users collide on the same key. |
+
+### Namespace `Trellis.Asp.Idempotency`
+
+Opt-in IETF `Idempotency-Key` middleware for `POST` / `PATCH` retry safety. See cookbook [Recipe 29](trellis-api-cookbook.md#recipe-29--ietf-idempotency-key-middleware-on-post--patch-with-usetrellisidempotency).
+
+### `IdempotentAttribute`
+
+**Declaration**
+
+```csharp
+[AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class IdempotentAttribute : Attribute
+```
+
+Endpoint marker. Apply to a controller action (or attach as endpoint metadata in Minimal API: `.WithMetadata(new IdempotentAttribute())`) to opt the endpoint into the idempotency middleware. Endpoints without the attribute pass through.
+
+### `IdempotencyOptions`
+
+**Declaration**
+
+```csharp
+public sealed class IdempotencyOptions
+```
+
+| Member | Default | Description |
+| --- | --- | --- |
+| `HeaderName` | `"Idempotency-Key"` | HTTP header carrying the IETF [`sf-string`](https://www.rfc-editor.org/rfc/rfc8941) idempotency key. |
+| `ReplayHeaderName` | `"Idempotent-Replayed"` | Response header added to replayed responses so clients can detect that the body came from a cached snapshot rather than a fresh handler invocation. |
+| `Ttl` | `24 h` | Time a completed snapshot is retained before it is evicted and the key can be reused. |
+| `ReservationTimeout` | `30 s` | Time after which a same-key retry with a matching fingerprint may atomically take over an in-flight reservation (CAS) so a crashed handler does not block retries forever. Stores MUST NOT delete outstanding reservations on this timeout; takeover replaces the entry under a new reservation token, which invalidates the previous token for `CompleteAsync` / `AbandonAsync`. |
+| `MaxKeyLength` | `200` | Hard cap on parsed key length; longer keys produce `400 Bad Request`. Raw header values are also rejected before parsing when they exceed the parser's 4 KiB defensive cap, using the existing invalid-key `400 Bad Request` surface. |
+| `MaxRequestBodyBytes` | `1 MiB` | Hard cap on the buffered request body that contributes to the fingerprint; larger bodies produce `413 Payload Too Large`. |
+| `MaxResponseBodyBytes` | `1 MiB` | Hard cap on the captured response body; exceeding aborts capture and records no snapshot (the next retry re-executes). |
+| `MismatchStatusCode` | `422` | Status returned when the same key arrives with a different body fingerprint. |
+| `RequireKeyOnOptedInEndpoints` | `true` | When `true`, opted-in endpoints reject requests that omit the header with `400 idempotency.key_required`; when `false`, missing-key requests pass through with no idempotency processing. |
+| `IncludeSetCookieInSnapshot` | `false` | When `true`, `Set-Cookie` response headers are captured in snapshots; default excludes them so a replay does not re-issue session or authentication cookies that have since been rotated. |
+| `Methods` | `{ POST, PATCH }` | Methods the middleware acts on; other methods (`GET`, `PUT`, `DELETE`) pass through. |
+| `AdditionalFingerprintHeaders` | empty | Extra request headers included in the fingerprint (for example a tenant header) when their semantics affect the request identity. |
+
+`AddTrellisIdempotency()` validates options at host startup: `HeaderName`, `ReplayHeaderName`, and `AdditionalFingerprintHeaders` must be valid HTTP header names; `Ttl`, `ReservationTimeout`, `MaxKeyLength`, `MaxRequestBodyBytes`, and `MaxResponseBodyBytes` must be positive; `MismatchStatusCode` must be between `400` and `599`; and `Methods` must contain at least one valid HTTP method token.
+
+### `IIdempotencyStore`
+
+**Declaration**
+
+```csharp
+public interface IIdempotencyStore
+```
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `ValueTask<IdempotencyReservationOutcome> TryReserveAsync(string scope, string key, string fingerprint, CancellationToken ct)` | one of `Reserved(reservationId)`, `AlreadyInFlight(retryAfter)`, `Replay(snapshot)`, `BodyHashMismatch(storedFingerprint)` | CAS reservation. The reservation token is an opaque `string`; pass it back to `CompleteAsync` / `AbandonAsync`. |
+| `ValueTask CompleteAsync(string scope, string key, string reservationId, IdempotencyResponseSnapshot snapshot, CancellationToken ct)` | `ValueTask` | Records the response snapshot under the reservation. Conditional on the reservation token (CAS) so a slow original handler whose reservation has been atomically taken over by a same-key retry cannot finalise the entry under the now-invalid token. |
+| `ValueTask AbandonAsync(string scope, string key, string reservationId, CancellationToken ct)` | `ValueTask` | Releases a reservation without a snapshot so the next retry can re-reserve. Called on any failure path (exception, response-too-large, `SendFileAsync`, abort, **5xx response status**, **response trailers**). |
+
+### `InMemoryIdempotencyStore`
+
+**Declaration**
+
+```csharp
+public sealed class InMemoryIdempotencyStore : IIdempotencyStore
+```
+
+Single-process `ConcurrentDictionary`-backed store. Register with `services.AddInMemoryIdempotencyStore()` for dev / single-instance hosts and tests. **Not safe across multiple instances or process restarts** — production hosts that retry across replicas need an EF-backed store that implements the same CAS contract.
+
+### `IIdempotencyScopeResolver`
+
+**Declaration**
+
+```csharp
+public interface IIdempotencyScopeResolver
+```
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `ValueTask<string> ResolveAsync(HttpContext context, CancellationToken ct)` | `ValueTask<string>` | Returns an isolation scope (tenant id, actor id, anonymous). Two requests carrying the same key under different scopes never collide. Default registration is `DefaultIdempotencyScopeResolver`, which resolves `IActorProvider` from request services and uses the current actor's id (falling back to anonymous when no provider is registered or no actor is resolved). `ActorIdempotencyScopeResolver` is also shipped for hosts that want a hard dependency on `IActorProvider`. Replace with a custom implementation for multi-tenant hosts. |
 
 ### Namespace `Trellis.Asp.Authorization`
 
@@ -430,9 +576,11 @@ public static class ServiceCollectionExtensions
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public static IServiceCollection AddClaimsActorProvider(this IServiceCollection services, Action<ClaimsActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor`, configures `ClaimsActorOptions`, and **replaces** the `IActorProvider` registration with a scoped `ClaimsActorProvider`. |
+| `public static IServiceCollection AddNestedJsonPathClaimsActorProvider(this IServiceCollection services, Action<NestedJsonPathClaimsActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor`, configures and startup-validates `NestedJsonPathClaimsActorOptions`, and **replaces** the `IActorProvider` registration with a scoped `NestedJsonPathClaimsActorProvider`. When `configure` is omitted, the default empty JSON paths make the provider behave like `ClaimsActorProvider`. |
 | `public static IServiceCollection AddEntraActorProvider(this IServiceCollection services, Action<EntraActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor`, configures `EntraActorOptions`, and **replaces** the `IActorProvider` registration with a scoped `EntraActorProvider`. |
 | `public static IServiceCollection AddDevelopmentActorProvider(this IServiceCollection services, Action<DevelopmentActorOptions>? configure = null)` | `IServiceCollection` | Adds `IHttpContextAccessor` + logging, configures `DevelopmentActorOptions`, and **replaces** the `IActorProvider` registration with a scoped `DevelopmentActorProvider`. The provider itself throws outside the Development environment. |
 | `public static IServiceCollection AddCachingActorProvider<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(this IServiceCollection services) where T : class, IActorProvider` | `IServiceCollection` | Registers concrete provider `T` as scoped, then **replaces** the `IActorProvider` registration with a scoped `CachingActorProvider` wrapping `T`. |
+| `public static IServiceCollection AddTrellisWorkerActor(this IServiceCollection services, Actor systemActor)` | `IServiceCollection` | Captures the existing unkeyed `IActorProvider` registration and **replaces** the slot with a scoped `WorkerComposedActorProvider` that returns `systemActor` when `IHttpContextAccessor.HttpContext` is `null` and delegates to the inner provider otherwise. Throws when there is no prior unkeyed `IActorProvider` registration, when more than one is registered, when the helper has already been called, or when the prior descriptor is singleton-lifetime via implementation type or factory (would silently downgrade to per-wrapper-scope — use `services.AddSingleton<IActorProvider>(instance)` or re-register as scoped) or transient-lifetime (would silently upgrade to scoped-per-wrapper — re-register as scoped). Keyed `IActorProvider` registrations are ignored and remain untouched. Registers an `IHostedLifecycleService` validator that throws in `StartingAsync` (before any `BackgroundService.ExecuteAsync` runs) if a later registration overwrites the wrapper. On synchronous scope disposal, the wrapper disposes inner providers that implement `IDisposable`; async-only `IAsyncDisposable` inners are skipped with a once-per-application-lifetime warning to avoid sync-over-async deadlocks, so consumers with async-only resources must dispose scopes asynchronously (`DisposeAsync` / `await using`). |
 
 > **Replacement semantics.** Each `AddXxxActorProvider` helper calls
 > `services.Replace(...)` for the `IActorProvider` slot. Calling more than one
@@ -455,6 +603,22 @@ public class ClaimsActorOptions
 | `ActorIdClaim` | `string` | Claim type used for `Actor.Id`. Default: `"sub"` (RFC 7519 / OIDC subject claim). Matched against `Claim.Type` literally first; if the configured name is not found, falls back to its counterpart in a curated short↔long mapping table maintained by the provider. Covers the OAuth2 / OIDC / Microsoft identity-platform claims that consumers realistically configure as an actor id: `"sub"`/`"nameid"` ↔ `ClaimTypes.NameIdentifier`, `"oid"` ↔ `http://schemas.microsoft.com/identity/claims/objectidentifier`, `"upn"` ↔ `ClaimTypes.Upn`, `"email"` ↔ `ClaimTypes.Email`, `"role"`/`"roles"` ↔ `ClaimTypes.Role`, `"name"`/`"unique_name"` ↔ `ClaimTypes.Name`, `"tid"` ↔ `http://schemas.microsoft.com/identity/claims/tenantid`, `"idp"`/`"acr"`/`"amr"` ↔ their Microsoft long forms. The bidirectional fallback makes typical configurations just-work against both `JwtBearerOptions.MapInboundClaims = true` (ASP.NET default) and `false`. Emits a debug-level log entry when the fallback fires. No dotted/JSON-path traversal. The curated table is a subset of `JwtSecurityTokenHandler.DefaultInboundClaimTypeMap`; the space-delimited OAuth scope claim `"scp"`, AD FS 1.x legacy aliases, and device / certificate / request-transport / password-policy claims are intentionally not covered (see the `PermissionsClaim` row for the `scp` rationale). |
 | `PermissionsClaim` | `string` | Claim type used for permissions. Default: `"permissions"`. Multi-valued JWT claims arrive as repeated `Claim` instances and are aggregated via `FindAll`. Matched against `Claim.Type` literally first; the resolver also queries every counterpart in the provider's curated short↔long mapping table (notably `"role"`/`"roles"` ↔ `ClaimTypes.Role`) and merges all matches into a single deduplicated set. This makes `PermissionsClaim = "roles"` and `PermissionsClaim = ClaimTypes.Role` both just-work against `JwtBearerOptions.MapInboundClaims = true` (ASP.NET default) and `false`. The default `"permissions"` is not in the mapping table, so it resolves by literal match only (regression-safe). The fallback emits a debug-level log entry when the configured claim resolves nothing but a counterpart does. The OAuth scope claim `"scp"` is intentionally NOT covered by the fallback: its value is space-delimited (RFC 6749 §3.3, e.g. `"orders.read orders.write"`) and `ClaimsActorProvider` snapshots claim values verbatim into the permission set, so wiring the fallback would still leave `Actor.HasPermission("orders.read")` returning `false`. OAuth scope-as-permission requires a custom subclass that splits the value. See the `ActorIdClaim` row above for the full covered subset. |
 
+### `NestedJsonPathClaimsActorOptions`
+
+**Declaration**
+
+```csharp
+public sealed class NestedJsonPathClaimsActorOptions : ClaimsActorOptions
+```
+
+Inherits the flat `ActorIdClaim` / `PermissionsClaim` defaults from `ClaimsActorOptions`. A default `new NestedJsonPathClaimsActorOptions()` is valid: `ContainerClaim`, `ActorIdPath`, and `PermissionsPath` are empty, so the provider delegates to flat-claim resolution.
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `ContainerClaim` | `string` | Claim type whose value carries the JSON payload. Default: empty. Required only when `ActorIdPath` or `PermissionsPath` is non-empty. |
+| `ActorIdPath` | `string` | Dotted JSON path inside `ContainerClaim` used for `Actor.Id`. Default: empty, which falls back to inherited flat `ActorIdClaim` resolution. |
+| `PermissionsPath` | `string` | Dotted JSON path inside `ContainerClaim` used for permissions. Default: empty, which falls back to inherited flat `PermissionsClaim` resolution. Terminal values may be a string, an array of strings, or an object whose property names become permissions. |
+
 ### `ClaimsActorProvider`
 
 **Declaration**
@@ -476,6 +640,20 @@ Hydrates an `Actor` from the current `HttpContext.User` using flat JWT/OIDC clai
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public virtual Task<Maybe<Actor>> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Maybe<Actor>>` | Returns `Maybe<Actor>.None` when no authenticated identity exists or the configured `ActorIdClaim` is missing from the authenticated identity — the mediator pipeline maps `Maybe.None` to `Error.AuthenticationRequired` (HTTP 401). Throws `InvalidOperationException` only when `HttpContext` is missing (configuration bug, surfaces as HTTP 500). On success, permissions come from `FindAll(PermissionsClaim)` plus every counterpart in the provider's curated short↔long mapping table (see `PermissionsClaim` above), merged and snapshotted into a `FrozenSet<string>`; the result is wrapped via `Maybe.From(Actor.Create(actorId, permissions))` so forbidden permissions and attributes default to empty. |
+
+### `NestedJsonPathClaimsActorProvider`
+
+**Declaration**
+
+```csharp
+public class NestedJsonPathClaimsActorProvider : ClaimsActorProvider
+```
+
+Maps nested JSON claim payloads to actor ids or permissions via `NestedJsonPathClaimsActorOptions`. If `ActorIdPath` and `PermissionsPath` are both empty, it delegates to `ClaimsActorProvider`, making the no-config registration safe for flat-claim tokens. The DI registration validates at host startup via `IValidateOptions<NestedJsonPathClaimsActorOptions>` + `ValidateOnStart()` that a nested path is not configured without `ContainerClaim` (empty and whitespace-only both count as missing — they would otherwise silently fall back to flat-claim resolution and reintroduce the misconfiguration footgun). The constructor keeps the same `InvalidOperationException` guard as defense-in-depth for manual construction. `ValidateOnStart()` fires regardless of whether a later `AddXxxActorProvider` call replaces `IActorProvider`; see [`trellis-api-authorization.md`](trellis-api-authorization.md#common-identity-provider-claim-shapes) for the "register-then-replace" caveat.
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public override Task<Maybe<Actor>> GetCurrentActorAsync(CancellationToken cancellationToken = default)` | `Task<Maybe<Actor>>` | Traverses the configured JSON paths when present, falls back to inherited flat-claim resolution when the container claim is absent, malformed, or a path misses, and emits the same silent-empty-permissions diagnostics as `ClaimsActorProvider`. |
 
 ### `EntraActorOptions`
 
@@ -780,7 +958,7 @@ JSON converter for `Maybe<T>` where `T` is an STJ-native primitive in the closed
 public sealed class MaybePrimitiveJsonConverterFactory : JsonConverterFactory
 ```
 
-Closes the asymmetry where `MaybeScalarValueJsonConverterFactory` shipped support for `Maybe<TScalar>` (typed value objects) but `Maybe<long>` / `Maybe<int>` / `Maybe<string>` / `Maybe<DateTime>` etc. fell through to STJ's default object handling, producing JSON the converter cannot itself parse back. Auto-registered by `AddTrellisAsp(...)` alongside the scalar factory (same `JsonSerializer.IsReflectionEnabledByDefault` gate for AOT). The supported primitive set deliberately mirrors `CompositeValueObjectJsonConverter<T>`'s allowed list: the rule is "`Maybe<T>` works wherever `T` is a primitive Trellis already supports directly".
+Closes the asymmetry where `MaybeScalarValueJsonConverterFactory` shipped support for `Maybe<TScalar>` (typed value objects) but `Maybe<long>` / `Maybe<int>` / `Maybe<string>` / `Maybe<DateTime>` etc. fell through to STJ's default object handling, producing JSON the converter cannot itself parse back. Registered by `AddScalarValueValidation()` (or the convenience helper `AddTrellisAspWithScalarValidation()`) alongside the scalar factory (same `JsonSerializer.IsReflectionEnabledByDefault` gate for AOT). The supported primitive set deliberately mirrors `CompositeValueObjectJsonConverter<T>`'s allowed list: the rule is "`Maybe<T>` works wherever `T` is a primitive Trellis already supports directly".
 
 Supported primitives: `string`, `decimal`, `int`, `long`, `short`, `byte`, `double`, `float`, `bool`, `Guid`, `DateTime`, `DateTimeOffset`. Shapes outside this set (`DateOnly`, `TimeOnly`, unsigned numerics, arrays, collections, nested composites) continue to require the wire-shape DTO + adapter pattern (Cookbook Recipe 14).
 
@@ -878,7 +1056,7 @@ using Trellis;
 using Trellis.Asp;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddTrellisAsp();
+builder.Services.AddTrellisAspWithScalarValidation();
 
 var app = builder.Build();
 app.UseScalarValueValidation();

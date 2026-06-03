@@ -1,4 +1,4 @@
-﻿---
+---
 package: Trellis.Http.Abstractions
 namespaces: [Trellis]
 types: [HttpError, AuthChallenge, EntityTagValue, RetryAfterValue, PreconditionKind, RepresentationMetadata, "WriteOutcome<T>", AggregateETagExtensions]

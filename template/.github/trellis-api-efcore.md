@@ -1,9 +1,9 @@
-﻿---
+---
 package: Trellis.EntityFrameworkCore
 namespaces: [Trellis.EntityFrameworkCore]
-types: [DbContextExtensions, DbContextOptionsBuilderExtensions, DbExceptionClassifier, "EfUnitOfWork<TContext>", EntityTimestampInterceptor, IUnitOfWork, MaybeEntityTypeBuilderExtensions, MaybeModelExtensions, MaybePropertyMapping, MaybeQueryableExtensions, MaybeQueryInterceptor, MaybeUpdateExtensions, ModelConfigurationBuilderExtensions, OwnedEntityAttribute, QueryableExtensions, "RepositoryBase<TAggregate,TId>", ScalarValueQueryInterceptor, "TransactionalCommandBehavior<TMessage,TResponse>", TrellisPersistenceMappingException, "TrellisScalarConverter<TModel,TProvider>", UnitOfWorkServiceCollectionExtensions]
+types: [DbContextExtensions, DbContextIdempotencyExtensions, DbContextOptionsBuilderExtensions, DbContextRetryExtensions, DbExceptionClassifier, "EfUnitOfWork<TContext>", EntityTimestampInterceptor, IUnitOfWork, MaybeEntityTypeBuilderExtensions, MaybeModelExtensions, MaybePropertyMapping, MaybeQueryableExtensions, MaybeQueryInterceptor, MaybeUpdateExtensions, ModelConfigurationBuilderExtensions, OwnedEntityAttribute, QueryableExtensions, "RepositoryBase<TAggregate,TId>", ScalarValueQueryInterceptor, "TransactionalCommandBehavior<TMessage,TResponse>", TrellisPersistenceMappingException, "TrellisScalarConverter<TModel,TProvider>", UnitOfWorkServiceCollectionExtensions]
 version: v3
-last_verified: 2026-05-06
+last_verified: 2026-05-31
 audience: [llm]
 ---
 # Trellis.EntityFrameworkCore
@@ -25,6 +25,8 @@ Use this table to find the canonical Trellis API for the most common EF Core tas
 | Make `Maybe<T>.GetValueOrDefault(d)` and similar expressions translate in EF queries (alternative to the helpers above when you must write a raw expression) | Register `AddTrellisInterceptors()` on the `DbContextOptionsBuilder`. The `MaybeQueryInterceptor` rewrites supported `Maybe<T>` calls to SQL. Prefer the `WhereXxx` helpers above when available. | [`DbContextOptionsBuilderExtensions`](#dbcontextoptionsbuilderextensions), [`MaybeQueryInterceptor`](#maybequeryinterceptor) |
 | Index a `Maybe<T>` property (avoids TRLS016 by mapping to the storage member) | `entityTypeBuilder.HasTrellisIndex(x => x.M)` (or composite `x => new { x.M, x.Other }`) | [`MaybeEntityTypeBuilderExtensions`](#maybeentitytypebuilderextensions) |
 | Save changes and get a `Result<int>` / `Result<Unit>` instead of throwing | `db.SaveChangesResultAsync()` / `db.SaveChangesResultUnitAsync()` (analyzer TRLS015 enforces in non-UoW contexts) | [`DbContextExtensions`](#dbcontextextensions) |
+| Save with retry-on-collision for system-generated unique keys (short codes, slugs, tokens) — detaches only the conflicting entries, calls back to regenerate the key in place, re-Adds, retries | `db.SaveChangesWithRetryAsync(shouldRetry, regenerate, maxAttempts: 3)` (only `Added` entries; sibling aggregates and entries promoted via `entry.State = Added` are preserved; concurrency exceptions bypass `shouldRetry`) | [`DbContextRetryExtensions`](#dbcontextretryextensions) |
+| Insert a row idempotently on a unique constraint (worker outboxes, "save unless exists" deduplication, redelivered events) — converts a unique-key violation into a failed `Result<TEntity>` carrying an `Error.Conflict` with reason code `"duplicate.key"` and provider-extracted `ConstraintName` / `ConstraintTableName`, and detaches the introduced graph on the duplicate path | `db.TryInsertUniqueAsync(entity, ct)` (requires a clean change tracker; FK / concurrency / cancellation / connection exceptions propagate) | [`DbContextIdempotencyExtensions`](#dbcontextidempotencyextensions) |
 | Update a `Maybe<T>` property via EF Core `ExecuteUpdate` | `MaybeUpdateExtensions.SetMaybeValue(...)` (set Some) / `SetMaybeNone(...)` (clear) | [`MaybeUpdateExtensions`](#maybeupdateextensions) |
 | Mark a composite value object as EF-owned (replaces `OwnsOne`/`OwnsMany` boilerplate) | `[OwnedEntity]` on the value-object class. Init-only setters are flagged by TRLS022 — use `{ get; private set; }`. | [`OwnedEntityAttribute`](#ownedentityattribute) |
 | Wire Trellis EF conventions in `ConfigureConventions` (preferred — compile-time, no reflection) | `configurationBuilder.ApplyTrellisConventionsFor<TContext>()` (source-generated) | [`GeneratedTrellisConventions`](#generatedtrellisconventions-source-generated) |
@@ -32,7 +34,7 @@ Use this table to find the canonical Trellis API for the most common EF Core tas
 | Wire `MaybeQueryInterceptor`, `EntityTimestampInterceptor`, ETag, and scalar-value interceptors in one call | `optionsBuilder.AddTrellisInterceptors()` (overloads accept a `TimeProvider`) | [`DbContextOptionsBuilderExtensions`](#dbcontextoptionsbuilderextensions) |
 | Inspect / debug discovered `Maybe<T>` mappings | `dbContext.GetMaybePropertyMappings()` / `dbContext.ToMaybeMappingDebugString()` | [`MaybeModelExtensions`](#maybemodelextensions) |
 | Project an aggregate to a DTO and unwrap `Maybe<T>` safely (avoids TRLS013) | Filter with `.Where(x => x.M.HasValue)` *before* the projection (TRLS013 recognises this exact prior-Where shape). For EF query composition over `Maybe<T>`, prefer `MaybeQueryableExtensions.WhereHasValue` / `WhereXxx` so the SQL is correct, then project. | [`MaybeQueryableExtensions`](#maybequeryableextensions) |
-| Classify an EF/DB exception | `DbExceptionClassifier.IsDuplicateKey(ex)` / `IsForeignKeyViolation(ex)` / `ExtractConstraintDetail(ex)`. To map DB exceptions to a Trellis `Error` automatically, use `db.SaveChangesResultAsync()` / `SaveChangesResultUnitAsync()` instead of catching and classifying by hand. | [`DbExceptionClassifier`](#dbexceptionclassifier), [`DbContextExtensions`](#dbcontextextensions) |
+| Classify an EF/DB exception | `DbExceptionClassifier.IsDuplicateKey(ex)` / `IsForeignKeyViolation(ex)` / `ExtractConstraintDetail(ex)` / `ExtractConstraintIdentity(ex)`. To map DB exceptions to a Trellis `Error` automatically, use `db.SaveChangesResultAsync()` / `SaveChangesResultUnitAsync()` (or, for idempotent inserts, `db.TryInsertUniqueAsync()`) instead of catching and classifying by hand. | [`DbExceptionClassifier`](#dbexceptionclassifier), [`DbContextExtensions`](#dbcontextextensions), [`DbContextIdempotencyExtensions`](#dbcontextidempotencyextensions) |
 | Wrap an aggregate-store repository with `Result<T>` returns | Inherit `RepositoryBase<TAggregate, TId>` | [`RepositoryBase<TAggregate, TId>`](#repositorybasetaggregate-tid) |
 | Stage commands in a unit of work and flush once per request | `IUnitOfWork` + `EfUnitOfWork<TContext>` + `TransactionalCommandBehavior<,>` (registered via `AddTrellisUnitOfWork<TContext>()`) | [`IUnitOfWork`](#iunitofwork), [`EfUnitOfWork<TContext>`](#efunitofworktcontext), [`TransactionalCommandBehavior<TMessage, TResponse>`](#transactionalcommandbehaviortmessage-tresponse) |
 | Paginate an `IQueryable<T>` with forward-only cursor-based seek (decodes the cursor, applies the seek `WHERE`, over-fetches, and slices through `PageBuilder` in one call) | `IQueryable<T>.ToPageAsync(pageSize, cursor, keySelector, …)` | [`PaginationQueryableExtensions`](#paginationqueryableextensions) |
@@ -43,7 +45,7 @@ Use this table to find the canonical Trellis API for the most common EF Core tas
 - For EF `IQueryable` predicates over `Maybe<T>`, prefer `MaybeQueryableExtensions.WhereXxx` helpers over sentinel `GetValueOrDefault(...)` expressions when there is a matching helper.
 - Under `AddTrellisUnitOfWork<TContext>()`, repositories stage changes only; the mediator transaction behavior commits.
 - `[OwnedEntity]` classes should be `partial` and use `{ get; private set; }` for EF-owned properties.
-- **Do not compare `Maybe<T>` properties to `Maybe.From(value)` literals using the `==` / `!=` operator inside EF queries.** EF Core extracts the closed-expression operand to a `QueryParameterExpression` during expression-tree funcletization, which runs **before** `IQueryExpressionInterceptor.QueryCompilationStarting` (where `MaybeQueryInterceptor` runs), erasing the syntactic difference between `Maybe<T>.None` and `Maybe.From(value)`. The rewriter therefore conservatively converts any unrecognized `Maybe<T>`-typed operand to typed null, which means `c.Phone == Maybe.From(value)` translates to `_phone IS NULL` and silently miss-queries. Use `MaybeQueryableExtensions.WhereEquals(c => c.Phone, value)` for value comparisons; reserve the natural `==` operator for `Maybe<T>.None` comparisons (or migrate to `WhereNone`/`c.Phone.HasNoValue` for clarity). A future fix via `IEvaluatableExpressionFilterPlugin` (which runs before funcletization) is tracked as a follow-up.
+- **`Maybe<T>` natural-form equality (`c.Phone == Maybe.From(value)`, `c.Phone == Maybe<T>.None`).** Translates correctly when `AddTrellisInterceptors()` is registered. The companion `MaybeEvaluatableExpressionFilterPlugin` keeps the three literal operand shapes — `Maybe<T>.None`, `default(Maybe<T>)`, and `Maybe.From(value)` — un-funcletized so `MaybeExpressionRewriter` translates `== Maybe.From(value)` to `_field = @p` and `== Maybe<T>.None` to `_field IS NULL`. **Do not** compare against a captured `Maybe<T>` local (e.g., `var m = Maybe.From(value); .Where(c => c.Phone == m)`); funcletization extracts the local to a `QueryParameterExpression` and the rewriter throws `InvalidOperationException` (a strict improvement over the historic silent `IS NULL` miss-query). Inline `Maybe.From(value)` at the comparison site, or use `MaybeQueryableExtensions.WhereEquals(c => c.Phone, value)`.
 - **Do not project a bare `Maybe<T>` property in a `.Select(c => c.Phone)` clause inside EF queries.** `MaybeQueryInterceptor` rewrites bare `c.Phone` to `EF.Property<T?>(c, "_phone")`, which changes the projection's lambda return type from `Maybe<T>` to `T?` and produces an EF translation error. Project the storage value instead via `.Select(c => c.Phone.GetValueOrDefault(default))` (with `AddTrellisInterceptors()` registered) or fetch the entity and read `Phone` after materialization.
 
 ### `Maybe<T>` query shape decision table
@@ -77,6 +79,8 @@ public static class DbContextOptionsBuilderExtensions
 | `public static DbContextOptionsBuilder AddTrellisInterceptors(this DbContextOptionsBuilder optionsBuilder)` | `DbContextOptionsBuilder` | Non-generic overload for the same singleton interceptor set. |
 | `public static DbContextOptionsBuilder<TContext> AddTrellisInterceptors<TContext>(this DbContextOptionsBuilder<TContext> optionsBuilder, TimeProvider? timeProvider) where TContext : DbContext` | `DbContextOptionsBuilder<TContext>` | Registers the same interceptor set, but creates a **new** `EntityTimestampInterceptor(timeProvider)` for this call. |
 | `public static DbContextOptionsBuilder AddTrellisInterceptors(this DbContextOptionsBuilder optionsBuilder, TimeProvider? timeProvider)` | `DbContextOptionsBuilder` | Non-generic overload that creates a new `EntityTimestampInterceptor(timeProvider)` for this call. |
+
+Idempotent: calling `AddTrellisInterceptors` multiple times on the same options builder registers each Trellis interceptor exactly once. Consumer-supplied interceptors registered separately via `optionsBuilder.AddInterceptors(...)` are preserved.
 
 ### `ModelConfigurationBuilderExtensions`
 
@@ -142,6 +146,34 @@ public static class DbContextExtensions
 | `public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<int>>` | Wraps `SaveChangesAsync`; maps `DbUpdateConcurrencyException` to `new Error.Conflict(null, "concurrent_modification")`, duplicate-key `DbUpdateException` to `new Error.Conflict(null, "duplicate.key")`, and foreign-key `DbUpdateException` to `new Error.Conflict(null, "referential.integrity")`. |
 | `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes and discards the row count. |
 | `public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes with explicit `acceptAllChangesOnSuccess`. |
+
+### `DbContextRetryExtensions`
+
+```csharp
+public static class DbContextRetryExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static Task<Result<Unit>> SaveChangesWithRetryAsync(this DbContext db, Func<DbUpdateException, bool> shouldRetry, Func<IReadOnlyList<EntityEntry>, int, CancellationToken, ValueTask<bool>> regenerate, int maxAttempts = 3, CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | Saves changes. On `DbUpdateException` classified retryable by `shouldRetry`, detaches **only** the entries reported by `DbUpdateException.Entries` (never the full change tracker — sibling aggregates pending in the change tracker, including entries promoted via `entry.State = Added`, are preserved), invokes `regenerate(entries, attempt, ct)` so the caller can mutate the conflicting entities' natural keys in place, re-`Add`s them, and retries up to `maxAttempts` total attempts (initial + retries). `DbUpdateConcurrencyException` is mapped to `new Error.Conflict(null, "concurrent_modification")` **without** calling `shouldRetry` (regenerating a natural key cannot resolve a stale rowversion). When `shouldRetry` returns false, non-retryable `DbUpdateException`s are mapped exactly like `SaveChangesResultAsync`: duplicate → `"duplicate.key"`, FK → `"referential.integrity"`, unrecognised → rethrown. Only `Added` entries are supported — if `ex.Entries` contains a non-`Added` entry, throws `InvalidOperationException` (Modified retries lose original values, `IsModified` flags, and temporary-value metadata across the detach/re-attach cycle). When `regenerate` returns false, conflicting entries remain detached and the method returns `Error.Conflict` with reason code `"retry.aborted"`. When `maxAttempts` is exhausted, no detach is performed on the final attempt and the method returns `Error.Conflict` with reason code `"retry.exhausted"`. The helper's exhaust/abort paths use these neutral reason codes (distinct from the caller-classifier-related `"duplicate.key"` / `"referential.integrity"` codes) so a broader `shouldRetry` classifier does not surface a misleading `duplicate.key` code on exhaust/abort. `attempt` is 1-based and equals the regenerate-call number. The `duplicate.key` / `referential.integrity` `Error.Conflict` values returned by this helper carry `ConstraintName` / `ConstraintTableName` telemetry fields populated by `DbExceptionClassifier.ExtractConstraintIdentity` (see [`DbExceptionClassifier`](#dbexceptionclassifier)). |
+
+### `DbContextIdempotencyExtensions`
+
+```csharp
+public static class DbContextIdempotencyExtensions
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| — | — | No public properties. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static Task<Result<TEntity>> TryInsertUniqueAsync<TEntity>(this DbContext context, TEntity entity, CancellationToken cancellationToken = default) where TEntity : class` | `Task<Result<TEntity>>` | Adds `entity` to `context` and persists it; converts a unique-constraint violation into `Result.Fail<TEntity>(new Error.Conflict(null, "duplicate.key") { Detail = "A record with the same unique value already exists.", ConstraintName, ConstraintTableName })`. On the duplicate path, every entry the call newly attached as `Added` (root plus any owned / dependent entries from the navigation graph) is detached, and any already-tracked entry that `context.Add` flipped to `Added` (e.g., a row the context loaded earlier) is restored to its prior state — so the change tracker is left exactly as the caller saw it on entry. On success, returns `Result.Ok(entity)` with EF-populated generated values (PK, row version, sequence columns) in place on the same instance. Foreign-key violations, `DbUpdateConcurrencyException`, connection-level exceptions, and `OperationCanceledException` propagate so retry policies see them. The helper requires a clean `DbContext` on entry: throws `InvalidOperationException` when `context.ChangeTracker.HasChanges()` is `true` so a duplicate-key violation cannot be mis-attributed to the inserted entity. Constraint identity comes from `DbExceptionClassifier.ExtractConstraintIdentity`. |
 
 ### `QueryableExtensions`
 
@@ -259,17 +291,20 @@ Abstraction over the commit boundary for staged changes. Repositories stage chan
 ### `EfUnitOfWork<TContext>`
 
 ```csharp
-public class EfUnitOfWork<TContext> : IUnitOfWork
+public class EfUnitOfWork<TContext> : IUnitOfWork, ITrackedAggregateSource
     where TContext : DbContext
 ```
 
 EF Core implementation of `IUnitOfWork`. Delegates to `DbContextExtensions.SaveChangesResultUnitAsync` which maps `DbUpdateConcurrencyException` → `new Error.Conflict(null, "concurrent_modification")`, duplicate-key → `new Error.Conflict(null, "duplicate.key")`, and FK violations → `new Error.Conflict(null, "referential.integrity")`. Tracks scope depth via an internal counter; `CommitAsync` defers (returns success without persisting) when depth > 1.
 
+Also implements [`ITrackedAggregateSource`](trellis-api-core.md#itrackedaggregatesource): captures the `IAggregate` instances tracked by the `ChangeTracker` immediately before each `SaveChangesAsync` call. The snapshot is cleared before save and only assigned on success, so `CommittedAggregates` is empty before any commit, empty after a failed or thrown commit, unchanged during deferred nested commits, and replaced on the next successful outer commit. Consumed by `Trellis.Mediator.TrackedAggregateDomainEventDispatchBehavior<,>`.
+
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public EfUnitOfWork(TContext context)` | — | Captures the resolved `TContext` instance. Throws `ArgumentNullException` when `context` is null. Registered as scoped by `AddTrellisUnitOfWork<TContext>()`. |
-| `public Task<Result<Unit>> CommitAsync(CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | At depth 0/1, calls `context.SaveChangesResultUnitAsync(cancellationToken)`. At depth > 1 (inside a nested scope), returns `Result.Ok()` without touching the database. |
+| `public Task<Result<Unit>> CommitAsync(CancellationToken cancellationToken = default)` | `Task<Result<Unit>>` | At depth 0/1, clears the tracked-aggregate snapshot, snapshots all `IAggregate` change-tracker entries, calls `context.SaveChangesResultUnitAsync(cancellationToken)`, and (only on success) assigns the snapshot to `CommittedAggregates`. At depth > 1 (inside a nested scope), returns `Result.Ok()` without touching the database or the snapshot. |
 | `public IDisposable BeginScope()` | `IDisposable` | Increments the scope-depth counter; the returned `IDisposable.Dispose()` decrements it. Thread-safe via `Interlocked`. |
+| `IReadOnlyList<IAggregate> ITrackedAggregateSource.CommittedAggregates { get; }` | `IReadOnlyList<IAggregate>` | Snapshot of aggregates the most recent successful commit persisted. Empty by default. |
 
 ### `TransactionalCommandBehavior<TMessage, TResponse>`
 
@@ -282,12 +317,14 @@ public sealed class TransactionalCommandBehavior<TMessage, TResponse>
 
 Pipeline behavior that auto-commits staged changes after a successful command handler. Only applies to `ICommand<TResponse>` messages — queries are skipped at the type-constraint level and incur no overhead. If the handler returns a failure, no commit occurs and staged changes are discarded with the `DbContext`. EF Core wraps each `SaveChanges` call in an implicit transaction, so all staged changes within a single handler commit atomically.
 
+> **Persist-on-failure outcomes.** If `TResponse` implements `IPersistOnFailure` and the per-instance `PersistOnFailure` flag is `true` — the canonical producer is `Result.FailAfterCommit<T>(error)` — the commit step runs even though the result is a failure. This enables the worker-handler pattern of persisting a `permanently_failed` state row alongside the failure outcome. On commit failure for a persist-on-failure outcome, the commit error replaces the handler error in the returned response.
+
 > **Important:** This behavior is **not** registered by `Trellis.Mediator.ServiceCollectionExtensions.AddTrellisBehaviors()`. Consumers of `Trellis.EntityFrameworkCore` must register it explicitly via `AddTrellisUnitOfWork<TContext>()` (see below) **after** `AddTrellisBehaviors()` so it lands innermost — closest to the handler — and commit failures remain visible to outer logging/tracing/exception behaviors.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public TransactionalCommandBehavior(IUnitOfWork unitOfWork)` | — | Captures the scoped `IUnitOfWork` resolved alongside the handler. Throws `ArgumentNullException` when `unitOfWork` is null. |
-| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Wraps the invocation in `using var scope = unitOfWork.BeginScope();` so a successful inner command's commit is deferred until the outermost scope unwinds. Awaits the inner handler; on success, calls `unitOfWork.CommitAsync(cancellationToken)`; if the commit reports an `Error`, returns `TResponse.CreateFailure(error)`. On handler failure, returns the failure as-is without committing. |
+| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Wraps the invocation in `using var scope = unitOfWork.BeginScope();` so a successful inner command's commit is deferred until the outermost scope unwinds. Awaits the inner handler; on success **or** persist-on-failure (`result is IPersistOnFailure { PersistOnFailure: true }`), calls `unitOfWork.CommitAsync(cancellationToken)`; if the commit reports an `Error`, returns `TResponse.CreateFailure(error)` (overwriting the original handler error for persist-on-failure outcomes). On ordinary failure, returns the failure as-is without committing. |
 
 ### `UnitOfWorkServiceCollectionExtensions`
 
@@ -297,8 +334,8 @@ public static class UnitOfWorkServiceCollectionExtensions
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static IServiceCollection AddTrellisUnitOfWork<TContext>(this IServiceCollection services) where TContext : DbContext` | `IServiceCollection` | Registers `EfUnitOfWork<TContext>` as `IUnitOfWork` and adds the `TransactionalCommandBehavior` pipeline behavior. The behavior is inserted after the last existing `IPipelineBehavior<,>` registration (innermost position). Call this **after** `AddTrellisBehaviors()` so that commit failures are visible to outer behaviors (logging, tracing). |
-| `public static IServiceCollection AddTrellisUnitOfWorkWithoutBehavior<TContext>(this IServiceCollection services) where TContext : DbContext` | `IServiceCollection` | Registers `EfUnitOfWork<TContext>` without the pipeline behavior. Use for manual commit control or non-Mediator scenarios. |
+| `public static IServiceCollection AddTrellisUnitOfWork<TContext>(this IServiceCollection services) where TContext : DbContext` | `IServiceCollection` | Registers `EfUnitOfWork<TContext>` as `IUnitOfWork` (and forwards it as `ITrackedAggregateSource` for `Trellis.Mediator.TrackedAggregateDomainEventDispatchBehavior<,>`) and adds the open-generic `TransactionalCommandBehavior<,>` pipeline behavior. The behavior is inserted after the last existing `IPipelineBehavior<,>` registration (innermost position). Idempotent for an existing open-generic `TransactionalCommandBehavior<,>`: a second call is a no-op. **Throws `InvalidOperationException`** when a closed-generic `IPipelineBehavior<TMessage,TResponse> → TransactionalCommandBehavior<TMessage,TResponse>` is already registered (with or without an open-generic registration), because installing the open generic alongside would resolve both descriptors for matching commands and produce two commits per command. The exception message names the supported resolutions: remove the closed registration and let the helper install the open generic, or call `AddTrellisUnitOfWorkWithoutBehavior<TContext>()` to keep the explicit closed registrations and skip open-generic installation. Call this **after** `AddTrellisBehaviors()` so that commit failures are visible to outer behaviors (logging, tracing). |
+| `public static IServiceCollection AddTrellisUnitOfWorkWithoutBehavior<TContext>(this IServiceCollection services) where TContext : DbContext` | `IServiceCollection` | Registers `EfUnitOfWork<TContext>` without the pipeline behavior (also forwarded as `ITrackedAggregateSource`). Use for manual commit control or non-Mediator scenarios. |
 
 ### `EntityTimestampInterceptor`
 
@@ -439,6 +476,7 @@ public static class DbExceptionClassifier
 | `public static bool IsDuplicateKey(DbUpdateException ex)` | `bool` | Detects duplicate-key violations across SQL Server (errors 2601/2627), PostgreSQL (SQLSTATE 23505), SQLite (`UNIQUE constraint failed` / `PRIMARY KEY constraint failed`), MySQL/MariaDB (error 1062 or `Duplicate entry` message — works with both `MySql.Data.MySqlClient` and `MySqlConnector`), and generic message-based fallbacks. Provider exception types are detected by name, so consumers do not take a transitive dependency on any particular driver. SQLSTATE 23000 is intentionally **not** trusted on its own for MySQL because that code is reused for foreign-key violations. |
 | `public static bool IsForeignKeyViolation(DbUpdateException ex)` | `bool` | Detects foreign-key violations across SQL Server (error 547), PostgreSQL (SQLSTATE 23503), SQLite (`FOREIGN KEY constraint failed`), MySQL/MariaDB (errors 1451/1452 or `Cannot add or update a child row` / `Cannot delete or update a parent row` message), and generic message-based fallbacks. Provider exception types are detected by name. The MySQL message-prefix detection runs unconditionally rather than gated on SQLSTATE 23000 (which is shared with duplicate-key violations and so is unreliable on its own). |
 | `public static string? ExtractConstraintDetail(DbUpdateException ex)` | `string?` | Returns a logging-oriented detail string such as the PostgreSQL constraint name or the provider message. |
+| `public static (string? ConstraintName, string? TableName) ExtractConstraintIdentity(DbUpdateException ex)` | `(string?, string?)` | Returns the constraint name and the qualified table the violated constraint belongs to, parsed from the inner provider exception. Typed extraction first for PostgreSQL (`Npgsql.PostgresException.ConstraintName` / `TableName` / `SchemaName` via reflection so the package stays provider-agnostic; output is `"schema.table"` when both are present), then message-based parsing for SQL Server 2627 / 2601 / FK 547 (both `FOREIGN KEY` and parent-side `REFERENCE` constraint forms), SQLite `UNIQUE constraint failed: <Table>.<Column>` / `PRIMARY KEY` (constraint name is `null` because SQLite does not name the constraint), and MySQL `Duplicate entry '...' for key '<table>.<key>'`. Returns `(null, null)` on any unexpected exception so telemetry extraction never breaks the caller. Used by `SaveChangesResultAsync`, `SaveChangesWithRetryAsync`, and `TryInsertUniqueAsync` to populate `Error.Conflict.ConstraintName` / `ConstraintTableName`. |
 
 ### `TrellisPersistenceMappingException`
 
@@ -542,6 +580,27 @@ public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, C
 public static Task<Result<int>> SaveChangesResultAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
 public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, CancellationToken cancellationToken = default)
 public static Task<Result<Unit>> SaveChangesResultUnitAsync(this DbContext context, bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+```
+
+### `DbContextRetryExtensions`
+
+```csharp
+public static Task<Result<Unit>> SaveChangesWithRetryAsync(
+    this DbContext db,
+    Func<DbUpdateException, bool> shouldRetry,
+    Func<IReadOnlyList<EntityEntry>, int, CancellationToken, ValueTask<bool>> regenerate,
+    int maxAttempts = 3,
+    CancellationToken cancellationToken = default)
+```
+
+### `DbContextIdempotencyExtensions`
+
+```csharp
+public static Task<Result<TEntity>> TryInsertUniqueAsync<TEntity>(
+    this DbContext context,
+    TEntity entity,
+    CancellationToken cancellationToken = default)
+    where TEntity : class
 ```
 
 ### `QueryableExtensions`

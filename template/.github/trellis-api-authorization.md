@@ -1,4 +1,4 @@
-﻿---
+---
 package: Trellis.Authorization
 namespaces: [Trellis.Authorization]
 types: [IActorProvider, ActorContext, Actor, ActorId, Permission, AuthorizeAttribute, IAuthorizationRequirement, IResourceAuthorizationHandler]
@@ -23,10 +23,47 @@ See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using t
 - You are implementing static permission authorization through `IAuthorize`.
 - You are implementing resource-based authorization through `IAuthorizeResource<TResource>` and want the canonical guard shape.
 
+## Owner check quick-start — copy this
+
+The 90% case is "the command's resource id is loaded, and the actor must be the owner (or hold an admin permission)." For that shape, implement two interfaces — `IAuthorizeResource<TResource>` for the owner check and `IIdentifyResource<TResource, TId>` so the framework reuses the shared `SharedResourceLoaderById<TResource, TId>` instead of requiring a per-command loader.
+
+```csharp
+using Trellis;
+using Trellis.Authorization;
+
+public sealed record CancelOrderCommand(OrderId OrderId)
+    : ICommand<Result<Unit>>,
+      IAuthorizeResource<Order>,
+      IIdentifyResource<Order, OrderId>
+{
+    public OrderId GetResourceId() => OrderId;
+
+    public IResult Authorize(Actor actor, Order resource) =>
+        resource.OwnerId == actor.Id || actor.HasPermission("orders:admin")
+            ? Result.Ok()
+            : Result.Fail(new Error.Forbidden(
+                PolicyId: "orders.owner",
+                Resource: ResourceRef.For<Order>(OrderId)));
+}
+
+// DI (composition root):
+services.AddResourceAuthorization<CancelOrderCommand, Order, Result<Unit>>();
+// One per command — AOT-safe; or use the assembly-scanning overload.
+```
+
+That's it. The mediator pipeline:
+
+1. resolves the actor via the registered `IActorProvider`,
+2. loads the `Order` by `OrderId` via the shared `SharedResourceLoaderById<Order, OrderId>` (auto-registered when the command implements `IIdentifyResource<Order, OrderId>`),
+3. calls `Authorize(actor, order)`.
+
+For multi-hop authorization (the resource the actor must own is reached via one or more navigation hops, including the cricket "actor owns home OR away team" shape), use `IAuthorizeResourceVia<TOwner>` with `IIdentifyRelatedResource[s]<TRelated, TId>` along the path — see cookbook [Recipe 24](trellis-api-cookbook.md#recipe-24--indirect-multi-hop-resource-authorization).
+
 ## Patterns Index
 
 | Goal | Canonical API / pattern | See |
 |---|---|---|
+| **Owner check on the command's resource (the 90% case)** | Implement `IAuthorizeResource<TResource>` + `IIdentifyResource<TResource, TId>`; the framework loads via `SharedResourceLoaderById<TResource, TId>` and calls `Authorize(actor, resource)` | [Owner check quick-start](#owner-check-quick-start--copy-this) |
 | Represent the current user/service | `Actor` | [`Actor`](#actor) |
 | Check granted permissions with explicit deny override | `actor.HasPermission(...)`, `HasAllPermissions(...)`, `HasAnyPermission(...)` | [`Actor`](#actor) |
 | Resolve actor for a request/message | `IActorProvider.GetCurrentActorAsync(...)` | [`IActorProvider`](#iactorprovider) |
@@ -42,6 +79,26 @@ See also: [trellis-api-cookbook.md](trellis-api-cookbook.md) — recipes using t
 - Prefer `Result.Ensure` for boolean authorization guards so generated code uses the same ROP primitive as the rest of Trellis.
 - Do not mutate `RequiredPermissions`; expose the complete permission list as an immutable/read-only collection.
 - The DI registration extension `AddResourceAuthorization(...)` lives in `Trellis.Mediator` (`namespace Trellis.Mediator`), not in `Trellis.Authorization`. Wiring an `IAuthorizeResource<TResource>` therefore typically requires both `using Trellis.Authorization;` (for the interfaces) and `using Trellis.Mediator;` (for the DI extension). The compile error if the second is missing is `CS1061: 'IServiceCollection' does not contain a definition for 'AddResourceAuthorization' and no accessible extension method 'AddResourceAuthorization' accepting a first argument of type 'IServiceCollection' could be found` — see [trellis-api-mediator.md](trellis-api-mediator.md#servicecollectionextensions).
+
+## Common identity-provider claim shapes
+
+The default `ClaimsActorProvider` (in `Trellis.Asp.Authorization`) maps a flat claim name to `Actor.Id` and a flat claim name to `Actor.Permissions`. Identity providers that ship claims under a nested JSON object require either the `NestedJsonPathClaimsActorProvider` derivation or a custom override of `ClaimsActorProvider.GetCurrentActorAsync`. The table below covers the configurations that most consumers reach for; inspect your token to confirm the exact shape.
+
+| Provider | Token shape | Recommended configuration |
+|---|---|---|
+| **Auth0** (default JWT) | `{ "sub": "auth0\|abc", "permissions": ["orders:read"] }` | `AddClaimsActorProvider(opts => { opts.ActorIdClaim = "sub"; opts.PermissionsClaim = "permissions"; })` |
+| **Auth0** (`app_metadata.roles`) | `{ "sub": "auth0\|abc", "app_metadata": { "roles": ["orders:read"] } }` | `AddNestedJsonPathClaimsActorProvider(opts => { opts.ActorIdClaim = "sub"; opts.ContainerClaim = "app_metadata"; opts.PermissionsPath = "roles"; })` |
+| **Azure B2C** custom attribute | `{ "sub": "...", "extension_RolesJson": "{\"roles\":[\"orders:read\"]}" }` | `AddNestedJsonPathClaimsActorProvider(opts => { opts.ActorIdClaim = "sub"; opts.ContainerClaim = "extension_RolesJson"; opts.PermissionsPath = "roles"; })` |
+| **Entra ID v2 (interactive user)** | uses `oid` + multiple `roles` claims | `AddEntraActorProvider(opts => { ... })` — purpose-built for Entra; see the type reference |
+| **Keycloak** (`realm_access.roles`) | `{ "sub": "...", "realm_access": { "roles": ["orders:read"] } }` | `AddNestedJsonPathClaimsActorProvider(opts => { opts.ActorIdClaim = "sub"; opts.ContainerClaim = "realm_access"; opts.PermissionsPath = "roles"; })` |
+| **Okta** (nested custom claim) | `{ "sub": "...", "custom_claims": { "permissions": ["orders:read"] } }` | `AddNestedJsonPathClaimsActorProvider(opts => { opts.ActorIdClaim = "sub"; opts.ContainerClaim = "custom_claims"; opts.PermissionsPath = "permissions"; })` |
+
+**Silent-403 diagnostics.** When `ClaimsActorProvider` resolves zero permissions on an authenticated identity that does carry other claims, it emits one warning per application lifetime (`EventId 2`). When the configured `PermissionsClaim` resolves to a single value that parses as a JSON object or array, it emits one error per application lifetime (`EventId 3`) recommending `NestedJsonPathClaimsActorProvider`. Set `ClaimsActorOptions.ValidateClaimShapeOnFirstUse = false` to suppress both.
+
+**Startup validation of `NestedJsonPathClaimsActorOptions`.** `AddNestedJsonPathClaimsActorProvider(...)` registers an `IValidateOptions<NestedJsonPathClaimsActorOptions>` with `ValidateOnStart()`. If `ActorIdPath` or `PermissionsPath` is configured without a non-blank `ContainerClaim` (empty or whitespace-only both count as missing), host startup fails with `OptionsValidationException` — much earlier than the first-request `InvalidOperationException` that the provider's constructor would otherwise produce. The constructor guard is kept as defense-in-depth for manual (non-DI) construction. Two caveats:
+
+- The validator is permissive when the options are at defaults (paths empty) so a registered-but-unconfigured provider doesn't block startup.
+- `ValidateOnStart()` fires regardless of whether a later `AddXxxActorProvider` call replaces `IActorProvider`. A consumer that calls `AddNestedJsonPathClaimsActorProvider(opts => { ... invalid ... })` and then `AddClaimsActorProvider()` will still see startup fail on the nested options. Pick one provider per host; if you must replace one already-registered, remove the earlier call rather than chaining.
 
 ## Types
 

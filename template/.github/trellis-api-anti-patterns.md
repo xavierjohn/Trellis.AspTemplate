@@ -1,7 +1,7 @@
-﻿---
+---
 package: Trellis.Analyzers (applied form)
 namespaces: [Trellis, Trellis.Analyzers]
-types: [TRLS001, TRLS003, TRLS010, TRLS013, TRLS015, TRLS016, TRLS017, TRLS018, TRLS019, TRLS020, TRLS036, TRLS037, TRLS038]
+types: [TRLS001, TRLS003, TRLS010, TRLS013, TRLS015, TRLS016, TRLS017, TRLS018, TRLS019, TRLS020, TRLS035, TRLS036, TRLS037, TRLS038, TRLS039, TRLS054, TRLS055, TRLS056]
 related_docs: [trellis-api-analyzers.md, trellis-api-cookbook.md]
 version: v4
 last_verified: 2026-05-11
@@ -139,6 +139,53 @@ IQueryable<Order> submitted = db.Orders.WhereHasValue(o => o.SubmittedAt);
 
 > TRLS013 suppression is keyword-presence based: the prior `.Where(...)` body only has to mention `HasValue`, so predicate-shape verification (for example, distinguishing `m => m.HasValue` from `m => !m.HasValue`) is a known limitation. The analyzer recognizes prior `.Where(...)` chains for projections; `MaybeQueryableExtensions` are the EF translation path, not a general-purpose TRLS013 suppression mechanism.
 
+## TRLS054 — `Maybe<T>.Equals` in an `IQueryable` expression
+
+`MaybeExpressionRewriter` translates natural `==` / `!=` operator comparisons, not opaque `.Equals(...)` calls.
+
+```csharp
+// WRONG — EF Core sees an opaque Maybe<T>.Equals call
+IQueryable<Order> overdue = db.Orders
+    .Where(o => o.SubmittedAt.Equals(Maybe.From(cutoff)));   // TRLS054
+
+// WRONG — object.Equals is equally opaque to the rewriter
+IQueryable<Order> missing = db.Orders
+    .Where(o => object.Equals(o.SubmittedAt, Maybe<DateTime>.None)); // TRLS054
+
+// FIX 1 — natural-form operators are the supported expression-tree shape
+IQueryable<Order> overdue = db.Orders
+    .Where(o => o.SubmittedAt == Maybe.From(cutoff));
+
+// FIX 2 — for ad-hoc EF queries, prefer the typed helper when it matches
+IQueryable<Order> overdue = db.Orders
+    .WhereEquals(o => o.SubmittedAt, cutoff);
+```
+
+> TRLS054 is scoped to `IQueryable` / `System.Linq.Queryable` lambdas. In-memory `IEnumerable<T>` comparisons are allowed because no EF translation is involved.
+
+## TRLS055 — Non-inline `HasValueWhere` in an `IQueryable` expression
+
+`HasValueWhere` is translatable only when the predicate body is visible as an inline lambda inside the query expression tree.
+
+```csharp
+Func<DateTime, bool> isOverdue = submittedAt => submittedAt < cutoff;
+
+// WRONG — captured delegate variables are opaque to MaybeExpressionRewriter
+IQueryable<Order> overdue = db.Orders
+    .Where(o => o.SubmittedAt.HasValueWhere(isOverdue));      // TRLS055
+
+// FIX 1 — inline the predicate so the rewriter can substitute the storage member
+IQueryable<Order> overdue = db.Orders
+    .Where(o => o.SubmittedAt.HasValueWhere(submittedAt => submittedAt < cutoff));
+
+// FIX 2 — materialize first when the delegate must remain a runtime value
+IEnumerable<Order> overdueInMemory = db.Orders
+    .AsEnumerable()
+    .Where(o => o.SubmittedAt.HasValueWhere(isOverdue));
+```
+
+> Method groups and member-held delegates have the same limitation as local `Func<T, bool>` variables: EF Core cannot translate a delegate body it cannot see.
+
 ## TRLS015 — Use `SaveChangesResultAsync` instead of `SaveChangesAsync`
 
 Direct `SaveChanges`/`SaveChangesAsync` calls bypass the Result pipeline and turn database errors into unhandled exceptions.
@@ -205,6 +252,26 @@ public sealed partial class Money : ValueObject
 
 > The current TRLS020 analyzer checks the composite value object **type** for the converter attribute, not the DTO property. A property-level `JsonConverter` may be a valid `System.Text.Json` technique, but it is not the analyzer-clean shape in the current source/tests.
 
+## TRLS035 — `Maybe<T>` property should be `partial`
+
+Severity: Warning.
+
+A non-partial `Maybe<T>` auto-property on a `partial` entity type prevents the EF Core source generator from emitting the nullable backing field that Trellis conventions map.
+
+```csharp
+// WRONG — generator cannot emit the mapped backing field for a non-partial property
+public partial class Customer
+{
+    public Maybe<PhoneNumber> Phone { get; set; } // TRLS035
+}
+
+// FIX — make the property partial so the generator can provide the implementation
+public partial class Customer
+{
+    public partial Maybe<PhoneNumber> Phone { get; set; }
+}
+```
+
 ## TRLS036 — `[OwnedEntity]` type must be `partial`
 
 Type is decorated with `[OwnedEntity]` but is not declared `partial`, so the source generator cannot emit the private parameterless constructor.
@@ -265,3 +332,127 @@ public sealed partial class Address : ValueObject
 ```
 
 > Severity: Error. When TRLS038 fires, the generator skips source generation for that type.
+
+## TRLS039 — Unsupported scalar value primitive for AOT-safe JSON converter
+
+Severity: Warning.
+
+The ASP source generator can emit reflection-free JSON converters only for its supported primitive set. When a scalar value object wraps another primitive, the generator skips converter emission so AOT builds do not inherit reflection-based `JsonSerializer` calls.
+
+```csharp
+// WRONG — TimeSpan is outside the AOT-safe primitive set, so no converter is generated
+public sealed class Duration : ScalarValueObject<Duration, TimeSpan>, IScalarValue<Duration, TimeSpan>
+{
+    // TryCreate implementation omitted for brevity. // TRLS039
+}
+
+// FIX 1 — model the value with a supported primitive so the generator can emit a converter
+public sealed partial class DurationTicks : RequiredLong<DurationTicks>;
+
+// FIX 2 — keep the unsupported primitive only with an explicit custom JsonConverter<T>
+// and a local suppression documenting that the custom converter owns serialization.
+```
+
+## TRLS056 — Required value object redeclares a generated member
+
+`Required*<TSelf>` partial classes get their factory, parse, conversion, and GUID helper surface from `RequiredPartialClassGenerator`. Do not redeclare those members in the user partial.
+
+```csharp
+// WRONG — TryParse is generated for RequiredString<TSelf>
+public sealed partial class CustomerCode : RequiredString<CustomerCode>
+{
+    public static bool TryParse(string? s, IFormatProvider? provider, out CustomerCode result) // TRLS056
+    {
+        result = default!;
+        return false;
+    }
+}
+
+// FIX — remove the redundant declaration and rely on the generated TryParse
+public sealed partial class CustomerCode : RequiredString<CustomerCode>;
+```
+
+> Severity: Error. The generator reports at the user member and skips emitting the conflicting generated member, so the diagnostic points at the redundant declaration instead of surfacing as a generic `CS0111` / `CS0102` duplicate-member error from generated source.
+
+## (No analyzer) — `Result.FailAfterCommit` composed with aggregating operators
+
+Not an analyzer-flagged rule (no diagnostic ID), but a recurring shape that the FailAfterCommit XML doc cautions against. `Result.FailAfterCommit<TValue>(error)` is a **leaf** worker-handler operation: it converts a single aggregate's transient external rejection into a persisted `permanently_failed` state and returns. Threading that result through `Combine` / `TraverseAll` / `SequenceAll` / `WhenAllAsync` OR-accumulates the `PersistOnFailure` flag onto the aggregated failure — `TransactionalCommandBehavior` then commits the staged permanent-failure mutation alongside whatever the other legs produced, which is almost never what the handler author intended.
+
+```csharp
+// WRONG — FailAfterCommit composed with Combine: the staged permanent-failure mutation
+// commits alongside the validation-failure leg, even though the validation failure was
+// the deciding factor.
+public async Task<Result<OrderOutcome>> Handle(ProcessOrderCommand cmd, CancellationToken ct)
+{
+    Result<Unit> stagePermanentFailure = await MarkOrderAsPermanentlyFailedAsync(cmd.OrderId, ct);
+    // ↑ returns Result.FailAfterCommit(new Error.Unavailable(...))
+
+    Result<int> independentRule = Result.Fail<int>(
+        Error.InvalidInput.ForRule("downstream_limit_exceeded", "Customer is over quota."));
+
+    return stagePermanentFailure
+        .Combine(independentRule)
+        .Map((_, _) => new OrderOutcome(/* ... */));
+    // ↑ aggregated Error contains BOTH inner errors AND carries PersistOnFailure = true,
+    //   so TransactionalCommandBehavior commits the permanently_failed mutation.
+}
+
+// FIX — Treat FailAfterCommit as a terminal step. Run the aggregating composition to its
+// own terminal outcome first, THEN decide whether to invoke FailAfterCommit (typically in
+// a separate command or at the end of the handler with no further composition).
+public async Task<Result<OrderOutcome>> Handle(ProcessOrderCommand cmd, CancellationToken ct)
+{
+    Result<int> independentRule = Result.Fail<int>(
+        Error.InvalidInput.ForRule("downstream_limit_exceeded", "Customer is over quota."));
+
+    if (independentRule.IsFailure)
+        return Result.Fail<OrderOutcome>(independentRule.Error!);
+
+    // Now decide whether the external state warrants a persisted permanent-failure record.
+    // No composition with other legs — FailAfterCommit is the leaf.
+    return (await MarkOrderAsPermanentlyFailedAsync(cmd.OrderId, ct))
+        .Map(_ => new OrderOutcome(/* ... */));
+}
+```
+
+> Severity: Documentation only — no analyzer fires. The intent of `FailAfterCommit` is durable persistence of a permanent-failure state on a single aggregate; aggregating it across legs reaches outside that intent and produces partial commits the consumer rarely wants.
+
+## (No analyzer) — Domain event handler raises more domain events during dispatch
+
+Domain-event handlers are side-effect-only. The dispatch behaviors snapshot `UncommittedEvents()` at entry and publish only that snapshot. If a handler appends events to the same aggregate, or mutates another aggregate in a tracked-dispatch snapshot, post-dispatch validation throws `DomainEventHandlerCascadedException`; `AcceptChanges()` is not called, so operators can inspect the original and cascaded events.
+
+```csharp
+// WRONG — handler mutates the source aggregate and raises another event during dispatch.
+public sealed class AutoAdvanceOrderHandler(IOrderRepository orders)
+    : IDomainEventHandler<OrderCreatedEvent>
+{
+    public async ValueTask HandleAsync(OrderCreatedEvent domainEvent, CancellationToken cancellationToken)
+    {
+        Order order = await orders.GetAsync(domainEvent.OrderId, cancellationToken);
+        order.RaiseStatusChanged(OrderStatus.ReadyForFulfillment);
+        // ↑ Raises OrderStatusChanged while OrderCreatedEvent is being dispatched.
+        //   Post-dispatch validation throws DomainEventHandlerCascadedException.
+    }
+}
+
+// FIX — follow-up domain mutation is a separate top-level command issued after the
+// originating command completes. This is application-layer orchestration, not handler re-entry.
+public sealed class OrderWorkflow(IMediator mediator)
+{
+    public async ValueTask<Result<Unit>> CreateAndAdvanceAsync(CreateOrderCommand command, CancellationToken cancellationToken)
+    {
+        Result<Order> created = await mediator.Send(command, cancellationToken);
+        if (!created.TryGetValue(out var order))
+            return Result.Fail<Unit>(created.Error!);
+
+        return await mediator.Send(
+            new ChangeOrderStatusCommand(order.Id, OrderStatus.ReadyForFulfillment),
+            cancellationToken);
+    }
+}
+```
+
+> Do not move the `mediator.Send(new ChangeOrderStatusCommand(...))` call into the `IDomainEventHandler<TEvent>`. The tracked-dispatch reentrancy guard skips nested tracked dispatch, so events raised by the nested command can be stranded. Queue post-commit work or issue the follow-up command from the application layer after the originating command completes.
+
+Default handler exceptions are still **logged and swallowed** by `MediatorDomainEventPublisher`; cascade detection only catches handler-raised events. Durable side effects and durable at-least-once retry require the outbox pattern — planned for a future release, not shipped today.
+

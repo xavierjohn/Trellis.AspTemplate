@@ -1,4 +1,4 @@
-﻿---
+---
 package: Trellis.Http
 namespaces: [Trellis.Http]
 types: [HttpResponseExtensions]

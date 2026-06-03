@@ -1,10 +1,10 @@
-﻿---
+---
 package: Trellis (cross-package recipes)
 namespaces: [Trellis, Trellis.Asp, Trellis.EntityFrameworkCore, Trellis.Mediator]
 types: [recipes]
 related_docs: [trellis-api-core.md, trellis-api-asp.md, trellis-api-efcore.md, trellis-api-mediator.md]
 version: v3
-last_verified: 2026-05-01
+last_verified: 2026-05-31
 audience: [llm]
 ---
 # Trellis Cross-Package Cookbook
@@ -91,7 +91,6 @@ Use this table before writing code. If a task matches a row, read that recipe fi
 | Add resource authorization | [Recipe 7](#recipe-7--authorization-iactorprovider--iauthorize--resource-based-auth) |
 | Authorize against a related resource one or more navigation hops away (cricket-style fan-out, owner chains) | [Recipe 24](#recipe-24--indirect-multi-hop-resource-authorization) |
 | Map `Maybe<T>` or composite value objects with EF Core | [Recipe 8](#recipe-8--ef-core-maybepropertymapping-for-nullable-value-objects), [Recipe 13](#recipe-13--composite-value-object-end-to-end-domain--api-json-binding--ef-core-ownership) |
-| Map an aggregate-internal entity collection — private `List<T>` field with an `IReadOnlyList<T>` (or `IReadOnlyCollection<T>`) facade getter | [Recipe 13 — Owned collections with a private backing field](#owned-collections-with-a-private-backing-field) |
 | Add optional request/response fields | [Recipe 14](#recipe-14--optional-fields-in-request-dtos-maybetscalar-vs-nullable-transport) |
 | Read optional HTTP resources where 404 means absent | [Recipe 19](#recipe-19--http-client-result-safety-and-optional-reads) |
 | Choose between fail-fast and accumulating-error collection ops | [Recipe 20](#recipe-20--fail-fast-vs-accumulating-sequencetraverse-vs-sequencealltraverseall) |
@@ -99,6 +98,9 @@ Use this table before writing code. If a task matches a row, read that recipe fi
 | Create HTTP-oriented resource errors | Use `ResourceRef.For<TResource>(id)` from [trellis-api-core.md](trellis-api-core.md) |
 | Add a state transition | [Recipe 9](#recipe-9--state-machine-canfire--fire-pattern-with-fireresult) |
 | Write handler/domain tests | [Recipe 10](#recipe-10--test-handler-test-using-trellistesting-shouldbe--unwraperror) |
+| Write integration tests for a `BackgroundService` worker | [Recipe 26](#recipe-26--test-a-backgroundservice-with-workerharnesstworker) |
+| Insert a row idempotently on a unique constraint (de-duplicated worker outbox, "save unless exists") | [Recipe 27](#recipe-27--idempotent-inserts-on-a-unique-constraint-with-tryinsertuniqueasync) |
+| Make POST / PATCH safe under client retries with an IETF `Idempotency-Key` header | [Recipe 29](#recipe-29--ietf-idempotency-key-middleware-on-post--patch-with-usetrellisidempotency) |
 | Define domain events | [Recipe 17](#recipe-17--defining-custom-domain-events-occurredat-is-the-only-timestamp) |
 | Fix analyzer warnings | [Recipe 11](#recipe-11--anti-pattern--fix-gallery-the-analyzers-in-action) |
 | Wire the composition root | [Recipe 12](#recipe-12--di-wiring-playbook-addtrellis-composition-builder) |
@@ -117,7 +119,6 @@ These rows route recurring LLM lab mistakes to the most relevant reference befor
 | Result-returning ASP endpoints | [Recipe 4](#recipe-4--minimal-api-endpoint-wiring-resultt--httpresponseoptionsbuilder--tohttpresponse), [Recipe 5](#recipe-5--mvc-controller-using-asactionresult), then [trellis-api-asp.md](trellis-api-asp.md#patterns-index) | `AddTrellisAsp()` is required for Result-to-HTTP mapping; exception middleware is not the mapper. |
 | Failure-code OpenAPI metadata or `.http` examples | [trellis-api-asp.md](trellis-api-asp.md#endpoint-checklist-for-generated-apis), [trellis-api-testing-aspnetcore.md](trellis-api-testing-aspnetcore.md#api-failure-path-test-checklist) | Generated APIs need failure paths, not happy-path-only docs/tests. |
 | Resource authorization guards | [Recipe 7](#recipe-7--authorization-iactorprovider--iauthorize--resource-based-auth), then [trellis-api-authorization.md](trellis-api-authorization.md#patterns-index) | Use `Result.Ensure` for owner/admin boolean guards. |
-| Aggregate exposes a `List<T>` of owned entities behind an `IReadOnlyList<T>` getter and reads come back empty (writes appear to persist) | [Recipe 13 — Owned collections with a private backing field](#owned-collections-with-a-private-backing-field) | EF mapped `OwnsMany(o => o.ReadOnlyFacade, …)` as a separate property-access navigation; updates can't be written through the read-only getter, so every cross-context read materializes empty. Map by backing-field name (`OwnsMany<T>("_field", …)` + `Ignore(o => o.Facade)`). |
 
 ---
 
@@ -189,12 +190,14 @@ public interface IOrderRepository
 
 **What it shows.** Each base class in this recipe supplies a complete surface — your derived type adds only domain-specific state. **Do not redeclare members that are already inherited**; that is the most common Recipe 1 mistake.
 
-- `RequiredGuid<TSelf>` source-generates `TryCreate` overloads, `Parse`/`TryParse`, an explicit `Guid` → `TSelf` operator, the `Value` accessor, equality / `GetHashCode` / `IComparable`, JSON and EF Core converters, plus the `NewUniqueV4()` and `NewUniqueV7()` factories. Do not write your own `TryCreate`, equality members, parse/convert helpers, or JSON/EF converters.
-- `RequiredString<TSelf>` source-generates `TryCreate(string?, string?)`, `Parse`/`TryParse`, an explicit `string` → `TSelf` operator, the `Value` accessor, equality, JSON and EF Core converters, plus `Length`/`StartsWith`/`Contains`/`EndsWith` pass-throughs. Same rule applies: derived classes add only domain-specific helpers (e.g., a custom `TryCreateWithValidation` that layers extra rules on top of the generated `TryCreate`).
+- `RequiredGuid<TSelf>` source-generates `TryCreate` overloads, `Parse`/`TryParse`, an explicit `Guid` → `TSelf` operator, the `Value` accessor, equality / `GetHashCode` / `IComparable`, JSON and EF Core converters, plus the `NewUniqueV4()`, `NewUniqueV7()`, and `NewUniqueV7(TimeProvider)` factories. It rejects `null` and `Guid.Empty` by default; use `[AllowEmpty]` only for a domain that permits the all-zero GUID. Do not write your own `TryCreate`, equality members, parse/convert helpers, or JSON/EF converters.
+- `RequiredString<TSelf>` source-generates `TryCreate(string?, string?)`, `Parse`/`TryParse`, an explicit `string` → `TSelf` operator, the `Value` accessor, equality, JSON and EF Core converters, plus `Length`/`StartsWith`/`Contains`/`EndsWith` pass-throughs. It rejects `null`, `""`, and whitespace-only input by default, and stores the trimmed value. Use `[AllowEmpty]`, `[AllowWhitespace]`, and/or `[NoTrim]` only for an explicitly lenient domain. Same rule applies: derived classes add only domain-specific helpers (e.g., a custom `TryCreateWithValidation` that layers extra rules on top of the generated `TryCreate`).
 - `ValueObject` (the base of `Money`, `Address`, etc.) supplies `Equals(object?)`, `Equals(ValueObject?)`, `GetHashCode`, `CompareTo`, and the `==`/`!=`/`<`/`<=`/`>`/`>=` operators — all derived from `GetEqualityComponents()`. Your derived type implements **only** `protected override IEnumerable<IComparable?> GetEqualityComponents()`. Do not override `Equals`/`GetHashCode`/`CompareTo` or write equality operators yourself — that breaks the contract the base class establishes. For `Maybe<T>` components, use the inherited `protected static IComparable? MaybeComponent<T>(Maybe<T>)` helper rather than unwrapping manually.
 - `Aggregate<TId>` already supplies inherited infrastructure members: `Id`, protected `DomainEvents`, persistence-managed `ETag`, and `IsChanged` based on pending domain events. Do not redeclare those members on every aggregate; use the inherited surface and add only domain-specific state. Domain events are added via `DomainEvents.Add(...)` from inside the aggregate; the public read-only view is `IAggregate.UncommittedEvents()`.
 
 > **Compiled contract.** The exact signatures of every member listed above are exercised in `Examples/CookbookSnippets/Recipe01_CrudAggregate.cs` → `Recipe1InheritedSurface`. That file is compiled in CI, so if a signature changes in the framework, the build fails and this callout MUST be updated to match. When you need to confirm an exact overload, read the demonstrator — never paraphrase signatures from memory.
+
+`Required*<TSelf>` primitives are strict by default. Do not add legacy `[NotDefault]` or `[Trim]` to this recipe — they are vestigial no-ops that produce informational generator diagnostics. To opt out of strictness, use the per-base attributes documented in [trellis-api-primitives.md](trellis-api-primitives.md#required-defaults-and-opt-outs).
 
 `[StringLength]` and `[Range]` come from the **`Trellis` namespace** and are placed on the **class declaration** — using `System.ComponentModel.DataAnnotations` versions silently compiles but is ignored by the Trellis source generator (`TRLS017`).
 
@@ -358,7 +361,7 @@ using Trellis;
 using Trellis.Asp;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddTrellisAsp();          // error → status mapping + scalar-value validation
+builder.Services.AddTrellisAspWithScalarValidation();  // error → status mapping + scalar-value validation
 builder.Services.AddOrdersFeature();       // from Recipe 2
 
 var app = builder.Build();
@@ -445,7 +448,7 @@ app.MapGet("/blobs/{id:guid}", async (Guid id, IBlobRepository repo, Cancellatio
 
 ## Recipe 7 — Authorization: `IActorProvider` + `IAuthorize` + resource-based auth
 
-**Problem.** Static (permission) authorization on a delete command, plus resource-based ownership check on an update command — all via the mediator pipeline.
+**Problem.** Resource-based ownership check on an update command (the 90% case) plus a static permission gate on a delete command, all via the mediator pipeline.
 
 ```csharp
 using Trellis;
@@ -453,11 +456,9 @@ using Trellis.Asp.Authorization;
 using Trellis.Authorization;
 using Trellis.Primitives;
 
-public sealed record DeleteOrderCommand(OrderId OrderId) : ICommand<Result<Unit>>, IAuthorize
-{
-    public IReadOnlyList<string> RequiredPermissions => ["orders:delete"];
-}
-
+// CANONICAL OWNER CHECK — the 90% case. Implement IAuthorizeResource<TResource> for the
+// owner rule and IIdentifyResource<TResource, TId> so the framework reuses the shared
+// SharedResourceLoaderById<TResource, TId> instead of requiring a per-command loader.
 public sealed record UpdateOrderCommand(OrderId OrderId, Money NewTotal)
     : ICommand<Result<Unit>>, IAuthorizeResource<Order>, IIdentifyResource<Order, OrderId>
 {
@@ -470,6 +471,14 @@ public sealed record UpdateOrderCommand(OrderId OrderId, Money NewTotal)
         resource.OwnerId == actor.Id || actor.Permissions.Contains("orders:write")
             ? Result.Ok()
             : Result.Fail(new Error.Forbidden(PolicyId: "orders.owner", Resource: ResourceRef.For<Order>(OrderId)));
+}
+
+// Static permission gate (no resource load needed): every actor with the named permission
+// can run the command. Use IAuthorize when the authorization decision does not depend on
+// any resource state.
+public sealed record DeleteOrderCommand(OrderId OrderId) : ICommand<Result<Unit>>, IAuthorize
+{
+    public IReadOnlyList<string> RequiredPermissions => ["orders:delete"];
 }
 
 // DI wiring
@@ -487,7 +496,9 @@ services.AddResourceAuthorization(
     typeof(OrderResourceLoader).Assembly);      // ACL assembly (IResourceLoader<,> implementations)
 ```
 
-**What it shows.** `IAuthorize` enforces an AND-permission gate via `AuthorizationBehavior<,>`. `IAuthorizeResource<TResource>` runs *after* `IResourceLoader<TMessage, TResource>` produces the loaded resource, then calls `Authorize(actor, resource)`. Combining `IAuthorizeResource<TResource>` with `IIdentifyResource<TResource, TId>` lets the framework reuse the shared `SharedResourceLoaderById<TResource, TId>` instead of requiring a per-command loader.
+**What it shows.** Lead with `IAuthorizeResource<TResource>` + `IIdentifyResource<TResource, TId>` for the owner-on-loaded-resource case — that pair covers most domain authorization decisions, and the framework wires up `SharedResourceLoaderById<TResource, TId>` automatically so no per-command loader is needed. Fall back to `IAuthorize` for static permission gates that do not require a resource load. `IAuthorizeResource<TResource>` runs *after* the resource loader produces the loaded resource, then calls `Authorize(actor, resource)`; `IAuthorize` enforces an AND-permission gate via `AuthorizationBehavior<,>` before the handler runs.
+
+For the AOT-safe per-command registration shape (`AddResourceAuthorization<TMessage, TResource, TResponse>()`) and the equivalent `TrellisServiceBuilder.UseResourceAuthorization<TMessage, TResource, TResponse>()` slot, see [`trellis-api-servicedefaults.md`](trellis-api-servicedefaults.md#trellisservicebuilder). For multi-hop authorization (the resource the actor must own is reached via one or more navigation hops), see [Recipe 24](#recipe-24--indirect-multi-hop-resource-authorization).
 
 ---
 
@@ -675,9 +686,9 @@ public sealed class DocumentService
 }
 ```
 
-**What it shows.** `StateMachineExtensions.FireResult(...)` honors `PermitIf`/`IgnoreIf` guards via `CanFire(...)` rather than parsing exception messages, so it survives Stateless library upgrades. For aggregates whose state lives in a backing field (e.g., loaded from EF), use `LazyStateMachine<TState, TTrigger>` to defer machine creation until the first `FireResult` call.
+**What it shows.** `StateMachineExtensions.FireResult(...)` honors `PermitIf`/`IgnoreIf` guards via `CanFire(...)` rather than parsing exception messages, so invalid-transition detection is independent of Stateless exception text. For aggregates whose state lives in a backing field (e.g., loaded from EF), use `LazyStateMachine<TState, TTrigger>` to defer machine creation until the first `FireResult` call.
 
-**Side-effect placement.** Keep Stateless configuration declarative: states, triggers, permitted transitions, and pure/idempotent guards. Put business mutation, domain events, outbox writes, and other side effects after `FireResult` succeeds, usually in `.Tap(...)` as shown above. `FireResult` intentionally invokes `Fire(...)` even when `CanFire(...)` is false so any configured `OnUnhandledTrigger` callback can run. A custom unhandled-trigger callback may swallow the trigger, in which case `FireResult` returns `Result.Ok(stateMachine.State)` — the state read AFTER the callback runs (normally unchanged, but a callback that mutates or reroutes state will surface the resulting state). If side effects live in `OnEntry`, `OnExit`, transition callbacks, or `OnUnhandledTrigger`, they can run outside the visible ROP success/failure path and make handler behavior diverge from tests.
+**Side-effect placement.** Keep Stateless configuration declarative: states, triggers, permitted transitions, and pure/idempotent guards. Put business mutation, domain events, outbox writes, and other side effects after `FireResult` succeeds, usually in `.Tap(...)` as shown above. `FireResult` short-circuits when `CanFire(...)` is false and does **not** invoke `Fire(...)`, so configured `OnUnhandledTrigger` callbacks do not run from the typed-result path. Consumers who want an `OnUnhandledTrigger` callback to run must call Stateless `Fire(...)` directly. If side effects live in `OnEntry`, `OnExit`, transition callbacks, or `OnUnhandledTrigger`, they can run outside the visible ROP success/failure path and make handler behavior diverge from tests.
 
 > **HTTP semantics.** Invalid state-machine transitions surface as `Error.InvalidInput` (HTTP 422), not `Error.Conflict` (HTTP 409). The reasoning: `Error.Conflict` semantically means "your request is valid but collides with concurrent state — retry may succeed"; a state-machine rejection ("you asked for `Submit` on a `Cancelled` order") is not retriable and is not about concurrent modification — it's a semantic rule violation. Callers that need to distinguish state-machine rejections from other 422s can match on the `RuleViolation.ReasonCode` value `state.machine.invalid.transition`.
 
@@ -768,6 +779,7 @@ public static class CompositionRoot
 
         services.AddTrellis(options => options
             .UseAsp()
+            .UseScalarValueValidation()
             .UseMediator()
             .UseFluentValidation(typeof(PlaceOrderValidator).Assembly)
             .UseClaimsActorProvider()
@@ -785,11 +797,14 @@ public static class CompositionRoot
 
 | Module | What it applies | Notes |
 | ---- | ---- | ----------------- |
-| `UseAsp()` | `AddTrellisAsp()` | Error → status mapping plus scalar-value JSON/model-binding validation. |
+| `UseAsp()` | `AddTrellisAsp()` | Error → status mapping and `ResourceCollectionNameRegistry`. **Does NOT register scalar-value JSON / model-binding validation** — compose with `UseScalarValueValidation()` when binding value-object DTOs. |
+| `UseScalarValueValidation()` | `AddScalarValueValidation()` | Configures both MVC and Minimal API JSON pipelines (model binders + JSON converters + `SuppressModelStateInvalidFilter` toggle). Independent of `UseAsp()`. Minimal API hosts must still call `app.UseScalarValueValidation()` middleware and chain `.WithScalarValueValidation()` per endpoint. |
 | `UseMediator()` | `AddTrellisBehaviors()` | Registers the canonical Result-aware pipeline behaviors. |
 | `UseFluentValidation(...)` | `AddTrellisFluentValidation(...)` | Implies `UseMediator()`. Pass assemblies to scan, or omit assemblies when validators are registered explicitly. |
 | `UseClaimsActorProvider()` / `UseEntraActorProvider()` / `UseDevelopmentActorProvider()` | One ASP actor provider | The builder rejects multiple actor providers. |
 | `UseResourceAuthorization(...)` | `AddResourceAuthorization(...)` | Implies `UseMediator()` and scans for resource auth/loaders. |
+| `UseDomainEvents(...)` | `AddDomainEventDispatch(...)` | Implies `UseMediator()`. Response-shape dispatch uses strict snapshot validation; handlers must be side-effect-only. Mutually exclusive with tracked dispatch. |
+| `UseTrackedAggregateDomainEvents(...)` | `AddTrackedAggregateDomainEventDispatch(...)` | Implies `UseMediator()`. Dispatches committed aggregate snapshots for outcome-DTO commands and throws on same-aggregate or cross-aggregate cascade. Mutually exclusive with response-shape dispatch. |
 | `UseEntityFrameworkUnitOfWork<TContext>()` | `AddTrellisUnitOfWork<TContext>()` | Implies `UseMediator()` and is always applied last. |
 
 **Still app-owned.** `AddTrellis(...)` does **not** call `AddDbContext`, `AddMediator`, or route-constraint registration. Those choices depend on provider, connection string, source-generator setup, migrations, route template names, and hosting style.
@@ -1016,7 +1031,7 @@ The string `"_lineItems"` is unfortunately part of the public mapping contract: 
 |---|---|---|
 | Raw string `"_lineItems"` | None — typo or rename breaks at runtime model-validation. | Zero. The pattern shown above. |
 | `private const string LineItemsField = "_lineItems";` on `Order`, then `builder.OwnsMany<LineItem>(Order.LineItemsField, …)` | Refactoring tools follow the constant. Still no compile check that the field actually exists. | Leaks the field name through `internal`/`public` constant on the aggregate — adds public surface for a persistence concern. |
-| `builder.OwnsMany(o => o.LineItems, …)` directly against the facade | n/a | Two failure modes depending on the getter shape and EF version. **Loud:** EF reports it cannot determine the relationship from `IReadOnlyList<LineItem>`. **Silent:** EF accepts the registration as a navigation off the getter and the model builds cleanly, but at runtime materialization defaults to property-access mode against a read-only `IReadOnlyList<T>` property — writes fall on the floor and every fresh-context query returns an empty collection while inserts still persist. The silent variant passes startup and any test that only seeds-then-queries within the same `DbContext` instance (the change tracker holds the items); it only fails once a new context reads back. The `builder.Navigation(o => o.LineItems).UsePropertyAccessMode(PropertyAccessMode.Field)` patch rescues this case by binding EF's writes to the conventionally-named `_lineItems` field — but it only works when the field is named exactly `_camelCaseOfTheProperty` and adds a second source of truth (the navigation registration *and* the access-mode override) to keep in sync. Prefer the field-name pattern above: it's unambiguous about which field EF binds to and fails loudly at model build if the name is wrong. |
+| `builder.OwnsMany(o => o.LineItems, …)` directly against the facade | n/a | Does not work: EF reports it cannot determine the relationship from `IReadOnlyList<LineItem>`. |
 
 **Why no `[OwnedEntity]`-style convention for collections (yet).** `CompositeValueObjectConvention` discovers composite owned *value objects* by inheritance from `ValueObject`. An equivalent collection convention would need to walk every aggregate, find `IReadOnlyList<T>` / `IReadOnlyCollection<T>` properties whose `T` is an entity, locate a matching `_camelCase` backing field, and register the `OwnsMany` against it. This is on the roadmap (tracked as the analogue of `MaybeConvention` for collections); for now the cookbook pattern above is the supported approach.
 
@@ -1083,9 +1098,9 @@ The answer depends on whether the inner type is a **scalar** (single-primitive) 
 
 | Inner type | Pattern | Why |
 |---|---|---|
-| `Maybe<TScalar>` where `TScalar : IScalarValue<TScalar, TPrimitive>` (e.g., `Maybe<EmailAddress>`, `Maybe<PhoneNumber>`) | **Use `Maybe<T>` directly on the DTO.** | `AddTrellisAsp()` registers `MaybeScalarValueJsonConverterFactory` (JSON) and `MaybeModelBinder<T,P>` (route/query/header); MVC child-validation suppression for `None` scalar-maybe values is handled internally by the Trellis MVC integration. Call `AddTrellisAsp(...)` before MVC model binding is configured. `null`/missing → `None`; valid → `Maybe.From(validated)`; invalid → ProblemDetails with the same field path the domain emits. |
+| `Maybe<TScalar>` where `TScalar : IScalarValue<TScalar, TPrimitive>` (e.g., `Maybe<EmailAddress>`, `Maybe<PhoneNumber>`) | **Use `Maybe<T>` directly on the DTO.** | `AddScalarValueValidation()` (or the convenience `AddTrellisAspWithScalarValidation()`) registers `MaybeScalarValueJsonConverterFactory` (JSON) and `MaybeModelBinder<T,P>` (route/query/header); MVC child-validation suppression for `None` scalar-maybe values is handled internally by the Trellis MVC integration. Call it before MVC model binding is configured. `null`/missing → `None`; valid → `Maybe.From(validated)`; invalid → ProblemDetails with the same field path the domain emits. |
 | `Maybe<TComposite>` where `TComposite : ValueObject` with multiple fields (e.g., `Maybe<ShippingAddress>`) | **Use a nullable transport (`TComposite?`) and adapt at the controller seam.** | No `MaybeCompositeValueObjectJsonConverterFactory` ships today — System.Text.Json would default-construct the inner type, bypassing `TryCreate`. Wrap with `Maybe.From(...)` inside the controller. |
-| `Maybe<TPrimitive>` (e.g., `Maybe<int>`, `Maybe<long>`, `Maybe<string>`, `Maybe<Guid>`, `Maybe<DateTime>`) | **Use `Maybe<T>` directly on the DTO.** | `AddTrellisAsp()` registers `MaybePrimitiveJsonConverterFactory` (JSON) and `MaybePrimitiveModelBinder<T>` (route/query/header). Same closed-primitive allowed list as `CompositeValueObjectJsonConverter` (`string`, `decimal`, `int`, `long`, `short`, `byte`, `double`, `float`, `bool`, `Guid`, `DateTime`, `DateTimeOffset`). `null`/missing → `None`; valid primitive → `Maybe.From(value)`. If the primitive carries domain meaning, you may still prefer wrapping it in a scalar value object (e.g., `Age : RequiredInt<Age>`) for the wire-time validation `TryCreate` provides; both shapes are factory-handled. |
+| `Maybe<TPrimitive>` (e.g., `Maybe<int>`, `Maybe<long>`, `Maybe<string>`, `Maybe<Guid>`, `Maybe<DateTime>`) | **Use `Maybe<T>` directly on the DTO.** | `AddScalarValueValidation()` (or the convenience `AddTrellisAspWithScalarValidation()`) registers `MaybePrimitiveJsonConverterFactory` (JSON) and `MaybePrimitiveModelBinder<T>` (route/query/header). Same closed-primitive allowed list as `CompositeValueObjectJsonConverter` (`string`, `decimal`, `int`, `long`, `short`, `byte`, `double`, `float`, `bool`, `Guid`, `DateTime`, `DateTimeOffset`). `null`/missing → `None`; valid primitive → `Maybe.From(value)`. If the primitive carries domain meaning, you may still prefer wrapping it in a scalar value object (e.g., `Age : RequiredInt<Age>`) for the wire-time validation `TryCreate` provides; both shapes are factory-handled. |
 | `Maybe<TUnsupportedPrimitive>` (e.g., `Maybe<DateOnly>`, `Maybe<TimeOnly>`, `Maybe<uint>`) | **Use `TUnsupportedPrimitive?` on the DTO and `.AsMaybe()` at the seam.** | These types are outside both the composite-VO converter allowed list and the `Maybe<TPrimitive>` factory allowed list. The wire-shape DTO + adapter at the controller seam is the same pattern as `Maybe<TComposite>`. |
 
 > **The same DTO pattern applies inside a composite VO.** If a *composite value object's interior* contains `Maybe<TPrimitive>` / arrays / collections, `CompositeValueObjectJsonConverter` rejects them too (see Recipe 13 §"Supported property shapes inside a composite VO"). Keep the composite VO clean as a domain type and declare a wire-shape DTO with nullable transports, then lift on inbound (`.AsMaybe()` / `Maybe.From(...)`) and project on outbound (`.AsNullable()`).
@@ -1116,10 +1131,10 @@ public sealed class CustomersController(ISender sender) : ControllerBase
 }
 ```
 
-`AddTrellisAsp()` is the only wiring required:
+`AddTrellisAspWithScalarValidation()` is the only wiring required:
 
 ```csharp
-services.AddTrellisAsp();      // MaybeScalarValueJsonConverterFactory + MaybePrimitiveJsonConverterFactory + MaybeModelBinder + MaybePrimitiveModelBinder + ValidationVisitor patch
+services.AddTrellisAspWithScalarValidation();   // MaybeScalarValueJsonConverterFactory + MaybePrimitiveJsonConverterFactory + MaybeModelBinder + MaybePrimitiveModelBinder + ValidationVisitor patch
 services.AddControllers();
 ```
 
@@ -1163,13 +1178,14 @@ public sealed record CreateCustomerRequest(EmailAddress Email, Maybe<ShippingAdd
 // FIX — nullable transport + controller-seam adapter (Pattern B above).
 public sealed record CreateCustomerRequest(EmailAddress Email, ShippingAddress? ShippingAddress);
 
-// WRONG — bypassing AddTrellisAsp() (e.g., raw services.AddControllers().AddJsonOptions(...) in isolation)
+// WRONG — bypassing AddScalarValueValidation() (e.g., raw services.AddControllers().AddJsonOptions(...) in isolation)
 // drops the Maybe converters AND the SuppressChildValidationMetadataProvider, so MVC's ValidationVisitor
 // will throw InvalidOperationException("Maybe has no value.") the moment a None reaches model validation.
-services.AddControllers();   // missing AddTrellisAsp()
+services.AddControllers();   // missing scalar-value validation wiring
 
-// FIX — call AddTrellisAsp() before AddControllers(); it is idempotent and configures both pipelines.
-services.AddTrellisAsp();
+// FIX — call AddTrellisAspWithScalarValidation() (or AddScalarValueValidation() explicitly) before
+// AddControllers(); both call paths are idempotent and configure both pipelines.
+services.AddTrellisAspWithScalarValidation();
 services.AddControllers();
 ```
 
@@ -1309,6 +1325,9 @@ public Result<Order> Submit(TimeProvider clock)
 }
 ```
 
+> [!IMPORTANT]
+> Domain-event handlers are side-effect-only. The mediator dispatch behaviors snapshot `UncommittedEvents()` at dispatch entry and publish only that snapshot. If a handler raises an event on the same aggregate, post-dispatch validation throws `DomainEventHandlerCascadedException` and the aggregate's events are not cleared. If a side effect needs more domain mutation, send a separate Mediator command after the originating command completes, or queue post-commit work that runs as its own top-level command — not from inside the handler.
+
 **On the aggregate.** If your aggregate also exposes a public `SubmittedAt` property (e.g., to drive UI sort order or read-model projections), source it from the event timestamp at write time — don't track it independently:
 
 ```csharp
@@ -1329,7 +1348,7 @@ public Result<Order> Submit(TimeProvider clock)
 
 **Why `DateTimeOffset`.** `OccurredAt` is `DateTimeOffset` (not `DateTime`) so the explicit offset is a part of the value and round-trips unambiguously through serialization. `TimeProvider.GetUtcNow()` returns `DateTimeOffset` directly — events stored in outbox tables, integration buses, and audit projections retain their authored instant without timezone-loss bugs.
 
-**See also.** The XML doc on `IDomainEvent.OccurredAt` (in `Trellis.Core`) calls this out explicitly. If your IDE shows the doc on hover, the rule is right there before you hit the compile error.
+**See also.** The XML doc on `IDomainEvent.OccurredAt` (in `Trellis.Core`) calls this out explicitly. If your IDE shows the doc on hover, the rule is right there before you hit the compile error. For dispatch-handler cascade traps, see [`trellis-api-anti-patterns.md`](trellis-api-anti-patterns.md#no-analyzer--domain-event-handler-raises-more-domain-events-during-dispatch).
 
 ---
 
@@ -1829,7 +1848,8 @@ The naive workaround is a per-handler ownership guard (e.g. cricket's old `Match
 
 | Scenario | Recipe |
 |---|---|
-| Authorize against the resource the command identifies | `IAuthorizeResource<T>` (Recipe 7) |
+| **Owner-by-id check on the command's resource (the 90% case)** | `IAuthorizeResource<T>` + `IIdentifyResource<T, TId>` → framework reuses `SharedResourceLoaderById<T, TId>` (Recipe 7) |
+| Authorize against the resource the command identifies (custom loader) | `IAuthorizeResource<T>` + custom `IResourceLoader<TMessage, T>` (Recipe 7) |
 | Authorize against a single related resource one FK hop away | `IAuthorizeResourceVia<TOwner>` + `IIdentifyRelatedResource<TOwner, TOwnerId>` on the leaf |
 | Authorize against a set of related resources (cricket fan-out, OR-ownership) | `IAuthorizeResourceVia<TOwner>` + `IIdentifyRelatedResources<TOwner, TOwnerId>` on the leaf |
 | Authorize against a resource at the end of a chain (`Match → Team → Tournament`) | `IAuthorizeResourceVia<TFinalOwner>` + `IIdentifyRelatedResource<,>` declared on each intermediate entity |
@@ -2172,6 +2192,309 @@ public async Task Submit_with_one_unsatisfiable_line_does_not_reserve_any_stock(
 ```
 
 Together with the duplicate-product case (two lines for the same product whose summed quantity exceeds available stock), these are the two failure-mode tests that catch every form of this bug.
+
+---
+
+## Recipe 26 — Test a `BackgroundService` with `WorkerHarness<TWorker>`
+
+**Problem.** A periodic worker reads pending work, dispatches a side effect, and emits a domain event per item. Integration tests must drive the worker forward deterministically (no `Task.Delay`), capture the domain events the worker raised, and stop the host cleanly — without re-implementing the `IHost` + `FakeTimeProvider` + `IActorProvider` + `IDomainEventHandler<T>` plumbing in every test fixture.
+
+```csharp
+// The worker under test. BackgroundService is registered as a singleton hosted service,
+// so it resolves scoped services through an IServiceScopeFactory rather than capturing
+// them in the constructor. IWorkerTickSignal is the harness-only observation primitive;
+// production hosts do not register an implementation, so the worker injects it as an
+// optional dependency and no-ops when absent.
+public sealed class HealthProbeWorker(
+    IServiceScopeFactory scopeFactory,
+    TimeProvider time,
+    IWorkerTickSignal? tick = null) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // Register the first Task.Delay BEFORE signaling readiness — the signal must
+        // prove the FakeTimeProvider callback exists. Task.Delay(TimeSpan, TimeProvider,
+        // CancellationToken) eagerly registers the timer with the TimeProvider when
+        // called, so by the time SignalAsync("ready") completes the callback is already
+        // observable to Time.Advance. Signaling FIRST (before Task.Delay) would leave a
+        // gap during which the test can resume from WaitForTickAsync("ready"), call
+        // Time.Advance, and have the worker subsequently register a deadline of
+        // (advanced-now + period) — losing the Advance. The signal is a no-op in
+        // production hosts that do not register IWorkerTickSignal.
+        var nextDelay = Task.Delay(TimeSpan.FromMinutes(5), time, stoppingToken);
+        if (tick is not null)
+            await tick.SignalAsync("ready", stoppingToken).ConfigureAwait(false);
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try { await nextDelay.ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var mediator  = scope.ServiceProvider.GetRequiredService<IMediator>();
+            var publisher = scope.ServiceProvider.GetRequiredService<IDomainEventPublisher>();
+            var repo      = scope.ServiceProvider.GetRequiredService<IHealthProbeRepository>();
+
+            foreach (var probe in await repo.GetDuePendingAsync(stoppingToken).ConfigureAwait(false))
+            {
+                var outcome = await mediator.Send(new RunProbeCommand(probe.Id), stoppingToken).ConfigureAwait(false);
+                if (outcome.IsSuccess)
+                    await publisher.PublishAsync(
+                        new ProbeCompletedDomainEvent(probe.Id, time.GetUtcNow()),
+                        stoppingToken).ConfigureAwait(false);
+            }
+
+            // Register the next iteration's delay BEFORE signaling "probe", for the same
+            // reason as above: a test that snapshots a probe cursor and advances time
+            // after the wait expects the next callback to already be registered.
+            // Signaling AFTER PublishAsync + the next Task.Delay registration makes
+            // WaitForTickAsync a true completion barrier — every captured event for this
+            // iteration is recorded AND the next callback exists for the next Advance.
+            nextDelay = Task.Delay(TimeSpan.FromMinutes(5), time, stoppingToken);
+            if (tick is not null)
+                await tick.SignalAsync("probe", stoppingToken).ConfigureAwait(false);
+        }
+    }
+}
+
+// The integration test.
+public class HealthProbeWorkerTests
+{
+    [Fact]
+    public async Task Worker_dispatches_due_probes_and_publishes_a_completion_event_per_run()
+    {
+        await using var harness = await WorkerHarness<HealthProbeWorker>.CreateAsync(opts =>
+        {
+            opts.ConfigureServices(s =>
+            {
+                // WorkerHarness deliberately does not call AddMediator(...) or
+                // AddDomainEventDispatch(); a worker test re-uses the production
+                // composition root so the test exercises the same wiring the production
+                // host uses. Forgetting either registration would surface as
+                // GetRequiredService throwing at scope resolution.
+                s.AddMediator(options => options.Assemblies = [typeof(RunProbeCommand).Assembly]);
+                s.AddDomainEventDispatch();
+                s.AddSingleton<IHealthProbeRepository, FakeHealthProbeRepository>();
+            });
+            opts.SeedAsync(async (sp, ct) =>
+            {
+                var repo = sp.GetRequiredService<IHealthProbeRepository>();
+                await repo.AddAsync(new HealthProbe(ProbeId.New(), "/api/orders"), ct);
+            });
+        });
+
+        await harness.StartAsync(TestContext.Current.CancellationToken);
+
+        // StartAsync returns as soon as ExecuteAsync is scheduled, NOT after the
+        // worker has registered its first Task.Delay callback with FakeTimeProvider.
+        // Block on the worker's "ready" signal — which the worker emits AFTER its
+        // first Task.Delay(...) call (so the callback is provably registered before
+        // the signal fires) — so the subsequent Time.Advance always lands on an
+        // existing callback. Without this barrier the Advance races the worker.
+        await harness.WaitForTickAsync("ready", TimeSpan.FromSeconds(5));
+
+        // Snapshot the most recent "probe" tick BEFORE advancing time. The cursor is the
+        // global signal index (LastTickIndexOf returns -1 when nothing has signaled yet);
+        // WaitForTickAsync(after: cursor, ...) will block until a tick with a STRICTLY
+        // greater global index fires, so the wait can never observe a tick already in
+        // the recorded history. Do not use TickCountOf as a cursor — it is a per-name
+        // count, not the global signal index, and will race when other tick names
+        // interleave.
+        var cursor = harness.LastTickIndexOf("probe");
+
+        // Advance the FakeTimeProvider past the worker's 5-minute Task.Delay. Advance is
+        // deterministic; the worker's Task.Delay(interval, time, ct) resumes and runs the
+        // iteration. WaitForTickAsync's timeout measures real time and is NOT consumed
+        // by the call to Advance.
+        harness.Time.Advance(TimeSpan.FromMinutes(5));
+        await harness.WaitForTickAsync("probe", after: cursor, TimeSpan.FromSeconds(2));
+
+        // Once WaitForTickAsync returns, PublishAsync for this iteration has already
+        // returned (the worker signals AFTER the publish loop), so the captured-event
+        // list is fully populated and the synchronous read is race-free.
+        harness.Events<ProbeCompletedDomainEvent>().Should().HaveCount(1);
+    }
+}
+```
+
+**What it shows.** `WorkerHarness<TWorker>.CreateAsync(...)` builds an `IHost` with `TWorker` registered as the sole hosted service, wires `TimeProvider` to `FakeTimeProvider`, registers a `TestActorProvider` returning `WorkerHarnessOptions.SystemActor`, and installs an open-generic `IDomainEventHandler<>` that captures every published event for `harness.Events<TEvent>()` and `harness.WaitForEventAsync<TEvent>()`. The harness does **not** register `AddMediator(...)` or `AddDomainEventDispatch()` — those are part of the production composition root and belong in the test's `ConfigureServices` callback so the worker exercises the same wiring it uses in production. `harness.StartAsync(...)` returns as soon as `ExecuteAsync` is scheduled on the thread pool, NOT after the worker has registered its first `Task.Delay` with `FakeTimeProvider`; the recipe makes the readiness barrier deterministic by REGISTERING the first `Task.Delay(...)` before signaling `"ready"` (because `Task.Delay(TimeSpan, TimeProvider, CancellationToken)` eagerly calls `timeProvider.CreateTimer(...)`, the callback exists by the time `SignalAsync("ready")` completes), then `await harness.WaitForTickAsync("ready", ...)` in the test releases when the test can safely call `Time.Advance`. Signaling first and registering the delay second would leave a gap during which the test could `Advance` before any callback was registered — losing the `Advance`. The lazier alternative when you cannot change the worker is `await harness.SettleAsync()`, at the cost of a real-time yield. `harness.Time.Advance(...)` is the deterministic equivalent of `Task.Delay` — the worker's `Task.Delay(interval, time, ct)` resumes synchronously and runs the next iteration. Tests should pair `Advance` with `WaitForTickAsync(name, after: cursor, ...)` so the wait observes the *next* tick rather than racing with one already in the history; `LastTickIndexOf(name)` is the right baseline-cursor source. The harness's `DisposeAsync` stops the host with a real-time cap; if `StartAsync` itself throws, the harness drives a best-effort `StopAsync` so any earlier-registered `IHostedService` that succeeded still observes its stop hook.
+
+`Trellis.Testing.Worker` references `Trellis.Testing` transitively, so handler-test assertions like `Should().BeSuccess()` and `FakeRepository<,>` are available from the same test project without an extra package.
+
+---
+
+## Recipe 27 — Idempotent inserts on a unique constraint with `TryInsertUniqueAsync`
+
+**Problem.** A worker (or any caller) processes events that may be redelivered. It must record "I handled event X for destination Y" exactly once. A `(EventId, DestinationId)` unique index in the database is the source of truth — the second delivery should silently no-op, not crash, not double-process. Doing this with `Any(...)` + `Add` + `SaveChangesAsync` is a TOCTOU race: two concurrent deliveries both see "not present", both `Add`, one wins and the loser throws `DbUpdateException`. Catching `DbUpdateException` and string-matching on the inner exception's message is provider-specific (SQL Server says one thing, PostgreSQL another, SQLite a third) and easy to get subtly wrong.
+
+**Solution.** `DbContext.TryInsertUniqueAsync(entity, ct)` (from `Trellis.EntityFrameworkCore.DbContextIdempotencyExtensions`) adds the entity, calls `SaveChangesAsync`, and converts a provider-level unique-constraint violation into `Result.Fail(new Error.Conflict(null, "duplicate.key"))` with a generic safe `Detail`. Constraint identity (`ConstraintName`, `ConstraintTableName`) is extracted on a best-effort basis and attached to the `Error.Conflict` payload for structured logging. All other failures — concurrency, foreign-key, cancellation, connection errors — propagate to the caller so retry policies and global handlers see them. The helper requires a clean `DbContext` (no pending changes) so a duplicate-key violation can be unambiguously attributed to the entity being inserted.
+
+```csharp
+// Domain: a worker records each (EventId, DestinationId) it has dispatched.
+public sealed class DispatchedDelivery
+{
+    public required Guid EventId { get; init; }
+    public required Guid DestinationId { get; init; }
+    public required DateTimeOffset DispatchedAt { get; init; }
+}
+
+// EF Core: composite primary key on (EventId, DestinationId) gives the unique
+// constraint TryInsertUniqueAsync relies on; no separate HasIndex().IsUnique()
+// is needed. If your model already has a surrogate PK, add the unique index
+// explicitly instead: e.HasIndex(d => new { d.EventId, d.DestinationId }).IsUnique().
+public sealed class DispatchLogDbContext(DbContextOptions<DispatchLogDbContext> options) : DbContext(options)
+{
+    public DbSet<DispatchedDelivery> Deliveries => Set<DispatchedDelivery>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<DispatchedDelivery>()
+            .HasKey(d => new { d.EventId, d.DestinationId });
+    }
+}
+
+public sealed class DispatchLogger(DispatchLogDbContext db, TimeProvider time, ILogger<DispatchLogger> log)
+{
+    public async Task<Result<DeliveryOutcome>> RecordDeliveryAsync(
+        Guid eventId, Guid destinationId, CancellationToken ct)
+    {
+        var entry = new DispatchedDelivery
+        {
+            EventId = eventId,
+            DestinationId = destinationId,
+            DispatchedAt = time.GetUtcNow(),
+        };
+
+        var result = await db.TryInsertUniqueAsync(entry, ct);
+
+        if (result.IsSuccess)
+            return Result.Ok(DeliveryOutcome.Recorded);
+
+        if (result.UnwrapError() is Error.Conflict conflict && conflict.ReasonCode == "duplicate.key")
+        {
+            // The second delivery — exactly what idempotency promises. No-op, do not fail.
+            log.LogInformation(
+                "Duplicate delivery suppressed for event {EventId} / destination {DestinationId} (table {Table}, constraint {Constraint}).",
+                eventId, destinationId, conflict.ConstraintTableName, conflict.ConstraintName);
+            return Result.Ok(DeliveryOutcome.AlreadyRecorded);
+        }
+
+        return Result.Fail<DeliveryOutcome>(result.UnwrapError());
+    }
+}
+
+public enum DeliveryOutcome { Recorded, AlreadyRecorded }
+```
+
+**What it shows.** `TryInsertUniqueAsync` is the framework idiom for "insert unless a unique constraint says it already exists". The success path returns `Result.Ok(entity)` and the entity has its EF-populated generated values (PK, row version, sequence-assigned columns) in place on the same instance the caller passed in. The duplicate path returns a failed `Result<TEntity>` carrying an `Error.Conflict` whose `ReasonCode` is `"duplicate.key"` and whose `ConstraintName` / `ConstraintTableName` telemetry fields are populated from the underlying provider exception, and the helper detaches the attempted entity from the change tracker so a retry with a freshly-constructed entity does not re-flush the original on the next `SaveChangesAsync`. `ConstraintName` and `ConstraintTableName` are best-effort and marked `[JsonIgnore]` on `Error.Conflict` — they are telemetry fields for structured logs, never serialized to API responses; the safe-for-clients message lives in `Detail`. Foreign-key violations, `DbUpdateConcurrencyException`, connection-level exceptions, and `OperationCanceledException` all propagate normally so retry policies still see them. The clean-context precondition (throws `InvalidOperationException` if `ChangeTracker.HasChanges()` is `true` on entry) prevents the failure from being mis-attributed to the inserted entity when unrelated pending changes exist; flush them first or use a fresh context. Pair the helper with `SaveChangesWithRetryAsync` (from `Trellis.EntityFrameworkCore.DbContextRetryExtensions`) when the retry shape is "regenerate a key and try again" rather than "second writer wins" — the two helpers are complementary, not substitutes.
+
+`DbExceptionClassifier.ExtractConstraintIdentity(DbUpdateException)` is the lower-level building block the helper uses; the same identity is also now populated on the `Error.Conflict` returned by `SaveChangesResultAsync` and `SaveChangesWithRetryAsync` for the `duplicate.key` and `referential.integrity` reason codes, so existing code paths get the new telemetry fields for free.
+
+---
+
+## Recipe 28 — Synthesise `ProblemDetails.Instance` from a `ResourceRef`
+
+**Problem.** A `POST /api/orders` endpoint that creates an order against an existing customer fails with `new Error.NotFound(ResourceRef.For<Customer>("abc-123"))` when the customer does not exist. The default RFC 9457 `Instance` is the request URL (`/api/orders`), which does not identify the missing resource — the client has to inspect the body to learn which customer was missing. Worse, telemetry indexed by `Instance` collapses every missing-customer failure on this endpoint into the same `/api/orders` bucket regardless of which customer was missing.
+
+**Solution.** `TrellisAspOptions.SynthesizeProblemDetailsInstanceFromResourceRef` (default `true`) tells `ResponseFailureWriter` to populate `Instance` from the failing `ResourceRef` whenever the request URL does not already identify the resource. The synthesised value is `/{collection}/{escapedId}` (no `/api/` prefix, no api-version segment, no query string). The naive plural fallback lowercases the type name; registered overrides are emitted verbatim, so use lowercase override values if you want to preserve the convention. The original request URI is preserved under `Extensions["request"]` for callers that need both.
+
+```csharp
+// Aggregates with default plural names need no extra wiring. The naive default
+// is type.ToLowerInvariant() + "s" — fine for "Order" → "orders", "Customer" →
+// "customers". Override irregular plurals or domain-specific naming with the
+// attribute (preferred — keeps the mapping next to the type):
+[ResourceCollectionName("people")]
+public sealed class Person { /* ... */ }
+
+[ResourceCollectionName("statuses")]
+public sealed class Status { /* ... */ }
+```
+
+```csharp
+// Composition root. AddTrellisAsp wires the registry; the typed extension
+// registers a single override and is AOT/trim-safe. Use the assembly scanner
+// when you want every [ResourceCollectionName]-tagged type in an assembly
+// picked up at once; mark the call as RequiresUnreferencedCode-aware in
+// AOT-published apps.
+services.AddTrellisAsp();
+services.AddResourceCollectionName<Person>("people");
+services.AddResourceCollectionName("LegacyDocument", "legacy-documents");
+services.AddResourceCollectionNames(typeof(Person).Assembly);  // alternative
+```
+
+**On the wire.** `POST /api/orders` returning `Result.Fail<Order>(new Error.NotFound(ResourceRef.For<Customer>("abc-123")))` emits:
+
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.5",
+  "title": "Not Found",
+  "status": 404,
+  "instance": "/customers/abc-123",
+  "request": "/api/orders",
+  "code": "not-found",
+  "kind": "not-found"
+}
+```
+
+If the same error is raised on `GET /api/customers/abc-123`, the URL already identifies the resource, so synthesis is suppressed and `instance` stays `/api/customers/abc-123` with no `request` extension. Suppression is segment-and-query-value-aware: an id of `"1"` does not match the path segment `v1`, and a percent-encoded path segment `a%2fb` correctly matches the raw id `a/b` (RFC 3986 case-insensitive percent escapes).
+
+**Opting out.** Set `o.SynthesizeProblemDetailsInstanceFromResourceRef = false` in `AddTrellisAsp(o => ...)` to retain the historical request-URL-only `Instance`. The new shape is strictly more informative, so the toggle exists for strict backward compatibility only.
+
+**Defensive synthesis.** The writer never throws while building the synthesised URI. Malformed `ResourceRef` values (empty Type or Id), unsafe collection names, and a missing registry all silently fall back to the request URL — a domain 404/409 can never turn into a 500 because of synthesis. `Error.Aggregate` never promotes a child's `ResourceRef`; the envelope itself carries no resource identity.
+
+**Common-noun guidance.** The naive plural (`Type.ToLowerInvariant() + "s"`) produces poor output for words like `Status` → `statuss`, `Address` → `addresss`, `Person` → `persons`. Override these explicitly via `[ResourceCollectionName(...)]` on the aggregate (preferred) or via `services.AddResourceCollectionName<T>(name)`. The attribute constructor and the DI helper both validate the name as a single safe URL path segment so misconfiguration fails fast at host start.
+
+---
+
+## Recipe 29 — IETF `Idempotency-Key` middleware on POST / PATCH with `UseTrellisIdempotency`
+
+**Problem.** A client retries a `POST /payments` after a network hiccup. The original request already created the payment; the retry must return the same `201 Created` payload — not a second `201` (double-charge), and not a `400 Bad Request` because the second attempt now violates a uniqueness rule. The IETF [`draft-ietf-httpapi-idempotency-key-header`](https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/) names the header (`Idempotency-Key`) and the contract: the server stores the first response keyed by `(scope, key, request-fingerprint)`, replays it on retry, rejects fingerprint mismatches with `422 Unprocessable Entity`, and serialises concurrent in-flight retries with `409 Conflict` + `Retry-After`. Doing this by hand per endpoint scatters request buffering, response capture, scope/tenant isolation, and store-side CAS across the codebase.
+
+**Solution.** `Trellis.Asp.Idempotency.IdempotencyMiddleware` (opt-in via the `[Idempotent]` endpoint attribute) does the contract end-to-end. The middleware is a no-op on endpoints that do not carry the attribute and on methods outside the configured set (`POST` and `PATCH` by default).
+
+```csharp
+// Program.cs
+builder.Services.AddTrellis(t => t
+    .UseAsp()
+    .UseProblemDetails()
+    .UseIdempotency(opt =>
+    {
+        opt.Ttl = TimeSpan.FromHours(24);
+        opt.MaxRequestBodyBytes = 256 * 1024;
+    }));
+builder.Services.AddInMemoryIdempotencyStore(); // dev / single-instance; swap for an EF-backed store in production
+
+var app = builder.Build();
+app.UseTrellisIdempotency();
+app.MapControllers();
+```
+
+```csharp
+// PaymentsController.cs
+[ApiController]
+[Route("payments")]
+public sealed class PaymentsController : ControllerBase
+{
+    [HttpPost]
+    [Idempotent]
+    public Task<IActionResult> CreateAsync([FromBody] CreatePaymentRequest body, CancellationToken ct)
+        => /* handler returns 201 Created with the payment representation */;
+}
+```
+
+```csharp
+// Minimal API equivalent — attach the attribute as endpoint metadata.
+app.MapPost("/payments", CreatePaymentAsync).WithMetadata(new IdempotentAttribute());
+```
+
+**What it shows.** The middleware reads the configured header (default `Idempotency-Key`), rejects raw header values above the parser's 4 KiB defensive cap, parses accepted values as the [RFC 8941](https://www.rfc-editor.org/rfc/rfc8941) `sf-string` subset, buffers the request body up to `MaxRequestBodyBytes`, computes a SHA-256 fingerprint over `(method, path, normalized headers, body)`, resolves a tenant/actor scope through `IIdempotencyScopeResolver` (default: per-actor via `IActorProvider`, falling back to anonymous when no actor is established), and calls `IIdempotencyStore.TryReserveAsync(scope, key, fingerprint, ct)`. The store either issues a `Reserved` outcome (carrying an opaque CAS reservation token), reports `AlreadyInFlight` (concurrent reservation still open — the middleware responds `409 Conflict` with `Retry-After`), `Replay` (a completed snapshot — the middleware writes the captured status code, headers, and body verbatim), or `BodyHashMismatch` (same key, different fingerprint — the middleware responds `422 Unprocessable Entity` so the client knows the key was reused with a mutated request). When the reservation is `Reserved`, the middleware decorates `IHttpResponseBodyFeature` with `CapturingResponseBodyFeature` (a tee — bytes still flow to the client while a bounded copy is captured) and registers an `OnStarting` callback that snapshots the final status code and response headers before the first byte flushes. On a successful flush within `MaxResponseBodyBytes`, the middleware calls `IIdempotencyStore.CompleteAsync(reservationId, snapshot, ct)` against a bounded 5-second cancellation token (NOT `HttpContext.RequestAborted`, so finalisation still runs if the client disconnected). On any failure path — exception, response-too-large, `SendFileAsync` (uncapturable), middleware abort, **5xx response status** (treated as transient per the IETF Idempotency-Key draft), or **response trailers** (cannot be replayed by the snapshot writer) — the middleware calls `AbandonAsync(reservationId, ct)` so the next retry can re-reserve. Reservation tokens are opaque `string` GUIDs the store uses for CAS so a stale completer cannot finalise a reservation the store already abandoned via the reservation-timeout sweeper.
+
+**Composition rules.** `services.AddTrellisIdempotency(...)` (or the builder slot `t.UseIdempotency(...)`) registers options + scope resolver + an internal marker; `services.AddInMemoryIdempotencyStore()` is a separate, explicit call so a dev-only in-memory store is never silently inherited into production. `app.UseTrellisIdempotency()` throws at startup if `AddTrellisIdempotency(...)` was not called. The `IIdempotencyStore` registration is also validated at startup when the container exposes `IServiceProviderIsService` (the default Microsoft.Extensions.DependencyInjection container does); on containers that do not expose it the missing-store failure surfaces as a per-request resolution error on the first opted-in request. The in-memory store is single-process only; multi-instance hosts need an EF-backed store (per-tenant table or shared with `Scope` as a discriminator column) that implements the same CAS contract. `MaxRequestBodyBytes` and `MaxResponseBodyBytes` are hard caps: exceeding the request cap returns `413 Payload Too Large` before any handler runs; exceeding the response cap aborts capture and records no snapshot (the next retry re-executes), so the cap should be set high enough to envelop the largest legitimate response from any opted-in endpoint. Endpoints that stream via `SendFileAsync` cannot be captured and are equivalent to exceeding the response cap — model those as non-idempotent or convert them to a buffered response.
+
+**Tests.** Use `Microsoft.AspNetCore.TestHost.TestServer` (the same harness pattern as Recipe 26) plus an `IIdempotencyStore` registered as a singleton (`InMemoryIdempotencyStore`) plus `TimeProvider` swapped for `Microsoft.Extensions.Time.Testing.FakeTimeProvider` (from the `Microsoft.Extensions.TimeProvider.Testing` NuGet package). Drive the same `(key, body)` twice — assert the second call returns the captured status code, headers, and body byte-for-byte. Drive `(key, mutated-body)` — assert `422` and the original snapshot is still replayable. Advance `FakeTimeProvider` past `ReservationTimeout` to exercise the sweep + re-reserve path. The NuGet package is `Microsoft.Extensions.TimeProvider.Testing` (the namespace containing `FakeTimeProvider` is `Microsoft.Extensions.Time.Testing`); the test project should reference the package the same way `Trellis.Testing.Worker`'s harness does.
+
+---
+
 ## Cross-references
 
 - [trellis-api-core.md](trellis-api-core.md#extension-class-catalog-full-signatures) — every `Result*Extensions(Async)` family with full signatures.
