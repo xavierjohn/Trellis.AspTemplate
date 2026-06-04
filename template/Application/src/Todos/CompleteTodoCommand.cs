@@ -7,32 +7,21 @@ using Trellis.Authorization;
 /// <summary>
 /// Completes a todo item. Only the creator can complete their own todo.
 /// <para>
-/// State-transition POST. Requires <c>If-Match</c> (RFC 6585) to prevent the
-/// lost-update race: the client must have read the resource first and present
-/// its ETag, so a concurrent mutation between read and complete surfaces as
-/// <c>412 Precondition Failed</c> instead of silently winning.
+/// Body-less state-transition POST. Does <strong>not</strong> require <c>If-Match</c>:
+/// the state machine guard on <see cref="TodoItem.Complete"/> already rejects stale
+/// transitions (e.g., completing an already-completed todo) with
+/// <c>422 Unprocessable Content</c> — there is no body to overwrite, so a precondition
+/// header would be ceremony without benefit. See the template's
+/// "Require <c>If-Match</c> on body-overwriting mutations" rule for the full decision table.
 /// </para>
 /// </summary>
 public sealed record CompleteTodoCommand : ICommand<Result<TodoItem>>, IAuthorize, IAuthorizeResource<TodoItem>, IIdentifyResource<TodoItem, TodoId>
 {
     public TodoId TodoId { get; }
 
-    /// <summary>
-    /// The ETag from the client's <c>If-Match</c> header.
-    /// <para>
-    /// Required (RFC 6585). When the array is <c>null</c>, the handler returns
-    /// <c>new Error.TransportFault(new HttpError.PreconditionRequired(...))</c> which surfaces as
-    /// <c>428 Precondition Required</c>. When provided, the handler validates it against the
-    /// aggregate's current ETag before mutation, returning <c>412 Precondition Failed</c> if
-    /// stale (RFC 9110).
-    /// </para>
-    /// </summary>
-    public EntityTagValue[]? IfMatchETags { get; }
-
-    public CompleteTodoCommand(TodoId todoId, EntityTagValue[]? ifMatchETags = null)
+    public CompleteTodoCommand(TodoId todoId)
     {
         TodoId = todoId;
-        IfMatchETags = ifMatchETags;
     }
 
     /// <inheritdoc />
@@ -66,7 +55,6 @@ public sealed class CompleteTodoCommandHandler : ICommandHandler<CompleteTodoCom
         var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
         return maybe
             .ToResult(new Error.NotFound(ResourceRef.For<TodoItem>(command.TodoId)) { Detail = $"Todo {command.TodoId} not found." })
-            .RequireETag(command.IfMatchETags)
             .Bind(todo => todo.Complete(_timeProvider).Map(_ => todo));
     }
 }

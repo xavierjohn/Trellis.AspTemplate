@@ -28,7 +28,7 @@ public class CompleteTodoCommandTests
         var created = createResult.Unwrap();
 
         var result = await _sender.Send(
-            new CompleteTodoCommand(created.Id, [EntityTagValue.Strong(created.ETag)]),
+            new CompleteTodoCommand(created.Id),
             TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();

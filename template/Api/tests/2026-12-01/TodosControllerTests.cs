@@ -113,11 +113,8 @@ public class TodosControllerTests
         var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Complete me", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
-        var etag = createResponse.Headers.ETag!;
 
-        using var complete = new HttpRequestMessage(HttpMethod.Post, $"api/Todos/{created.Id}/complete?{VersionParam}");
-        complete.Headers.IfMatch.Add(etag);
-        var response = await client.SendAsync(complete, TestContext.Current.CancellationToken);
+        var response = await client.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var completed = await response.Content.ReadAsAsyncWithAssertion<TodoResponse>();
@@ -125,34 +122,26 @@ public class TodosControllerTests
         completed.CompletedAt.Should().NotBeNull();
     }
 
+    // Body-less state-transition POSTs (like /{id}/complete) intentionally do NOT require
+    // If-Match. The state machine guard on TodoItem.Complete rejects a duplicate transition
+    // (already-completed todo) with 422 Unprocessable Content — there is no body to overwrite,
+    // so a precondition header would be ceremony without benefit. See the template's
+    // "Require If-Match on body-overwriting mutations" rule.
     [Fact]
-    public async Task Complete_without_If_Match_returns_428_PreconditionRequired()
+    public async Task Complete_already_completed_todo_returns_422_UnprocessableContent()
     {
         var client = CreateClient("owner-1", "todos:create", "todos:complete");
         var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Needs If-Match", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Already done", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
-        var response = await client.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
+        var first = await client.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        response.StatusCode.Should().Be(HttpStatusCode.PreconditionRequired);
-    }
+        var second = await client.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
 
-    [Fact]
-    public async Task Complete_with_stale_If_Match_returns_412_PreconditionFailed()
-    {
-        var client = CreateClient("owner-1", "todos:create", "todos:complete");
-        var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Stale complete", dueDate }, TestContext.Current.CancellationToken);
-        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
-        var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
-
-        using var complete = new HttpRequestMessage(HttpMethod.Post, $"api/Todos/{created.Id}/complete?{VersionParam}");
-        complete.Headers.TryAddWithoutValidation("If-Match", "\"this-tag-does-not-match\"");
-        var response = await client.SendAsync(complete, TestContext.Current.CancellationToken);
-
-        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+        second.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
     }
 
     [Fact]
@@ -339,10 +328,8 @@ public class TodosControllerTests
         var getResponse = await client.GetAsync($"api/Todos/{created.Id}?{VersionParam}", TestContext.Current.CancellationToken);
         getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Complete
-        using var completeRequest = new HttpRequestMessage(HttpMethod.Post, $"api/Todos/{created.Id}/complete?{VersionParam}");
-        completeRequest.Headers.IfMatch.Add(getResponse.Headers.ETag!);
-        var completeResponse = await client.SendAsync(completeRequest, TestContext.Current.CancellationToken);
+        // Complete — body-less state-transition POST, no If-Match required
+        var completeResponse = await client.PostAsync($"api/Todos/{created.Id}/complete?{VersionParam}", null, TestContext.Current.CancellationToken);
         completeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var completed = await completeResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         completed.Status.Should().Be("Completed");

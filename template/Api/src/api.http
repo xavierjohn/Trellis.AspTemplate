@@ -1,4 +1,7 @@
 ### Create a todo (admin)
+# Idempotency-Key opts this POST into the IETF idempotency middleware;
+# {{$guid}} generates a fresh key per call so retries are not replayed.
+# dueDate is computed at request time so the example never goes stale.
 # @name createTodo
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
@@ -7,7 +10,7 @@ X-Test-Actor: {{adminActor}}
 
 {
   "title": "Buy groceries",
-  "dueDate": "2026-04-01T12:00:00Z",
+  "dueDate": "{{$datetime iso8601 30 d}}",
   "tag": "shopping"
 }
 
@@ -19,7 +22,7 @@ X-Test-Actor: {{adminActor}}
 
 {
   "title": "Finish quarterly report",
-  "dueDate": "2026-03-31T17:00:00Z"
+  "dueDate": "{{$datetime iso8601 14 d}}"
 }
 
 ### Get todo by ID
@@ -32,45 +35,56 @@ GET {{host}}/api/Todos/overdue?api-version={{apiVersion}}
 Accept: application/json
 X-Test-Actor: {{userActor}}
 
-### Update todo
+### Update todo (PUT — body-overwriting mutation, requires If-Match)
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
+If-Match: {{createTodo.response.headers.ETag}}
 
 {
   "title": "Buy organic groceries",
-  "dueDate": "2026-04-15T12:00:00Z",
+  "dueDate": "{{$datetime iso8601 45 d}}",
   "tag": "health"
 }
 
-### Update todo with past due date (→ 400)
+### Update todo with past due date (→ 422 from DueDate value-object validation)
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
+If-Match: {{createTodo.response.headers.ETag}}
 
 {
   "title": "Too late",
   "dueDate": "2020-01-01T12:00:00Z"
 }
 
-### Complete todo (by creator)
+### Complete todo (by creator) — body-less state-transition POST, no If-Match required
 POST {{host}}/api/Todos/{{createTodo.response.body.id}}/complete?api-version={{apiVersion}}
 X-Test-Actor: {{adminActor}}
 
-### Complete todo (by non-creator → 403)
+### Complete todo (by non-creator → 403 Forbidden via IAuthorize)
 POST {{host}}/api/Todos/{{createTodo.response.body.id}}/complete?api-version={{apiVersion}}
 X-Test-Actor: {{userActor}}
 
-### Delete todo
+### Complete an already-completed todo (→ 422 from state machine guard)
+# Run the "Complete todo (by creator)" request above first, then this one.
+POST {{host}}/api/Todos/{{createTodo.response.body.id}}/complete?api-version={{apiVersion}}
+X-Test-Actor: {{adminActor}}
+
+### Delete todo (requires If-Match — destructive mutation)
+# NOTE: after Update + Complete above, createTodo's ETag is stale; copy the latest
+# ETag from a fresh GET response into this If-Match header before sending, or this
+# request will return 412 Precondition Failed.
 DELETE {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 X-Test-Actor: {{adminActor}}
+If-Match: {{createTodo.response.headers.ETag}}
 
 ### Get deleted todo (→ 404)
 GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Accept: application/json
 X-Test-Actor: {{userActor}}
 
-### Bad Request — empty title
+### Bad Request — empty title (→ 422 from Title value-object validation)
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
 Idempotency-Key: {{$guid}}
@@ -78,10 +92,10 @@ X-Test-Actor: {{adminActor}}
 
 {
   "title": "",
-  "dueDate": "2026-04-01T12:00:00Z"
+  "dueDate": "{{$datetime iso8601 30 d}}"
 }
 
-### Bad Request — invalid tag
+### Bad Request — invalid tag (→ 422 from Tag value-object validation)
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
 Idempotency-Key: {{$guid}}
@@ -89,11 +103,11 @@ X-Test-Actor: {{adminActor}}
 
 {
   "title": "Test invalid tag",
-  "dueDate": "2026-04-01T12:00:00Z",
+  "dueDate": "{{$datetime iso8601 30 d}}",
   "tag": "INVALID TAG"
 }
 
-### Not Found — nonexistent todo
+### Not Found — nonexistent todo (→ 404 with ResourceRef)
 GET {{host}}/api/Todos/00000000-0000-0000-0000-000000000001?api-version={{apiVersion}}
 Accept: application/json
 X-Test-Actor: {{userActor}}
@@ -111,26 +125,12 @@ Accept: application/json
 ###############################################
 
 ### GET with If-None-Match — 304 Not Modified when ETag matches
-# Copy the ETag from the "Get todo by ID" response above
 GET {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Accept: application/json
 X-Test-Actor: {{userActor}}
 If-None-Match: {{createTodo.response.headers.ETag}}
 
-### PUT with If-Match — conditional update (succeeds if ETag matches)
-PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
-Content-Type: application/json
-X-Test-Actor: {{adminActor}}
-If-Match: {{createTodo.response.headers.ETag}}
-
-{
-  "title": "Buy organic groceries",
-  "dueDate": "2026-04-15T12:00:00Z",
-  "tag": "health"
-}
-
 ### PUT with stale If-Match — 412 Precondition Failed
-# Using the old ETag after the update above — should fail
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
@@ -138,15 +138,15 @@ If-Match: "stale-etag-value"
 
 {
   "title": "This should fail",
-  "dueDate": "2026-04-15T12:00:00Z"
+  "dueDate": "{{$datetime iso8601 30 d}}"
 }
 
-### PUT without If-Match — unconditional update (OptionalETag is a no-op)
+### PUT without If-Match — 428 Precondition Required (RequireETag fires on missing header)
 PUT {{host}}/api/Todos/{{createTodo.response.body.id}}?api-version={{apiVersion}}
 Content-Type: application/json
 X-Test-Actor: {{adminActor}}
 
 {
-  "title": "Unconditional update",
-  "dueDate": "2026-04-20T12:00:00Z"
+  "title": "Missing If-Match",
+  "dueDate": "{{$datetime iso8601 30 d}}"
 }

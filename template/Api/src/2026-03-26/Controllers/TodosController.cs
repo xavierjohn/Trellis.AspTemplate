@@ -165,30 +165,28 @@ public class TodosController : ControllerBase
     /// <summary>
     /// Complete a todo item. Only the creator can complete their own todo.
     /// <para>
-    /// State-transition POST. Requires <c>If-Match</c> (RFC 6585 — missing →
-    /// <c>428 Precondition Required</c>; stale → RFC 9110 <c>412 Precondition Failed</c>)
-    /// to prevent lost-update races against concurrent mutations.
+    /// Body-less state-transition POST. Does <strong>not</strong> require <c>If-Match</c>:
+    /// the state machine guard on the aggregate rejects stale transitions (e.g., completing
+    /// an already-completed todo) with <c>422 Unprocessable Content</c>. There is no body to
+    /// overwrite, so a precondition header would be ceremony without benefit. See the
+    /// template's "Require <c>If-Match</c> on body-overwriting mutations" rule.
     /// </para>
     /// </summary>
     [HttpPost("{id}/complete")]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status412PreconditionFailed)]
-    [ProducesResponseType(StatusCodes.Status428PreconditionRequired)]
+    [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
     public ValueTask<ActionResult<TodoResponse>> Complete(
         [CustomerResourceId] TodoId id,
-        CancellationToken cancellationToken)
-    {
-        var ifMatchETags = ETagHelper.ParseIfMatch(Request);
-        return _sender.Send(new CompleteTodoCommand(id, ifMatchETags), cancellationToken)
+        CancellationToken cancellationToken) =>
+        _sender.Send(new CompleteTodoCommand(id), cancellationToken)
             .ToHttpResponseAsync(
                 TodoResponse.From,
                 opts => opts
                     .WithETag(t => EntityTagValue.Strong(t.ETag))
                     .WithLastModified(t => t.LastModified))
             .AsActionResultAsync<TodoResponse>();
-    }
 
     /// <summary>
     /// Demonstrates the deterministic <see cref="Error.Unexpected"/> path with a stable
