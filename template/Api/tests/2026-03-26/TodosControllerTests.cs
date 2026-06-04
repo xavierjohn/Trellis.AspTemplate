@@ -457,6 +457,21 @@ public class TodosControllerTests
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
     }
 
+    // The all-zero GUID is a *syntactically* valid 32-hex-char cursor that the keyset parser
+    // would accept, but TodoId's ValidateAdditional rejects Guid.Empty as a domain value.
+    // The handler must surface this as 422 (malformed cursor), NOT bubble the validation
+    // failure into a 500. Regression: see PR #43 Copilot review comment on
+    // GetOverdueTodosQuery.cs:53.
+    [Fact]
+    public async Task GetOverdue_with_all_zero_cursor_returns_422_not_500()
+    {
+        var client = CreateClient("user-1", "todos:read");
+
+        var response = await client.GetAsync($"api/Todos/overdue?cursor=00000000000000000000000000000000&{VersionParam}", TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
     #endregion
 
     #region Conditional requests (RFC 9110)

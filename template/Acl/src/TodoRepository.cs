@@ -26,12 +26,16 @@ internal class TodoRepository : RepositoryBase<TodoItem, TodoId>, ITodoRepositor
         int limit,
         CancellationToken cancellationToken)
     {
-        var query = DbSet
-            .Where(specification)
-            .OrderBy(t => t.Id);
-
+        // Apply filters BEFORE OrderBy: Queryable.Where returns IQueryable<T>, not
+        // IOrderedQueryable<T>, so casting the result of Where back to IOrderedQueryable
+        // after an earlier OrderBy is fragile and provider-dependent (LINQ-to-Objects
+        // throws InvalidCastException). OrderBy must be the last clause in the keyset
+        // chain so the IOrderedQueryable shape is preserved for .Take(limit + 1).
+        var filtered = DbSet.Where(specification);
         if (afterId is not null)
-            query = (IOrderedQueryable<TodoItem>)query.Where(t => ((Guid)t.Id) > ((Guid)afterId));
+            filtered = filtered.Where(t => ((Guid)t.Id) > ((Guid)afterId));
+
+        var query = filtered.OrderBy(t => t.Id);
 
         // Peek one extra to detect a next page without a separate count query.
         var rows = await query.Take(limit + 1).ToListAsync(cancellationToken);

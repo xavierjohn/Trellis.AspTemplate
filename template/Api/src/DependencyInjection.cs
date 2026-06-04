@@ -45,8 +45,11 @@ internal static class DependencyInjection
                 if (ctx.ProblemDetails.Status == StatusCodes.Status405MethodNotAllowed &&
                     ctx.HttpContext.Response.Headers.TryGetValue("Allow", out var allow))
                 {
-                    ctx.ProblemDetails.Extensions["allow"] =
-                        allow.ToString().Split(", ", StringSplitOptions.RemoveEmptyEntries);
+                    // RFC 9110 §5.6.1: Allow is comma-separated with optional whitespace.
+                    // Split on ',' and trim so a server that emits "GET,PUT,DELETE" (no spaces)
+                    // surfaces three array entries, not one combined string.
+                    ctx.ProblemDetails.Extensions["allow"] = allow.ToString()
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 }
             };
         });

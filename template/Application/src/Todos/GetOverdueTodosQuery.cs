@@ -50,7 +50,16 @@ public sealed class GetOverdueTodosQueryHandler : IQueryHandler<GetOverdueTodosQ
                 return Result.Fail<Page<TodoItem>>(
                     Error.InvalidInput.ForField("cursor", "cursor.malformed", "Cursor is not a valid opaque token."));
 
-            afterId = TodoId.Create(afterGuid);
+            // Bypass TryCreate's "not Guid.Empty" rule via the malformed-cursor channel.
+            // Guid.TryParseExact accepts the all-zero GUID syntactically, but TodoId rejects
+            // it as a domain value — an all-zero cursor is a malformed token, not a missing
+            // cursor, so surface it as 422 rather than letting TryCreate throw via .Unwrap().
+            var todoIdResult = TodoId.TryCreate(afterGuid);
+            if (!todoIdResult.TryGetValue(out var todoId))
+                return Result.Fail<Page<TodoItem>>(
+                    Error.InvalidInput.ForField("cursor", "cursor.malformed", "Cursor is not a valid opaque token."));
+
+            afterId = todoId;
         }
 
         var spec = new OverdueTodoSpecification(_timeProvider.GetUtcNow().UtcDateTime);
