@@ -17,9 +17,13 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
 
     /// <summary>
     /// The ETag from the client's <c>If-Match</c> header.
-    /// When provided, the handler validates it against the aggregate's current ETag
-    /// before proceeding, returning 412 Precondition Failed if stale.
-    /// When <c>null</c>, the update is unconditional.
+    /// <para>
+    /// Required (RFC 6585). When the array is <c>null</c>, the handler returns
+    /// <c>new Error.TransportFault(new HttpError.PreconditionRequired(...))</c> which surfaces as
+    /// <c>428 Precondition Required</c>. When provided, the handler validates it against the
+    /// aggregate's current ETag before mutation, returning <c>412 Precondition Failed</c> if
+    /// stale (RFC 9110).
+    /// </para>
     /// </summary>
     public EntityTagValue[]? IfMatchETags { get; }
 
@@ -46,7 +50,7 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
     /// <param name="timeProvider">Optional time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>
     public static Result<UpdateTodoCommand> TryCreate(TodoId todoId, Title title, DueDate dueDate, Maybe<Tag> tag, EntityTagValue[]? ifMatchETags = null, TimeProvider? timeProvider = null) =>
         Result.Ensure(dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
-                Error.Validation("Due date must be in the future.", "dueDate"))
+                Error.InvalidInput.ForField("dueDate", "out_of_range", "Due date must be in the future."))
             .Map(_ => new UpdateTodoCommand(todoId, title, dueDate, tag, ifMatchETags));
 }
 
@@ -59,13 +63,9 @@ public sealed class UpdateTodoCommandHandler : ICommandHandler<UpdateTodoCommand
 
     public UpdateTodoCommandHandler(ITodoRepository repository) => _repository = repository;
 
-    public async ValueTask<Result<TodoItem>> Handle(UpdateTodoCommand command, CancellationToken cancellationToken)
-    {
-        var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
-        return await maybe
-            .ToResult(Error.NotFound($"Todo {command.TodoId} not found."))
-            .OptionalETag(command.IfMatchETags)
-            .Bind(todo => todo.Update(command.Title, command.DueDate, command.Tag))
-            .CheckAsync(todo => _repository.SaveAsync(todo, cancellationToken));
-    }
+    public async ValueTask<Result<TodoItem>> Handle(UpdateTodoCommand command, CancellationToken cancellationToken) =>
+        await _repository.FindByIdAsync(command.TodoId, cancellationToken)
+            .ToResultAsync(new Error.NotFound(ResourceRef.For<TodoItem>(command.TodoId)) { Detail = $"Todo {command.TodoId} not found." })
+            .RequireETagAsync(command.IfMatchETags)
+            .BindAsync(todo => todo.Update(command.Title, command.DueDate, command.Tag));
 }

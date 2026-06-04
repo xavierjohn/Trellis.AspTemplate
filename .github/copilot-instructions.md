@@ -71,13 +71,33 @@ dotnet new uninstall Trellis.AspTemplate
 
 ## Upgrading Trellis Packages
 
-After upgrading `TrellisVersion` in `template/Directory.Packages.props`, sync the API reference files:
+After upgrading `TrellisVersion` in `template/Directory.Packages.props`, sync the API reference files.
+
+**IMPORTANT:** the `TrellisSyncApiReference` target only emits markdown for packages in the **selected project's transitive package graph**. Running it against a single project (e.g. `Domain.csproj`) will silently miss docs for packages that project doesn't reference (e.g. `Trellis.Asp`, `Trellis.Asp.ApiVersioning`, `Trellis.FluentValidation`, `Trellis.Http.Abstractions`, `Trellis.Testing*`). Always run it against **every** Trellis-referencing project in the template:
 
 ```powershell
-dotnet build template/Domain/src/Domain.csproj /t:TrellisSyncApiReference
+$projects = @(
+    'template\Domain\src\Domain.csproj',
+    'template\Application\src\Application.csproj',
+    'template\Acl\src\AntiCorruptionLayer.csproj',
+    'template\Api\src\Api.csproj',
+    'template\Application\tests\Application.Tests.csproj',
+    'template\Api\tests\Api.Tests.csproj'
+)
+foreach ($p in $projects) {
+    dotnet build $p /t:TrellisSyncApiReference -v:q -nologo
+}
 ```
 
-This copies the updated `trellis-api-*.md` files from the NuGet packages into `template/.github/`. Verify the diff and commit the updated reference files alongside the version bump.
+The sync target writes updated `trellis-api-*.md` files to **`.github/`** at the repo root (it is designed for template consumers whose service repo root IS the `.github/` parent). For this template repo, those files must then be **moved into `template/.github/`** so they ship with the template:
+
+```powershell
+Get-ChildItem .github\trellis-api-*.md | ForEach-Object {
+    Move-Item -Force $_.FullName "template\.github\$($_.Name)"
+}
+```
+
+Only files whose content changed in the new package version are emitted. Verify the diff in `template/.github/` and commit the updated reference files alongside the version bump.
 
 ## Updating Trellis Conventions
 

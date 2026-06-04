@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TodoSample.Application;
 using TodoSample.Application.Todos;
+using TodoSample.Domain;
+using Trellis.Authorization;
 using Trellis.EntityFrameworkCore;
 using Trellis.Mediator;
 
@@ -16,9 +18,11 @@ public static class DependencyInjection
                    .AddTrellisInterceptors());
 
         services.AddScoped<ITodoRepository, TodoRepository>();
+        services.AddScoped<SharedResourceLoaderById<TodoItem, TodoId>, TodoItemResourceLoader>();
         services.AddResourceAuthorization(
             typeof(CompleteTodoCommand).Assembly,
-            typeof(CompleteTodoResourceLoader).Assembly);
+            typeof(TodoItemResourceLoader).Assembly);
+        services.AddTrellisUnitOfWork<AppDbContext>();
 
         return services;
     }

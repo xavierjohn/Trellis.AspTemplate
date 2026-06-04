@@ -1,4 +1,4 @@
-﻿namespace Domain.Tests;
+namespace Domain.Tests;
 
 using TodoSample.Domain;
 
@@ -10,21 +10,17 @@ public class TodoItemTests
 
     private static TodoItem CreateActiveTodo(DueDate? dueDate = null, Maybe<Tag>? tag = null, string actorId = "actor-1")
     {
-        var result = TodoItem.TryCreate(TestTitle, dueDate ?? FutureDueDate, tag ?? Maybe<Tag>.None, actorId);
-        result.Should().BeSuccess();
-        var todo = result.Unwrap();
+        var todo = new TodoItem(TestTitle, dueDate ?? FutureDueDate, tag ?? Maybe<Tag>.None, actorId, TimeProvider.System);
         todo.Start().Should().BeSuccess();
         return todo;
     }
 
     [Fact]
-    public void TryCreate_valid_todo_returns_pending_state()
+    public void Constructor_valid_todo_returns_pending_state()
     {
         var dueDate = FutureDueDate;
-        var result = TodoItem.TryCreate(TestTitle, dueDate, Maybe<Tag>.None, "actor-1");
+        var todo = new TodoItem(TestTitle, dueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
-        result.Should().BeSuccess();
-        var todo = result.Unwrap();
         todo.Title.Should().Be(TestTitle);
         todo.DueDate.Should().Be(dueDate);
         todo.Status.Should().Be(TodoStatus.Pending);
@@ -33,32 +29,28 @@ public class TodoItemTests
     }
 
     [Fact]
-    public void TryCreate_with_tag_preserves_tag()
+    public void Constructor_with_tag_preserves_tag()
     {
         var tag = Tag.Create("work");
 
-        var result = TodoItem.TryCreate(TestTitle, FutureDueDate, Maybe.From(tag), "actor-1");
+        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe.From(tag), "actor-1", TimeProvider.System);
 
-        result.Should().BeSuccess()
-            .Which.Tag.Should().HaveValueEqualTo(tag);
+        todo.Tag.Should().HaveValueEqualTo(tag);
     }
 
     [Fact]
-    public void TryCreate_raises_TodoCreated_event()
+    public void Constructor_raises_TodoCreated_event()
     {
-        var result = TodoItem.TryCreate(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1");
+        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
-        result.Should().BeSuccess();
-        result.Unwrap().UncommittedEvents().Should().ContainSingle()
+        todo.UncommittedEvents().Should().ContainSingle()
             .Which.Should().BeOfType<TodoCreated>();
     }
 
     [Fact]
     public void Start_from_Pending_transitions_to_Active()
     {
-        var createResult = TodoItem.TryCreate(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1");
-        createResult.Should().BeSuccess();
-        var todo = createResult.Unwrap();
+        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
         var startResult = todo.Start();
 
@@ -95,10 +87,9 @@ public class TodoItemTests
     [Fact]
     public void Complete_from_Pending_fails()
     {
-        var result = TodoItem.TryCreate(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1");
-        result.Should().BeSuccess();
+        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
-        result.Unwrap().Complete().Should().BeFailure();
+        todo.Complete().Should().BeFailure();
     }
 
     [Fact]
@@ -128,10 +119,9 @@ public class TodoItemTests
     [Fact]
     public void IsOverdue_pending_past_due_returns_false()
     {
-        var result = TodoItem.TryCreate(TestTitle, PastDueDate, Maybe<Tag>.None, "actor-1");
-        result.Should().BeSuccess();
+        var todo = new TodoItem(TestTitle, PastDueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
-        result.Unwrap().IsOverdue(DateTime.UtcNow).Should().BeFalse();
+        todo.IsOverdue(DateTime.UtcNow).Should().BeFalse();
     }
 
     [Fact]

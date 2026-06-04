@@ -27,7 +27,9 @@ public class CompleteTodoCommandTests
         createResult.Should().BeSuccess();
         var created = createResult.Unwrap();
 
-        var result = await _sender.Send(new CompleteTodoCommand(created.Id), TestContext.Current.CancellationToken);
+        var result = await _sender.Send(
+            new CompleteTodoCommand(created.Id),
+            TestContext.Current.CancellationToken);
 
         result.Should().BeSuccess();
         var todo = result.Unwrap();
@@ -48,6 +50,6 @@ public class CompleteTodoCommandTests
         await using var scope = _actorProvider.WithActor("user-2", Permissions.TodosComplete);
         var result = await _sender.Send(new CompleteTodoCommand(created.Id), TestContext.Current.CancellationToken);
 
-        result.Should().BeFailureOfType<ForbiddenError>();
+        result.Should().BeFailureOfType<Error.Forbidden>();
     }
 }

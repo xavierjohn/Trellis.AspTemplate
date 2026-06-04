@@ -5,7 +5,11 @@ using TodoSample.Domain;
 using Trellis.Testing;
 
 /// <summary>
-/// Adapts FakeRepository to the ITodoRepository interface.
+/// Adapts <see cref="FakeRepository{TAggregate, TId}"/> to <see cref="ITodoRepository"/>.
+/// <para>
+/// Most members delegate directly to the fake — the surfaces are intentionally aligned.
+/// Only <see cref="QueryPageAsync"/> is custom (keyset pagination) and is implemented here.
+/// </para>
 /// </summary>
 internal class FakeRepositoryAdapter : ITodoRepository
 {
@@ -13,27 +17,38 @@ internal class FakeRepositoryAdapter : ITodoRepository
 
     public FakeRepositoryAdapter(FakeRepository<TodoItem, TodoId> repo) => _repo = repo;
 
-    public async Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken)
+    public Task<Maybe<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken) =>
+        _repo.FindByIdAsync(id, cancellationToken);
+
+    public Task<IReadOnlyList<TodoItem>> QueryAsync(Specification<TodoItem> specification, CancellationToken cancellationToken) =>
+        _repo.QueryAsync(specification, cancellationToken);
+
+    public Task<(IReadOnlyList<TodoItem> Items, bool HasNext)> QueryPageAsync(
+        Specification<TodoItem> specification,
+        TodoId? afterId,
+        int limit,
+        CancellationToken cancellationToken)
     {
-        var result = await _repo.GetByIdAsync(id, cancellationToken);
-        return result.IsSuccess ? Maybe.From(result.Value) : Maybe<TodoItem>.None;
+        var afterGuid = afterId is null ? (Guid?)null : (Guid)afterId;
+        var query = _repo.GetAll()
+            .Where(specification.IsSatisfiedBy)
+            .OrderBy(t => (Guid)t.Id);
+
+        var filtered = afterGuid is null
+            ? (IEnumerable<TodoItem>)query
+            : query.Where(t => (Guid)t.Id > afterGuid.Value);
+
+        var rows = filtered.Take(limit + 1).ToList();
+        var hasNext = rows.Count > limit;
+        IReadOnlyList<TodoItem> items = hasNext ? rows.Take(limit).ToList() : rows;
+        return Task.FromResult((items, hasNext));
     }
 
-    public Task<IReadOnlyList<TodoItem>> GetAllAsync(Specification<TodoItem> specification, CancellationToken cancellationToken)
-    {
-        var items = _repo.GetAll().Where(specification.IsSatisfiedBy).ToList();
-        return Task.FromResult<IReadOnlyList<TodoItem>>(items);
-    }
+    public void Add(TodoItem todo) => _repo.Add(todo);
 
-    public async Task<Result<Unit>> SaveAsync(TodoItem todo, CancellationToken cancellationToken)
-    {
-        var result = await _repo.SaveAsync(todo, cancellationToken);
-        return result.Map(_ => default(Unit));
-    }
+    public void Remove(TodoItem todo) => _repo.Remove(todo);
 
-    public async Task<Result<Unit>> DeleteAsync(TodoId id, CancellationToken cancellationToken)
-    {
-        var result = await _repo.DeleteAsync(id, cancellationToken);
-        return result.Map(_ => default(Unit));
-    }
+    public Task<Result<Unit>> RemoveByIdAsync(TodoId id, CancellationToken cancellationToken) =>
+        _repo.RemoveByIdAsync(id, cancellationToken);
 }
+

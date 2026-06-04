@@ -20,6 +20,6 @@ public class DueDateTests
         var result = DueDate.TryCreate(DateTime.MinValue);
 
         result.Should().BeFailure()
-            .Which.Should().BeOfType<ValidationError>();
+            .Which.Should().BeOfType<Error.InvalidInput>();
     }
 }

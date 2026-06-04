@@ -13,7 +13,7 @@ public class TitleTests
         var result = Title.TryCreate(value);
 
         result.Should().BeFailure()
-            .Which.Should().BeOfType<ValidationError>();
+            .Which.Should().BeOfType<Error.InvalidInput>();
     }
 
     [Fact]
@@ -32,7 +32,7 @@ public class TitleTests
         var result = Title.TryCreate(longTitle);
 
         result.Should().BeFailure()
-            .Which.Should().BeOfType<ValidationError>();
+            .Which.Should().BeOfType<Error.InvalidInput>();
     }
 
     [Fact]

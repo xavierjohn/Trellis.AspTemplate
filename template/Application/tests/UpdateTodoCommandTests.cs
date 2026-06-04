@@ -34,7 +34,7 @@ public class UpdateTodoCommandTests
             timeProvider: timeProvider);
 
         result.Should().BeFailure()
-            .Which.Should().BeOfType<ValidationError>();
+            .Which.Should().BeOfType<Error.InvalidInput>();
     }
 
     [Fact]

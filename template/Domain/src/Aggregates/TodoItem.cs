@@ -1,6 +1,6 @@
 ﻿namespace TodoSample.Domain;
 
-using Trellis.Stateless;
+using Trellis.StateMachine;
 
 /// <summary>
 /// A todo item aggregate with state machine lifecycle management.
@@ -42,7 +42,10 @@ public partial class TodoItem : Aggregate<TodoId>
             ConfigureStateMachine);
     }
 
-    private TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider timeProvider)
+    /// <summary>
+    /// Creates a new todo item in Pending state.
+    /// </summary>
+    public TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider timeProvider)
         : base(TodoId.NewUniqueV7())
     {
         Title = title;
@@ -56,14 +59,8 @@ public partial class TodoItem : Aggregate<TodoId>
             s => Status = s,
             ConfigureStateMachine);
 
-        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, timeProvider.GetUtcNow().UtcDateTime));
+        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, timeProvider.GetUtcNow()));
     }
-
-    /// <summary>
-    /// Creates a new todo item in Pending state.
-    /// </summary>
-    public static Result<TodoItem> TryCreate(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider? timeProvider = null) =>
-        new TodoItem(title, dueDate, tag, createdByActorId, timeProvider ?? TimeProvider.System);
 
     /// <summary>
     /// Starts the todo, transitioning from Pending to Active.
@@ -80,8 +77,8 @@ public partial class TodoItem : Aggregate<TodoId>
         return _machine.FireResult(Triggers.Complete)
             .Tap(_ =>
             {
-                var completedAt = tp.GetUtcNow().UtcDateTime;
-                CompletedAt = completedAt;
+                var completedAt = tp.GetUtcNow();
+                CompletedAt = completedAt.UtcDateTime;
                 DomainEvents.Add(new TodoCompleted(Id, completedAt));
             });
     }
@@ -97,8 +94,8 @@ public partial class TodoItem : Aggregate<TodoId>
     /// </summary>
     public Result<TodoItem> Update(Title title, DueDate dueDate, Maybe<Tag> tag) =>
         Status == TodoStatus.Completed
-            ? Result.Failure<TodoItem>(Error.Domain("Cannot update a completed todo."))
-            : Result.Success(this)
+            ? Result.Fail<TodoItem>(Error.InvalidInput.ForRule("todo.completed", "Cannot update a completed todo."))
+            : Result.Ok(this)
                 .Tap(_ =>
                 {
                     Title = title;

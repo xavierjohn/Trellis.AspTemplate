@@ -6,12 +6,14 @@ This template builds ASP.NET Core services on the Trellis framework for .NET 10.
 
 **STOP. Do not write or generate any code until you have read the API reference files listed below.** These files document the exact method signatures, overloads, conventions, and EF Core mapping rules. Guessing based on type names will produce code that compiles but fails at runtime (e.g., adding explicit EF `Property()` configuration on types that Trellis conventions already handle).
 
-Read **every** file relevant to your implementation. For a typical service using aggregates, EF Core, and authorization, that means reading at least: `trellis-api-results.md`, `trellis-api-ddd.md`, `trellis-api-primitives.md`, `trellis-api-efcore.md`, `trellis-api-asp.md`, `trellis-api-authorization.md`, `trellis-api-stateless.md`, and `trellis-api-testing-reference.md`.
+Read **every** file relevant to your implementation. For a typical service using aggregates, EF Core, and authorization, that means reading at least: `trellis-api-core.md`, `trellis-api-primitives.md`, `trellis-api-efcore.md`, `trellis-api-asp.md`, `trellis-api-authorization.md`, `trellis-api-statemachine.md`, `trellis-api-cookbook.md`, and `trellis-api-testing-reference.md`.
+
+**Reference docs are authoritative.** If anything in this file conflicts with one of the `trellis-api-*.md` reference files, the reference file wins — those files are auto-synced from package metadata (`dotnet build /t:TrellisSyncApiReference`) and reflect the current framework surface. This file is curated guidance that can drift. Please file any contradiction as feedback.
 
 | When working on... | Read first |
 |---|---|
-| `Result<T>`, `Maybe<T>`, `Error`, `Bind`, `Map`, `Tap`, `Ensure`, `Combine`, `ParallelAsync` | `.github/trellis-api-results.md` |
-| Aggregates, entities, value objects, specifications, ETag checks | `.github/trellis-api-ddd.md` |
+| `Result<T>`, `Maybe<T>`, `Error`, `Bind`, `Map`, `Tap`, `Ensure`, `Combine`, `ParallelAsync` | `.github/trellis-api-core.md` |
+| Aggregates, entities, value objects, specifications, ETag checks | `.github/trellis-api-core.md` |
 | `RequiredString<T>`, `RequiredGuid<T>`, `RequiredEnum<T>`, built-in primitives | `.github/trellis-api-primitives.md` |
 | MVC/Minimal API result mappers, `ETagHelper`, scalar binding, validation middleware | `.github/trellis-api-asp.md` |
 | EF Core conventions, interceptors, `HasTrellisIndex`, `FirstOrDefaultMaybeAsync` | `.github/trellis-api-efcore.md` |
@@ -19,10 +21,10 @@ Read **every** file relevant to your implementation. For a typical service using
 | FluentValidation bridge | `.github/trellis-api-fluentvalidation.md` |
 | `HttpClient` result extensions | `.github/trellis-api-http.md` |
 | Mediator pipeline behaviors | `.github/trellis-api-mediator.md` |
-| `LazyStateMachine<TState, TTrigger>` and `FireResult()` | `.github/trellis-api-stateless.md` |
+| `LazyStateMachine<TState, TTrigger>` and `FireResult()` | `.github/trellis-api-statemachine.md` |
 | Testing helpers, `FakeRepository`, `TestActorProvider`, assertions, `Unwrap()` | `.github/trellis-api-testing-reference.md` |
 | Analyzer diagnostics `TRLS001`–`TRLS022` and generator diagnostics | `.github/trellis-api-analyzers.md` |
-| Supported cross-package patterns and known sample-app-only APIs | `.github/trellis-api-patterns.md` |
+| Cross-package patterns, recipes, and task lookup table | `.github/trellis-api-cookbook.md` |
 | Scalar vs composite value-object classification | `.github/trellis-value-object-taxonomy.md` |
 
 ## Critical Rules
@@ -33,7 +35,7 @@ Read **every** file relevant to your implementation. For a typical service using
 - **Rationale:** The shipped sample demonstrates the exact Trellis patterns this template expects.
 - **Correct:** Use the reference implementation table below and inspect the listed files before generating your own service.
 - **Incorrect:** Recreate the solution structure and patterns from scratch without checking the working sample.
-- **Reference:** See `template/Domain/src/`, `template/Application/src/`, `template/Acl/src/`, `template/Api/src/`.
+- **Reference:** See `Domain/src/`, `Application/src/`, `Acl/src/`, `Api/src/`.
 
 ### Treat errors and optional values as explicit types
 
@@ -45,8 +47,8 @@ using Trellis;
 
 public static Result<Order> TryCreate(OrderName name) =>
     string.IsNullOrWhiteSpace(name.Value)
-        ? Result.Failure<Order>(Error.Validation("Name is required.", "name"))
-        : Result.Success(new Order(name));
+        ? Result.Fail<Order>(Error.InvalidInput.ForField("name", "required", "Name is required."))
+        : Result.Ok(new Order(name));
 
 public partial class Customer : Aggregate<CustomerId>
 {
@@ -70,7 +72,7 @@ public sealed class Customer
     public PhoneNumber? PhoneNumber { get; private set; }
 }
 ```
-- **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-ddd.md`, `.github/trellis-api-efcore.md`.
+- **Reference:** See `.github/trellis-api-core.md`, `.github/trellis-api-efcore.md`.
 
 ### Eliminate primitive obsession on domain surfaces
 
@@ -184,7 +186,7 @@ public sealed record UpdateTodoCommand : ICommand<Result<TodoItem>>, IAuthorize
         TimeProvider? timeProvider = null) =>
         Result.Ensure(
                 dueDate > (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime,
-                Error.Validation("Due date must be in the future.", "dueDate"))
+                Error.InvalidInput.ForField("dueDate", "out_of_range", "Due date must be in the future."))
             .Map(_ => new UpdateTodoCommand(todoId, title, dueDate));
 }
 
@@ -204,7 +206,7 @@ public Result<Order> Approve() =>
         .Tap(_ => DomainEvents.Add(new OrderApprovedEvent(Id, OccurredAt: DateTime.UtcNow)))
         .Map(_ => this);
 ```
-- **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-ddd.md`, `.github/trellis-api-patterns.md`.
+- **Reference:** See `.github/trellis-api-core.md`, `.github/trellis-api-cookbook.md`.
 
 ### Build layer-by-layer and compile between layers
 
@@ -221,9 +223,28 @@ public Result<Order> Approve() =>
 - **Incorrect:** Create all files across all projects first, then attempt a single build after generated code is already required by downstream layers.
 - **Reference:** See the `## Implementation Order and Build Checkpoints` section below.
 
+### Run `dotnet test` without legacy VSTest arguments
+
+- **Rule:** 🔴 MUST NOT pass legacy VSTest arguments such as `--nologo`, `--logger`, `-l`, or `--results-directory` to `dotnet test`. Test projects in this template use xUnit v3 + Microsoft.Testing.Platform (MTP), which forwards unknown arguments to the test host and exits with code 5 plus `Zero tests ran` when it sees a flag it doesn't recognize — easily misread as a test failure.
+- **Rationale:** MTP does not share a CLI surface with the legacy VSTest runner. `Unknown option '--nologo'` followed by `Zero tests ran` and `Exit code: 5` is the diagnostic signature of this mistake.
+- **Correct:**
+```powershell
+dotnet test                                     # all defaults
+dotnet test --no-build                          # skip rebuild
+dotnet test --filter-not-trait "Category=Integration"
+dotnet test --coverage --report-trx
+```
+- **Incorrect:**
+```powershell
+dotnet test --nologo                            # Unknown option '--nologo' -> exit code 5
+dotnet test --logger trx                        # Unknown option '--logger' -> exit code 5
+dotnet test -l "console;verbosity=minimal"      # rejected by MTP runner
+```
+- **Reference:** `runtests.cmd` (at the repo root) and `.github/workflows/build.yml` show the CI invocation. For the full MTP option list, run any compiled test exe directly: `./bin/Debug/net10.0/*.Tests.exe --help`.
+
 ### Return `Maybe<T>` from repository lookups
 
-- **Rule:** 🔴 MUST return `Maybe<T>` from repository lookups and convert to `Result<T>` in handlers with `.ToResult(Error.NotFound(...))`.
+- **Rule:** 🔴 MUST return `Maybe<T>` from repository lookups and convert to `Result<T>` in handlers with `.ToResult(new Error.NotFound(...))`.
 - **Rationale:** Absence is data, not failure; handlers own the domain meaning of “not found”.
 - **Correct:**
 ```csharp
@@ -237,7 +258,7 @@ public interface ITodoRepository
 public async ValueTask<Result<TodoItem>> Handle(GetTodoByIdQuery query, CancellationToken cancellationToken)
 {
     var maybe = await _repository.FindByIdAsync(query.TodoId, cancellationToken);
-    return maybe.ToResult(Error.NotFound("Todo not found.", query.TodoId));
+    return maybe.ToResult(new Error.NotFound(ResourceRef.For("Todo", query.TodoId)) { Detail = "Todo not found." });
 }
 ```
 - **Incorrect:**
@@ -249,7 +270,7 @@ public interface ITodoRepository
     Task<Result<TodoItem>> FindByIdAsync(TodoId id, CancellationToken cancellationToken);
 }
 ```
-- **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-efcore.md §QueryableExtensions`.
+- **Reference:** See `.github/trellis-api-core.md`, `.github/trellis-api-efcore.md §QueryableExtensions`.
 
 ### Keep handlers on the ROP track
 
@@ -281,7 +302,7 @@ public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, Cancell
     return order;
 }
 ```
-- **Reference:** See `.github/trellis-api-results.md`, `.github/trellis-api-patterns.md`, `.github/trellis-api-mediator.md`.
+- **Reference:** See `.github/trellis-api-core.md`, `.github/trellis-api-cookbook.md`, `.github/trellis-api-mediator.md`.
 
 ### Use `LazyStateMachine<TState, TTrigger>` in aggregates
 
@@ -290,7 +311,7 @@ public async ValueTask<Result<Order>> Handle(SubmitOrderCommand command, Cancell
 - **Correct:**
 ```csharp
 using Stateless;
-using Trellis.Stateless;
+using Trellis.StateMachine;
 
 private readonly LazyStateMachine<OrderStatus, string> _machine;
 
@@ -320,7 +341,7 @@ private Order() : base(default!)
     _machine = new StateMachine<OrderStatus, string>(() => Status, state => Status = state);
 }
 ```
-- **Reference:** See `.github/trellis-api-stateless.md §LazyStateMachine<TState, TTrigger>` and `.github/trellis-api-stateless.md §StateMachineExtensions`.
+- **Reference:** See `.github/trellis-api-statemachine.md §LazyStateMachine<TState, TTrigger>` and `.github/trellis-api-statemachine.md §StateMachineExtensions`.
 ### Follow Trellis EF Core conventions exactly
 
 - **Rule:** 🔴 MUST use `ApplyTrellisConventions`, `AddTrellisInterceptors`, `SaveChangesResultUnitAsync`, `partial Maybe<T>` properties, `HasTrellisIndex`, and EF materialization boilerplate exactly as Trellis expects.
@@ -369,8 +390,8 @@ return await _context.SaveChangesAsync(cancellationToken);
 
 ### Keep controllers thin and value-object-first
 
-- **Rule:** 🔴 MUST accept scalar value-object parameters directly in controllers, map domain results to DTOs in controllers, and add XML doc comments to all public API types and members.
-- **Rationale:** Scalar binding and HTTP mapping are presentation concerns; handlers should stay domain-focused, and missing XML docs break builds with CS1591.
+- **Rule:** 🔴 MUST accept scalar value-object parameters directly in controllers, map domain results to DTOs in controllers, place `[Consumes("application/json")]` per-action on body-bearing endpoints only (never at the class level), and add XML doc comments to all public API types and members.
+- **Rationale:** Scalar binding and HTTP mapping are presentation concerns; handlers should stay domain-focused, and missing XML docs break builds with CS1591. Class-level `[Consumes("application/json")]` causes `415 Unsupported Media Type` on body-less POSTs such as state-transition triggers (`/orders/{id}/submission`, `/complete`, `/cancel`), because the request has no `Content-Type` header.
 - **Correct:**
 ```csharp
 using Mediator;
@@ -381,7 +402,6 @@ using TodoSample.Domain;
 using Trellis.Asp;
 
 [ApiController]
-[Consumes("application/json")]
 [Produces("application/json")]
 [Route("api/[controller]")]
 public class TodosController : ControllerBase
@@ -403,10 +423,27 @@ public class TodosController : ControllerBase
                 this,
                 todo => RepresentationMetadata.WithStrongETag(todo.ETag),
                 TodoResponse.From);
+
+    /// <summary>
+    /// Create a new todo item.
+    /// </summary>
+    [HttpPost]
+    [Consumes("application/json")]
+    public async ValueTask<IActionResult> Create([FromBody] CreateTodoRequest request, CancellationToken cancellationToken) =>
+        await _sender.Send(new CreateTodoCommand(request.Title), cancellationToken)
+            .ToCreatedAtActionResultAsync(this, nameof(GetById), id => new { id }, TodoResponse.From);
 }
 ```
 - **Incorrect:**
 ```csharp
+// ❌ Class-level [Consumes] returns 415 on body-less POSTs (state-transition triggers).
+[ApiController]
+[Consumes("application/json")]
+[Produces("application/json")]
+[Route("api/[controller]")]
+public class TodosController : ControllerBase { /* ... */ }
+
+// ❌ Raw primitives in controller signatures, no DTO mapping, no XML docs.
 [HttpGet("{id}")]
 public async Task<TodoItem> GetById(Guid id, CancellationToken cancellationToken)
 {
@@ -414,7 +451,136 @@ public async Task<TodoItem> GetById(Guid id, CancellationToken cancellationToken
     return (await _sender.Send(new GetTodoByIdQuery(todoId), cancellationToken)).Value;
 }
 ```
-- **Reference:** See `.github/trellis-api-asp.md §ActionResultExtensions`, `.github/trellis-api-asp.md §ActionResultExtensionsAsync`, `.github/trellis-api-asp.md §ServiceCollectionExtensions`.
+- **Reference:** See `.github/trellis-api-asp.md §Endpoint checklist for generated APIs` for the `[Consumes]` placement rule, `.github/trellis-api-asp.md §ActionResultExtensions`, `.github/trellis-api-asp.md §ActionResultExtensionsAsync`, `.github/trellis-api-asp.md §ServiceCollectionExtensions`.
+
+### Require `If-Match` on body-overwriting mutations; omit it on guarded state-transition POSTs
+
+- **Rule:** 🔴 MUST wire `If-Match` precondition checking on every endpoint whose body can silently overwrite a concurrent write — `PUT`, `PATCH`, `DELETE`, body-carrying mutating `POST` endpoints, and non-commutative additive set operations. The controller parses `ETagHelper.ParseIfMatch(Request)`, the command carries `EntityTagValue[]? IfMatchETags`, and the handler chain includes `.RequireETag(command.IfMatchETags)` between the `NotFound` projection and the mutation. Use `.OptionalETag(...)` only for genuinely idempotent best-effort updates — never as a default.
+- **Rule:** 🟡 SHOULD NOT wire `If-Match` on **body-less state-transition `POST`** endpoints (e.g., `POST /orders/{id}/approve`, `.../submit`, `.../cancel`, `.../return`). The state machine + transition guards already check the current state, so a stale client calling `.../approve` on an order that has already shipped gets `422 Unprocessable Content` from the guard — there is nothing to overwrite. Adding `RequireETag` here is ceremony without benefit. Wire it only if the user-provided spec explicitly requires `412`/`428` on transitions.
+- **Rationale:** Skipping the precondition on body-overwriting mutations lets concurrent clients silently overwrite each other (lost-update race). On body-less guarded transitions there is no body to overwrite — the state machine is the precondition. The full decision table (full-update PUT, partial PATCH, DELETE, additive set ops, resource creation) lives in `.github/trellis-api-cookbook.md` Recipe 23.
+- **Correct (body-carrying PUT — `RequireETag`):**
+```csharp
+// Application/src/Todos/UpdateTodoCommand.cs
+public sealed class UpdateTodoCommand : ICommand<Result<Todo>>
+{
+    public UpdateTodoCommand(TodoId id, Title title, EntityTagValue[]? ifMatchETags = null)
+    {
+        Id = id;
+        Title = title;
+        IfMatchETags = ifMatchETags;
+    }
+
+    public TodoId Id { get; }
+    public Title Title { get; }
+    public EntityTagValue[]? IfMatchETags { get; }
+}
+
+internal sealed class UpdateTodoCommandHandler(ITodoRepository repository)
+    : ICommandHandler<UpdateTodoCommand, Result<Todo>>
+{
+    public Task<Result<Todo>> Handle(UpdateTodoCommand command, CancellationToken cancellationToken) =>
+        repository.FindByIdAsync(command.Id, cancellationToken)
+            .ToResult(Error.NotFound.ForResource(nameof(Todo), command.Id.Value.ToString()))
+            .RequireETag(command.IfMatchETags)
+            .Bind(todo => todo.Rename(command.Title))
+            .Tap(repository.Update)
+            .Bind(_ => repository.SaveChangesResultUnitAsync(cancellationToken).Map(_ => _));
+}
+
+// Api/src/{version}/Controllers/TodosController.cs
+[HttpPut("{id:guid}")]
+[Consumes("application/json")]
+[ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
+[ProducesResponseType(StatusCodes.Status412PreconditionFailed)]
+[ProducesResponseType(StatusCodes.Status428PreconditionRequired)]
+public Task<IActionResult> Update(TodoId id, [FromBody] UpdateTodoRequest body, CancellationToken cancellationToken)
+{
+    var ifMatchETags = ETagHelper.ParseIfMatch(Request);
+    return _sender.Send(new UpdateTodoCommand(id, body.Title, ifMatchETags), cancellationToken)
+        .ToActionResultAsync(this, t => RepresentationMetadata.WithStrongETag(t.ETag), TodoResponse.From);
+}
+```
+- **Correct (body-less state-transition POST — no `If-Match`):**
+```csharp
+// Application/src/Todos/CompleteTodoCommand.cs
+public sealed record CompleteTodoCommand(TodoId Id) : ICommand<Result<Todo>>;
+
+internal sealed class CompleteTodoCommandHandler(ITodoRepository repository)
+    : ICommandHandler<CompleteTodoCommand, Result<Todo>>
+{
+    public Task<Result<Todo>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken) =>
+        repository.FindByIdAsync(command.Id, cancellationToken)
+            .ToResult(Error.NotFound.ForResource(nameof(Todo), command.Id.Value.ToString()))
+            .Bind(todo => todo.Complete(DateTime.UtcNow))  // state machine guards the transition
+            .Tap(repository.Update)
+            .Bind(_ => repository.SaveChangesResultUnitAsync(cancellationToken).Map(_ => _));
+}
+
+// Api/src/{version}/Controllers/TodosController.cs
+[HttpPost("{id:guid}/complete")]
+[ProducesResponseType(typeof(TodoResponse), StatusCodes.Status200OK)]
+[ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
+public Task<IActionResult> Complete(TodoId id, CancellationToken cancellationToken) =>
+    _sender.Send(new CompleteTodoCommand(id), cancellationToken)
+        .ToActionResultAsync(this, t => RepresentationMetadata.WithStrongETag(t.ETag), TodoResponse.From);
+```
+- **Incorrect:** PUT/PATCH/DELETE handler that calls `new UpdateXyzCommand(id, body)` without `ETagHelper.ParseIfMatch(Request)` and omits `.RequireETag(...)`. Returns `200` even when the client supplied a stale (or missing) `If-Match`, silently overwriting a concurrent change.
+- **Reference:** See `.github/trellis-api-cookbook.md` Recipe 23 for the full endpoint-shape decision table; `Application/src/Todos/UpdateTodoCommand.cs`, `CompleteTodoCommand.cs`, `DeleteTodoCommand.cs` and the matching `Api/src/{date}/Controllers/TodosController.cs` for the canonical patterns; `.github/trellis-api-core.md §RequireETag` for the framework primitive.
+
+### Use namespace-based API versioning
+
+- **Rule:** 🔴 MUST place each API version's controllers in its own `Api/src/{yyyy-MM-dd}/Controllers/` folder with a matching `{ServiceName}.Api.v{yyyy_MM_dd}.Controllers` namespace. Do NOT add `[ApiVersion("...")]` attributes — `VersionByNamespaceConvention` derives the version from the namespace segment.
+- **Rationale:** Trellis template controllers are deliberately thin (route binding + `_sender.Send(...)` + response mapping), so duplicating a controller per version is cheaper than maintaining a single shared controller with version-aware projection seams (`HttpContext.RequestedApiVersion` branches, per-version DTO selection, `[MapToApiVersion]` per action). One folder = one version is easier to reason about and impossible to silently break across versions (a v2 edit cannot affect v1 by accident).
+- **When to add a new version:** Copy the latest version's `Api/src/{date}/Controllers/` and `Api/src/{date}/Models/` folders to a new `{date}` folder, change the namespace from `v{yyyy_MM_dd}` to the new value everywhere in the copy, then evolve the v2 copy independently — add fields to its `TodoResponse`, change endpoint shapes, etc. Older versions stay frozen.
+- **Correct:**
+```csharp
+// Api/src/2026-03-26/Controllers/TodosController.cs — v1
+namespace TodoSample.Api.v2026_03_26.Controllers;
+[ApiController]
+[Route("api/[controller]")]
+public class TodosController : ControllerBase { /* ... */ }
+
+// Api/src/2026-12-01/Controllers/TodosController.cs — v2 (independent copy)
+namespace TodoSample.Api.v2026_12_01.Controllers;
+[ApiController]
+[Route("api/[controller]")]
+public class TodosController : ControllerBase { /* same shape; new IsOverdue field on TodoResponse */ }
+
+// Api/src/DependencyInjection.cs
+services.AddApiVersioning()
+        .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()))
+        .AddApiExplorer()
+        .AddOpenApi(options => options.Document.AddScalarTransformers());
+```
+- **Incorrect:**
+```csharp
+// ❌ [ApiVersion] attribute when the namespace already provides the version.
+[ApiController]
+[ApiVersion("2026-12-01")]                                                 // ❌ redundant
+[Route("api/[controller]")]
+public class TodosController : ControllerBase { /* ... */ }
+
+// ❌ Single shared controller that branches on the requested api-version.
+[ApiController]
+[ApiVersion("2026-03-26")]
+[ApiVersion("2026-12-01")]
+[Route("api/[controller]")]
+public class TodosController : ControllerBase
+{
+    [HttpGet("{id}")]
+    public ActionResult<object> GetById(TodoId id)
+    {
+        var version = HttpContext.RequestedApiVersion();
+        return version >= new ApiVersion(new DateOnly(2026, 12, 1))
+            ? (object)v2Projection(todo)                                   // ❌ projection seam
+            : (object)v1Projection(todo);
+    }
+}
+
+// ❌ DI uses attribute-based discovery (no VersionByNamespaceConvention).
+services.AddApiVersioning().AddMvc();                                      // ❌
+```
+- **Reference:** See `Api/src/2026-03-26/` and `Api/src/2026-12-01/` for the two-version reference layout, plus `Api/src/DependencyInjection.cs` for the DI wiring.
 
 ### Read the testing reference before writing tests
 
@@ -465,7 +631,8 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 | Shared loader by ID | `SharedResourceLoaderById<TResource, TId>` + `IIdentifyResource<TResource, TId>` | Repeating per-command loader code |
 | Complex per-command load logic | `ResourceLoaderById<TMessage, TResource, TId>` | Overfitting a shared loader |
 | Optional `If-Match` handling | `.OptionalETag(expectedETags)` | Manual ETag comparison |
-| Required `If-Match` handling | `.RequireETag(expectedETags)` | Ad hoc 428/412 logic |
+| Required `If-Match` on body-overwriting mutations (PUT/PATCH/DELETE, body-carrying POST, non-commutative additive ops) | `.RequireETag(expectedETags)` — see critical rule "Require `If-Match` on body-overwriting mutations" and cookbook Recipe 23 | `.OptionalETag(...)` or omitting the check (lost-update race, silent 200) |
+| Body-less state-transition POST (e.g., `.../approve`, `.../cancel`, `.../submit`) | Rely on the state-machine transition guard (returns `422` on a stale transition) | `.RequireETag(...)` — ceremony without benefit; see cookbook Recipe 23 |
 
 ### Handler and controller decisions
 
@@ -489,7 +656,7 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 | Interceptors | `AddTrellisInterceptors()` | Reimplement timestamp or ETag plumbing |
 | Save changes in repositories | `SaveChangesResultUnitAsync()` | Bare `SaveChangesAsync()` |
 | Optional lookup | `FirstOrDefaultMaybeAsync(...)` | `FirstOrDefaultAsync(...)` + `null` |
-| Required lookup | `FirstOrDefaultResultAsync(..., Error.NotFound(...))` | Returning `null` or throwing |
+| Required lookup | `FirstOrDefaultResultAsync(..., new Error.NotFound(...))` | Returning `null` or throwing |
 | `Maybe<T>` comparisons in LINQ | `WhereLessThan`, `WhereHasValue`, `WhereEquals`, etc. | Direct `Value` access in LINQ |
 | Index containing `Maybe<T>` | `HasTrellisIndex(...)` | `HasIndex(...)` |
 | Entity configuration placement | `IEntityTypeConfiguration<T>` in Acl | Inline `OnModelCreating` configuration |
@@ -499,18 +666,18 @@ Study these files before replacing the Todo sample.
 
 | Pattern | Files |
 |---|---|
-| Scalar value objects with `RequiredGuid`, `RequiredString`, `RequiredDateTime`, `ValidateAdditional` | `template/Domain/src/ValueObjects/` |
-| `RequiredEnum` smart enum | `template/Domain/src/TodoStatus.cs` |
-| Aggregate with `LazyStateMachine` and `Maybe<T>` partial properties | `template/Domain/src/Aggregates/TodoItem.cs` |
-| Specification with `.And()` composition | `template/Domain/src/Specifications/OverdueTodoSpecification.cs` |
-| Always-valid command with private constructor + `TryCreate` | `template/Application/src/Todos/UpdateTodoCommand.cs` |
-| `Result.Ensure` authorization check | `template/Application/src/Todos/CompleteTodoCommand.cs` |
-| `IAuthorizeResource<T>` with `SharedResourceLoaderById` or `ResourceLoaderById` | `template/Application/src/Todos/CompleteTodoCommand.cs`, `template/Acl/src/CompleteTodoResourceLoader.cs` |
-| Repository returning `Maybe<T>` | `template/Application/src/Todos/ITodoRepository.cs` |
-| Handlers returning domain types and controller DTO mapping | `template/Application/src/Todos/`, `template/Api/src/2026-03-26/Models/TodoResponse.cs` |
-| `TimeProvider` for testable time validation | `template/Application/src/Todos/UpdateTodoCommand.cs` |
-| Controller `TryCreate` → `BindAsync` → `Send` flow | `template/Api/src/2026-03-26/Controllers/TodosController.cs` |
-| Domain, Application, and API tests | `template/Domain/tests/`, `template/Application/tests/`, `template/Api/tests/` |
+| Scalar value objects with `RequiredGuid`, `RequiredString`, `RequiredDateTime`, `ValidateAdditional` | `Domain/src/ValueObjects/` |
+| `RequiredEnum` smart enum | `Domain/src/TodoStatus.cs` |
+| Aggregate with `LazyStateMachine` and `Maybe<T>` partial properties | `Domain/src/Aggregates/TodoItem.cs` |
+| Specification with `.And()` composition | `Domain/src/Specifications/OverdueTodoSpecification.cs` |
+| Always-valid command with private constructor + `TryCreate` | `Application/src/Todos/UpdateTodoCommand.cs` |
+| `Result.Ensure` authorization check | `Application/src/Todos/CompleteTodoCommand.cs` |
+| `IAuthorizeResource<T>` with `SharedResourceLoaderById` or `ResourceLoaderById` | `Application/src/Todos/CompleteTodoCommand.cs`, `Acl/src/CompleteTodoResourceLoader.cs` |
+| Repository returning `Maybe<T>` | `Application/src/Todos/ITodoRepository.cs` |
+| Handlers returning domain types and controller DTO mapping | `Application/src/Todos/`, `Api/src/2026-03-26/Models/TodoResponse.cs` |
+| `TimeProvider` for testable time validation | `Application/src/Todos/UpdateTodoCommand.cs` |
+| Controller `TryCreate` → `BindAsync` → `Send` flow | `Api/src/2026-03-26/Controllers/TodosController.cs` |
+| Domain, Application, and API tests | `Domain/tests/`, `Application/tests/`, `Api/tests/` |
 
 ## Architecture and Layout
 
@@ -528,7 +695,7 @@ Study these files before replacing the Todo sample.
 | Api | Application, Acl, `Trellis.Asp` | Domain persistence implementation details | Controllers/endpoints, DTOs, `Program.cs`, `IActorProvider` |
 
 - **Incorrect:** Let Domain reference EF Core or ASP.NET Core, place repository implementations in Application, or return DTOs from handlers.
-- **Reference:** See `.github/trellis-api-ddd.md`, `.github/trellis-api-asp.md`, `.github/trellis-api-efcore.md`.
+- **Reference:** See `.github/trellis-api-core.md`, `.github/trellis-api-asp.md`, `.github/trellis-api-efcore.md`.
 
 > **Why “Acl”?** ACL stands for Anti-Corruption Layer. It adapts external systems (SQL Server, message queues, other services) to the domain model and avoids overloading the word “Infrastructure”.
 
@@ -547,7 +714,7 @@ services.AddCachingActorProvider<HttpActorProvider>();
 ```csharp
 services.AddScoped<IActorProvider, HttpActorProvider>();
 ```
-- **Reference:** See `.github/trellis-api-authorization.md`, `.github/trellis-api-patterns.md`, `.github/trellis-api-asp.md`.
+- **Reference:** See `.github/trellis-api-authorization.md`, `.github/trellis-api-cookbook.md`, `.github/trellis-api-asp.md`.
 
 > **`CachingActorProvider`:** When you need synchronous actor access after the async pipeline resolves it, use `AddCachingActorProvider<T>()`. It caches the actor per request in `HttpContext.Items` and prevents a singleton pipeline from depending on a scoped provider.
 
@@ -566,19 +733,21 @@ services.AddScoped<IActorProvider, HttpActorProvider>();
 │   └── test.props                 ← DO NOT MODIFY
 ├── .github/
 │   ├── copilot-instructions.md
-│   ├── trellis-api-results.md
-│   ├── trellis-api-asp.md
-│   ├── trellis-api-ddd.md
+│   ├── trellis-api-core.md
 │   ├── trellis-api-primitives.md
+│   ├── trellis-api-asp.md
+│   ├── trellis-api-asp-apiversioning.md
 │   ├── trellis-api-efcore.md
 │   ├── trellis-api-mediator.md
 │   ├── trellis-api-authorization.md
 │   ├── trellis-api-http.md
-│   ├── trellis-api-stateless.md
+│   ├── trellis-api-http-abstractions.md
+│   ├── trellis-api-statemachine.md
 │   ├── trellis-api-fluentvalidation.md
 │   ├── trellis-api-analyzers.md
-│   ├── trellis-api-patterns.md
+│   ├── trellis-api-cookbook.md
 │   ├── trellis-api-testing-reference.md
+│   ├── trellis-api-testing-aspnetcore.md
 │   └── trellis-value-object-taxonomy.md
 ├── Domain/
 │   ├── src/
@@ -624,7 +793,7 @@ services.AddScoped<IActorProvider, HttpActorProvider>();
 }
 ```
 - **Incorrect:** Put nested JSON directly in `.http` variables or let `host` drift from `Properties/launchSettings.json`.
-- **Reference:** See `template/Api/src/api.http`, `template/Api/src/http-client.env.json`, and `template/Api/src/Properties/launchSettings.json`.
+- **Reference:** See `Api/src/api.http`, `Api/src/http-client.env.json`, and `Api/src/Properties/launchSettings.json`.
 
 ## Implementation Order and Build Checkpoints
 

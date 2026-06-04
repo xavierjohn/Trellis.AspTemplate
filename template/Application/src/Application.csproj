@@ -1,11 +1,14 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <PackageReference Include="Mediator.Abstractions" />
     <PackageReference Include="Mediator.SourceGenerator">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="FluentValidation" />
     <PackageReference Include="Trellis.Authorization" />
+    <PackageReference Include="Trellis.FluentValidation" />
+    <PackageReference Include="Trellis.Http.Abstractions" />
     <PackageReference Include="Trellis.Mediator" />
   </ItemGroup>
   <ItemGroup>
