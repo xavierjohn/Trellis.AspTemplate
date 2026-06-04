@@ -23,6 +23,39 @@ public class TodosControllerTests
     private HttpClient CreateClient(string actorId = "test-user", params string[] permissions) =>
         _factory.CreateClientWithActor(actorId, permissions);
 
+    // The [Idempotent] attribute on POST /todos opts the Create endpoint into the IETF
+    // Idempotency-Key middleware. On a same-key retry with a matching request fingerprint
+    // the middleware replays the captured first-response snapshot byte-for-byte and adds
+    // the "Idempotent-Replayed" response header so clients can tell a retry from a fresh
+    // invocation. This test pins the showcase contract end-to-end: a duplicate POST does
+    // NOT create a second todo, the replayed body and Location match the original, and the
+    // replay marker header is present on the second response.
+    [Fact]
+    public async Task Create_with_same_Idempotency_Key_replays_first_response_and_does_not_create_duplicate()
+    {
+        var client = CreateClient("owner-1", "todos:create", "todos:read");
+        var body = new { title = "Replay me", dueDate = DateTime.UtcNow.AddDays(7), tag = "replay" };
+        var key = Guid.NewGuid().ToString();
+
+        var first = await client.PostJsonWithKeyAsync(BaseUrl, body, key, TestContext.Current.CancellationToken);
+        first.StatusCode.Should().Be(HttpStatusCode.Created);
+        first.Headers.Contains("Idempotent-Replayed").Should().BeFalse(
+            "the first call is a fresh handler invocation, not a replay");
+        var firstTodo = await first.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+        var firstLocation = first.Headers.Location;
+
+        var second = await client.PostJsonWithKeyAsync(BaseUrl, body, key, TestContext.Current.CancellationToken);
+
+        second.StatusCode.Should().Be(HttpStatusCode.Created);
+        second.Headers.Contains("Idempotent-Replayed").Should().BeTrue(
+            "the second call must carry the replay marker so the client can distinguish a cached snapshot from a fresh invocation");
+        second.Headers.Location?.OriginalString.Should().Be(firstLocation?.OriginalString,
+            "a replayed snapshot must reproduce the original Location header byte-for-byte");
+        var secondTodo = await second.Content.ReadAsAsyncWithAssertion<TodoResponse>();
+        secondTodo.Id.Should().Be(firstTodo.Id,
+            "the duplicate POST must NOT create a second todo — replaying preserves the original id");
+    }
+
     [Fact]
     public async Task Create_valid_todo_returns_201_with_location()
     {
