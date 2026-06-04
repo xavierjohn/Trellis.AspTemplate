@@ -1,7 +1,8 @@
-﻿### Create a todo (admin)
+### Create a todo (admin)
 # @name createTodo
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
+Idempotency-Key: {{$guid}}
 X-Test-Actor: {{adminActor}}
 
 {
@@ -13,6 +14,7 @@ X-Test-Actor: {{adminActor}}
 ### Create a todo without tag
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
+Idempotency-Key: {{$guid}}
 X-Test-Actor: {{adminActor}}
 
 {
@@ -71,6 +73,7 @@ X-Test-Actor: {{userActor}}
 ### Bad Request — empty title
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
+Idempotency-Key: {{$guid}}
 X-Test-Actor: {{adminActor}}
 
 {
@@ -81,6 +84,7 @@ X-Test-Actor: {{adminActor}}
 ### Bad Request — invalid tag
 POST {{host}}/api/Todos?api-version={{apiVersion}}
 Content-Type: application/json
+Idempotency-Key: {{$guid}}
 X-Test-Actor: {{adminActor}}
 
 {
