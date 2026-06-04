@@ -65,6 +65,30 @@ public class ProblemDetailsTests
         problem.TraceId.Should().NotBeNullOrEmpty();
     }
 
+    // The /fault demo endpoint returns new Error.Unexpected("todos_fault", "TODOS-FAULT-001").ToHttpResponse(),
+    // demonstrating the typed Error.Unexpected -> RFC 9457 ProblemDetails mapping. The fault id
+    // is the support-ticket correlation key callers quote when reporting an issue; the reason
+    // code is the stable programmatic identifier the framework guarantees to surface verbatim.
+    // This test pins both extensions so a framework-side change to where Error.Unexpected lands
+    // its payload does not silently regress the showcase pattern the template is teaching.
+    [Fact]
+    public async Task Fault_endpoint_returns_500_with_stable_fault_id_and_reason_code()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("api/Todos/fault?api-version=2026-03-26", TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+        response.Content.Headers.ContentType?.MediaType.Should().Be("application/problem+json");
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        doc.GetProperty("status").GetInt32().Should().Be(StatusCodes.Status500InternalServerError);
+        doc.GetProperty("code").GetString().Should().Be("todos_fault",
+            "the Error.Unexpected reason code is the stable programmatic identifier the framework guarantees to surface");
+        doc.GetProperty("faultId").GetString().Should().Be("TODOS-FAULT-001",
+            "the fault id is the support-ticket correlation key clients quote when reporting an issue");
+        doc.GetProperty("traceId").GetString().Should().NotBeNullOrEmpty();
+    }
+
     // The 405 short-circuit emitted by routing must reach UseStatusCodePages so the body
     // carries a ProblemDetails payload. The CustomizeProblemDetails callback additionally
     // surfaces the Allow header (set by routing per RFC 9110 §15.5.6) as a structured

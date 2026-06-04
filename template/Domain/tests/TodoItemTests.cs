@@ -10,7 +10,7 @@ public class TodoItemTests
 
     private static TodoItem CreateActiveTodo(DueDate? dueDate = null, Maybe<Tag>? tag = null, string actorId = "actor-1")
     {
-        var todo = new TodoItem(TestTitle, dueDate ?? FutureDueDate, tag ?? Maybe<Tag>.None, actorId);
+        var todo = new TodoItem(TestTitle, dueDate ?? FutureDueDate, tag ?? Maybe<Tag>.None, actorId, TimeProvider.System);
         todo.Start().Should().BeSuccess();
         return todo;
     }
@@ -19,7 +19,7 @@ public class TodoItemTests
     public void Constructor_valid_todo_returns_pending_state()
     {
         var dueDate = FutureDueDate;
-        var todo = new TodoItem(TestTitle, dueDate, Maybe<Tag>.None, "actor-1");
+        var todo = new TodoItem(TestTitle, dueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
         todo.Title.Should().Be(TestTitle);
         todo.DueDate.Should().Be(dueDate);
@@ -33,7 +33,7 @@ public class TodoItemTests
     {
         var tag = Tag.Create("work");
 
-        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe.From(tag), "actor-1");
+        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe.From(tag), "actor-1", TimeProvider.System);
 
         todo.Tag.Should().HaveValueEqualTo(tag);
     }
@@ -41,7 +41,7 @@ public class TodoItemTests
     [Fact]
     public void Constructor_raises_TodoCreated_event()
     {
-        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1");
+        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
         todo.UncommittedEvents().Should().ContainSingle()
             .Which.Should().BeOfType<TodoCreated>();
@@ -50,7 +50,7 @@ public class TodoItemTests
     [Fact]
     public void Start_from_Pending_transitions_to_Active()
     {
-        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1");
+        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
         var startResult = todo.Start();
 
@@ -87,7 +87,7 @@ public class TodoItemTests
     [Fact]
     public void Complete_from_Pending_fails()
     {
-        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1");
+        var todo = new TodoItem(TestTitle, FutureDueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
         todo.Complete().Should().BeFailure();
     }
@@ -119,7 +119,7 @@ public class TodoItemTests
     [Fact]
     public void IsOverdue_pending_past_due_returns_false()
     {
-        var todo = new TodoItem(TestTitle, PastDueDate, Maybe<Tag>.None, "actor-1");
+        var todo = new TodoItem(TestTitle, PastDueDate, Maybe<Tag>.None, "actor-1", TimeProvider.System);
 
         todo.IsOverdue(DateTime.UtcNow).Should().BeFalse();
     }

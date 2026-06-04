@@ -45,7 +45,7 @@ public partial class TodoItem : Aggregate<TodoId>
     /// <summary>
     /// Creates a new todo item in Pending state.
     /// </summary>
-    public TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider? timeProvider = null)
+    public TodoItem(Title title, DueDate dueDate, Maybe<Tag> tag, string createdByActorId, TimeProvider timeProvider)
         : base(TodoId.NewUniqueV7())
     {
         Title = title;
@@ -59,7 +59,7 @@ public partial class TodoItem : Aggregate<TodoId>
             s => Status = s,
             ConfigureStateMachine);
 
-        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, (timeProvider ?? TimeProvider.System).GetUtcNow()));
+        DomainEvents.Add(new TodoCreated(Id, title, createdByActorId, timeProvider.GetUtcNow()));
     }
 
     /// <summary>

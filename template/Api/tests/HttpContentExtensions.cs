@@ -37,12 +37,21 @@ public static class HttpContentExtensions
     /// </summary>
     public static Task<HttpResponseMessage> PostJsonIdempotentAsync<T>(
         this HttpClient client, string url, T body, CancellationToken cancellationToken)
+        => client.PostJsonWithKeyAsync(url, body, Guid.NewGuid().ToString(), cancellationToken);
+
+    /// <summary>
+    /// Issues a JSON POST with a caller-supplied <c>Idempotency-Key</c> header.
+    /// Used by replay tests that intentionally retry with the same key to exercise the
+    /// middleware's snapshot/replay path.
+    /// </summary>
+    public static Task<HttpResponseMessage> PostJsonWithKeyAsync<T>(
+        this HttpClient client, string url, T body, string idempotencyKey, CancellationToken cancellationToken)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = JsonContent.Create(body),
         };
-        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        request.Headers.Add("Idempotency-Key", idempotencyKey);
         return client.SendAsync(request, cancellationToken);
     }
 }
