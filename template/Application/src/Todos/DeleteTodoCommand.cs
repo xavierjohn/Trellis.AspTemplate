@@ -48,13 +48,10 @@ public sealed class DeleteTodoCommandHandler : ICommandHandler<DeleteTodoCommand
 
     public DeleteTodoCommandHandler(ITodoRepository repository) => _repository = repository;
 
-    public async ValueTask<Result<Trellis.Unit>> Handle(DeleteTodoCommand command, CancellationToken cancellationToken)
-    {
-        var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
-        return maybe
-            .ToResult(new Error.NotFound(ResourceRef.For<TodoItem>(command.TodoId)) { Detail = $"Todo {command.TodoId} not found." })
-            .RequireETag(command.IfMatchETags)
-            .Tap(_repository.Remove)
-            .Map(_ => Trellis.Unit.Value);
-    }
+    public async ValueTask<Result<Trellis.Unit>> Handle(DeleteTodoCommand command, CancellationToken cancellationToken) =>
+        await _repository.FindByIdAsync(command.TodoId, cancellationToken)
+            .ToResultAsync(new Error.NotFound(ResourceRef.For<TodoItem>(command.TodoId)) { Detail = $"Todo {command.TodoId} not found." })
+            .RequireETagAsync(command.IfMatchETags)
+            .TapAsync(_repository.Remove)
+            .MapAsync(_ => Trellis.Unit.Value);
 }

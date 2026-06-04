@@ -50,11 +50,8 @@ public sealed class CompleteTodoCommandHandler : ICommandHandler<CompleteTodoCom
         _timeProvider = timeProvider;
     }
 
-    public async ValueTask<Result<TodoItem>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken)
-    {
-        var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
-        return maybe
-            .ToResult(new Error.NotFound(ResourceRef.For<TodoItem>(command.TodoId)) { Detail = $"Todo {command.TodoId} not found." })
-            .Check(todo => todo.Complete(_timeProvider));
-    }
+    public async ValueTask<Result<TodoItem>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken) =>
+        await _repository.FindByIdAsync(command.TodoId, cancellationToken)
+            .ToResultAsync(new Error.NotFound(ResourceRef.For<TodoItem>(command.TodoId)) { Detail = $"Todo {command.TodoId} not found." })
+            .CheckAsync(todo => todo.Complete(_timeProvider));
 }
