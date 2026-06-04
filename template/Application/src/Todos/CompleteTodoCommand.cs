@@ -55,6 +55,6 @@ public sealed class CompleteTodoCommandHandler : ICommandHandler<CompleteTodoCom
         var maybe = await _repository.FindByIdAsync(command.TodoId, cancellationToken);
         return maybe
             .ToResult(new Error.NotFound(ResourceRef.For<TodoItem>(command.TodoId)) { Detail = $"Todo {command.TodoId} not found." })
-            .Bind(todo => todo.Complete(_timeProvider).Map(_ => todo));
+            .Check(todo => todo.Complete(_timeProvider));
     }
 }
