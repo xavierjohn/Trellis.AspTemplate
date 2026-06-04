@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Trellis;
 using Trellis.Asp;
 using Trellis.Asp.ApiVersioning;
+using Trellis.Asp.Idempotency;
 using Trellis.ServiceLevelIndicators;
 using TodoSample.Api.v2026_12_01.Models;
 using TodoSample.Application.Todos;
@@ -57,6 +58,7 @@ public class TodosController : ControllerBase
     /// </summary>
     [HttpPost]
     [Consumes("application/json")]
+    [Idempotent]
     [ProducesResponseType(typeof(TodoResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
@@ -194,8 +196,24 @@ public class TodosController : ControllerBase
     }
 
     /// <summary>
-    /// This method throws to demonstrate the exception handling pipeline
-    /// (UseExceptionHandler + ProblemDetails) wraps unhandled exceptions in an RFC 9457 body.
+    /// Demonstrates the deterministic <see cref="Error.Unexpected"/> path with a stable
+    /// fault identifier the client can quote in support tickets. The Trellis HTTP mapper
+    /// emits an RFC 9457 ProblemDetails body with the fault id surfaced as an extension,
+    /// without leaking exception details.
+    /// </summary>
+    [HttpGet("fault")]
+    [ApiExplorerSettings(IgnoreApi = true)]
+    public Microsoft.AspNetCore.Http.IResult Fault() =>
+        new Error.Unexpected("todos_fault", "TODOS-FAULT-001")
+        {
+            Detail = "Deterministic fault path used to demonstrate Error.Unexpected mapping.",
+        }.ToHttpResponse();
+
+    /// <summary>
+    /// This method throws to demonstrate that the ASP.NET exception handling pipeline
+    /// (UseExceptionHandler + ProblemDetails) wraps unhandled exceptions in an RFC 9457 body
+    /// with a correlation trace id. Use <see cref="Fault"/> for the typed
+    /// <see cref="Error.Unexpected"/> pattern with a stable fault id.
     /// </summary>
     /// <exception cref="NotImplementedException"></exception>
     [HttpGet("throw")]

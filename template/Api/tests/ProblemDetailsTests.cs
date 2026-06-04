@@ -52,8 +52,10 @@ public class ProblemDetailsTests
     {
         var client = _factory.CreateClient();
         var body = new StringContent("not json", Encoding.UTF8, "text/plain");
+        var request = new HttpRequestMessage(HttpMethod.Post, "api/Todos?api-version=2026-03-26") { Content = body };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
 
-        var response = await client.PostAsync("api/Todos?api-version=2026-03-26", body, TestContext.Current.CancellationToken);
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
         response.StatusCode.Should().Be(HttpStatusCode.UnsupportedMediaType);
         response.Content.Headers.ContentType?.MediaType.Should().Be("application/problem+json");

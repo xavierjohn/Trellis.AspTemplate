@@ -1,4 +1,4 @@
-﻿namespace Api.Tests._2026_12_01;
+namespace Api.Tests._2026_12_01;
 
 using System.Net;
 using System.Net.Http.Headers;
@@ -30,7 +30,7 @@ public class TodosControllerTests
         var dueDate = DateTime.UtcNow.AddDays(7);
         var body = new { title = "Buy groceries", dueDate, tag = "shopping" };
 
-        var response = await client.PostAsJsonAsync(BaseUrl, body, TestContext.Current.CancellationToken);
+        var response = await client.PostJsonIdempotentAsync(BaseUrl, body, TestContext.Current.CancellationToken);
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         response.Headers.Location.Should().NotBeNull();
@@ -52,7 +52,7 @@ public class TodosControllerTests
         var client = CreateClient("user-1", "todos:create");
         var body = new { title = "No tag todo", dueDate = DateTime.UtcNow.AddDays(3) };
 
-        var response = await client.PostAsJsonAsync(BaseUrl, body, TestContext.Current.CancellationToken);
+        var response = await client.PostJsonIdempotentAsync(BaseUrl, body, TestContext.Current.CancellationToken);
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var todo = await response.Content.ReadAsAsyncWithAssertion<TodoResponse>();
@@ -65,7 +65,7 @@ public class TodosControllerTests
         var client = CreateClient("user-1", "todos:create");
         var body = new { title = "", dueDate = DateTime.UtcNow.AddDays(3) };
 
-        var response = await client.PostAsJsonAsync(BaseUrl, body, TestContext.Current.CancellationToken);
+        var response = await client.PostJsonIdempotentAsync(BaseUrl, body, TestContext.Current.CancellationToken);
 
         // 422 (not 400) — the empty title fails Title's TryCreate value-object validation at the
         // binder seam, which Trellis maps to 422 Unprocessable Content (Trellis.Asp PR #477,
@@ -79,7 +79,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read");
         var dueDate = DateTime.UtcNow.AddDays(5);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Fetch me", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Fetch me", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -110,7 +110,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("owner-1", "todos:create", "todos:complete");
         var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Complete me", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Complete me", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         var etag = createResponse.Headers.ETag!;
@@ -130,7 +130,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("owner-1", "todos:create", "todos:complete");
         var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Needs If-Match", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Needs If-Match", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -144,7 +144,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("owner-1", "todos:create", "todos:complete");
         var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Stale complete", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Stale complete", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -161,7 +161,7 @@ public class TodosControllerTests
         // Create todo as owner
         var ownerClient = CreateClient("owner-1", "todos:create", "todos:complete");
         var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await ownerClient.PostAsJsonAsync(BaseUrl, new { title = "Not yours", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await ownerClient.PostJsonIdempotentAsync(BaseUrl, new { title = "Not yours", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -178,7 +178,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:delete");
         var dueDate = DateTime.UtcNow.AddDays(1);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Delete me", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Delete me", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         var etag = createResponse.Headers.ETag!;
@@ -195,7 +195,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:delete");
         var dueDate = DateTime.UtcNow.AddDays(1);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Needs If-Match to delete", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Needs If-Match to delete", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -209,7 +209,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:delete");
         var dueDate = DateTime.UtcNow.AddDays(1);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Stale delete", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Stale delete", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -225,7 +225,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
         var dueDate = DateTime.UtcNow.AddDays(5);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Original", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Original", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         var etag = createResponse.Headers.ETag;
@@ -250,7 +250,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
         var dueDate = DateTime.UtcNow.AddDays(5);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Needs If-Match", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Needs If-Match", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -268,7 +268,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
         var dueDate = DateTime.UtcNow.AddDays(5);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Stale ETag", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Stale ETag", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -288,7 +288,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
         var dueDate = DateTime.UtcNow.AddDays(5);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Minimal pref", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Minimal pref", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         var etag = createResponse.Headers.ETag!;
@@ -313,7 +313,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read", "todos:update");
         var dueDate = DateTime.UtcNow.AddDays(5);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Will fail update", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Will fail update", dueDate }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -330,7 +330,7 @@ public class TodosControllerTests
         var dueDate = DateTime.UtcNow.AddDays(10);
 
         // Create
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Lifecycle test", dueDate, tag = "e2e" }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Lifecycle test", dueDate, tag = "e2e" }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         created.Status.Should().Be("Active");
@@ -366,7 +366,7 @@ public class TodosControllerTests
         var client = CreateClient("user-1", "todos:create", "todos:read");
         // Create a todo with a past due date — it will be Active and overdue
         var pastDue = DateTime.UtcNow.AddDays(-1);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Overdue todo", dueDate = pastDue }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Overdue todo", dueDate = pastDue }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
 
         var response = await client.GetAsync($"api/Todos/overdue?limit=10&{VersionParam}", TestContext.Current.CancellationToken);
@@ -385,8 +385,7 @@ public class TodosControllerTests
         // Seed three overdue items so a limit of 1 produces a `next` link.
         for (var i = 0; i < 3; i++)
         {
-            var seed = await client.PostAsJsonAsync(
-                BaseUrl,
+            var seed = await client.PostJsonIdempotentAsync(BaseUrl,
                 new { title = $"Overdue {i}", dueDate = DateTime.UtcNow.AddDays(-1 - i) },
                 TestContext.Current.CancellationToken);
             seed.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -406,8 +405,7 @@ public class TodosControllerTests
         var client = CreateClient("paginate-user", "todos:create", "todos:read");
         for (var i = 0; i < 3; i++)
         {
-            var seed = await client.PostAsJsonAsync(
-                BaseUrl,
+            var seed = await client.PostJsonIdempotentAsync(BaseUrl,
                 new { title = $"Page {i}", dueDate = DateTime.UtcNow.AddDays(-1 - i) },
                 TestContext.Current.CancellationToken);
             seed.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -448,7 +446,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read");
         var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "Headers", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "Headers", dueDate }, TestContext.Current.CancellationToken);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
         var response = await client.GetAsync($"api/Todos/{created.Id}?{VersionParam}", TestContext.Current.CancellationToken);
@@ -463,7 +461,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read");
         var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "304 me", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "304 me", dueDate }, TestContext.Current.CancellationToken);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
         var etag = createResponse.Headers.ETag!;
 
@@ -479,7 +477,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read");
         var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "ims-304", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "ims-304", dueDate }, TestContext.Current.CancellationToken);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
         using var get = new HttpRequestMessage(HttpMethod.Get, $"api/Todos/{created.Id}?{VersionParam}");
@@ -495,7 +493,7 @@ public class TodosControllerTests
     {
         var client = CreateClient("user-1", "todos:create", "todos:read");
         var dueDate = DateTime.UtcNow.AddDays(2);
-        var createResponse = await client.PostAsJsonAsync(BaseUrl, new { title = "ius-412", dueDate }, TestContext.Current.CancellationToken);
+        var createResponse = await client.PostJsonIdempotentAsync(BaseUrl, new { title = "ius-412", dueDate }, TestContext.Current.CancellationToken);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
         using var get = new HttpRequestMessage(HttpMethod.Get, $"api/Todos/{created.Id}?{VersionParam}");
@@ -527,7 +525,7 @@ public class TodosControllerTests
         var client = CreateClient("user-1", "todos:read"); // no todos:create
         var body = new { title = "Denied", dueDate = DateTime.UtcNow.AddDays(5) };
 
-        var response = await client.PostAsJsonAsync(BaseUrl, body, TestContext.Current.CancellationToken);
+        var response = await client.PostJsonIdempotentAsync(BaseUrl, body, TestContext.Current.CancellationToken);
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
@@ -558,7 +556,7 @@ public class TodosControllerTests
     {
         // Create a todo first with a permissioned client
         var creator = CreateClient("user-1", "todos:create");
-        var createResponse = await creator.PostAsJsonAsync(BaseUrl, new { title = "To update", dueDate = DateTime.UtcNow.AddDays(5) }, TestContext.Current.CancellationToken);
+        var createResponse = await creator.PostJsonIdempotentAsync(BaseUrl, new { title = "To update", dueDate = DateTime.UtcNow.AddDays(5) }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -573,7 +571,7 @@ public class TodosControllerTests
     public async Task Complete_without_permission_returns_403()
     {
         var creator = CreateClient("owner-1", "todos:create");
-        var createResponse = await creator.PostAsJsonAsync(BaseUrl, new { title = "To complete", dueDate = DateTime.UtcNow.AddDays(5) }, TestContext.Current.CancellationToken);
+        var createResponse = await creator.PostJsonIdempotentAsync(BaseUrl, new { title = "To complete", dueDate = DateTime.UtcNow.AddDays(5) }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -588,7 +586,7 @@ public class TodosControllerTests
     public async Task Delete_without_permission_returns_403()
     {
         var creator = CreateClient("user-1", "todos:create");
-        var createResponse = await creator.PostAsJsonAsync(BaseUrl, new { title = "To delete", dueDate = DateTime.UtcNow.AddDays(5) }, TestContext.Current.CancellationToken);
+        var createResponse = await creator.PostJsonIdempotentAsync(BaseUrl, new { title = "To delete", dueDate = DateTime.UtcNow.AddDays(5) }, TestContext.Current.CancellationToken);
         createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         var created = await createResponse.Content.ReadAsAsyncWithAssertion<TodoResponse>();
 
@@ -613,7 +611,7 @@ public class TodosControllerTests
         var client = CreateClient("user-1", "todos:create");
         var body = new { title = "v2-shape", dueDate = DateTime.UtcNow.AddDays(2) };
 
-        var response = await client.PostAsJsonAsync(BaseUrl, body, TestContext.Current.CancellationToken);
+        var response = await client.PostJsonIdempotentAsync(BaseUrl, body, TestContext.Current.CancellationToken);
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var todo = await response.Content.ReadAsAsyncWithAssertion<TodoResponse>();

@@ -10,6 +10,8 @@ using Scalar.AspNetCore;
 using Trellis.ServiceLevelIndicators;
 using Trellis.Asp;
 using Trellis.Asp.Authorization;
+using Trellis.Asp.Idempotency;
+using TodoSample.Domain;
 
 internal static class DependencyInjection
 {
@@ -50,6 +52,9 @@ internal static class DependencyInjection
         });
         services.AddControllers();
         services.AddTrellisAspWithScalarValidation();
+        services.AddResourceCollectionName<TodoItem>("todos");
+        services.AddTrellisIdempotency();
+        services.AddInMemoryIdempotencyStore();
         services.AddApiVersioning()
                 .AddMvc(options => options.Conventions.Add(new VersionByNamespaceConvention()))
                 .AddApiExplorer()

@@ -5,6 +5,7 @@ using TodoSample.AntiCorruptionLayer;
 using TodoSample.Api;
 using TodoSample.Application;
 using Trellis.Asp;
+using Trellis.Asp.Idempotency;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -52,6 +53,7 @@ app.UseStatusCodePages();
 
 app.UseHttpsRedirection();
 app.UseAuthorization();
+app.UseTrellisIdempotency();
 app.UseScalarValueValidation();
 app.UseServiceLevelIndicator();
 app.MapControllers();

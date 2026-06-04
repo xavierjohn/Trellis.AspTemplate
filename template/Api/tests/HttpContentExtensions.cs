@@ -1,5 +1,6 @@
 ﻿namespace Api.Tests;
 
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -28,4 +29,20 @@ public static class HttpContentExtensions
 
     public static Task<T> ReadAsExample<T>(this HttpContent content, T example)
         => content.ReadAsAsyncWithAssertion<T>();
+
+    /// <summary>
+    /// Issues a JSON POST with a freshly-generated <c>Idempotency-Key</c> header so the request
+    /// satisfies the <c>[Idempotent]</c> opt-in middleware on the Todos create endpoint.
+    /// Each call uses a unique key, so retries are not replayed.
+    /// </summary>
+    public static Task<HttpResponseMessage> PostJsonIdempotentAsync<T>(
+        this HttpClient client, string url, T body, CancellationToken cancellationToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(body),
+        };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        return client.SendAsync(request, cancellationToken);
+    }
 }

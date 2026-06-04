@@ -94,8 +94,12 @@ GET {{host}}/api/Todos/00000000-0000-0000-0000-000000000001?api-version={{apiVer
 Accept: application/json
 X-Test-Actor: {{userActor}}
 
-### Throw — demonstrates the exception handling pipeline (UseExceptionHandler + ProblemDetails)
+### Throw — demonstrates the ASP.NET exception handling pipeline (UseExceptionHandler + ProblemDetails)
 GET {{host}}/api/Todos/throw?api-version={{apiVersion}}
+Accept: application/json
+
+### Fault — demonstrates Error.Unexpected mapping with a stable fault id (no exception thrown)
+GET {{host}}/api/Todos/fault?api-version={{apiVersion}}
 Accept: application/json
 
 ###############################################

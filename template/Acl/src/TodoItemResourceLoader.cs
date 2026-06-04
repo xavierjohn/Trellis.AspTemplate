@@ -17,6 +17,6 @@ internal sealed class TodoItemResourceLoader : SharedResourceLoaderById<TodoItem
         await _context.TodoItems
             .Where(t => t.Id == id)
             .FirstOrDefaultResultAsync(
-                new Error.NotFound(new ResourceRef("Todo", id.ToString(System.Globalization.CultureInfo.InvariantCulture))) { Detail = $"Todo item {id.Value} not found." },
+                new Error.NotFound(ResourceRef.For<TodoItem>(id)) { Detail = $"Todo item {id.Value} not found." },
                 cancellationToken);
 }
