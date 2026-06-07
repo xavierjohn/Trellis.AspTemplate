@@ -1,6 +1,14 @@
-# Trellis ASP.NET Service Template
+﻿# Trellis.AspTemplate
 
-Create a production-ready ASP.NET service with Trellis, layered architecture, testing, and observability already wired in.
+[![Build](https://github.com/xavierjohn/Trellis.AspTemplate/actions/workflows/build.yml/badge.svg)](https://github.com/xavierjohn/Trellis.AspTemplate/actions/workflows/build.yml)
+[![NuGet](https://img.shields.io/nuget/v/Trellis.AspTemplate.svg)](https://www.nuget.org/packages/Trellis.AspTemplate)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/Trellis.AspTemplate.svg)](https://www.nuget.org/packages/Trellis.AspTemplate)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![.NET](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/download)
+[![C#](https://img.shields.io/badge/C%23-14.0-blue.svg)](https://docs.microsoft.com/en-us/dotnet/csharp/)
+[![GitHub Stars](https://img.shields.io/github/stars/xavierjohn/Trellis.AspTemplate?style=social)](https://github.com/xavierjohn/Trellis.AspTemplate/stargazers)
+
+> `dotnet new trellis-asp` template scaffolding a production-ready single-service ASP.NET application on the [Trellis framework](https://github.com/xavierjohn/Trellis) with Clean Architecture layout (API + Application + Domain + ACL), API versioning, EF Core, OpenAPI, and test infrastructure already wired in.
 
 ## Quick Start
 
@@ -57,10 +65,21 @@ Api -> Application -> Domain
 
 ## Documentation
 
-- Trellis docs: https://xavierjohn.github.io/Trellis/
-- Dev Container guide: https://github.com/xavierjohn/Trellis/blob/main/TrellisAspTemplate/template/.devcontainer/README.md
-- OpenTelemetry guide: https://github.com/xavierjohn/Trellis/blob/main/TrellisAspTemplate/template/DockerOpenTelemetry/README.md
+- Trellis docs: <https://xavierjohn.github.io/Trellis/>
+- Dev Container guide: [`template/.devcontainer/README.md`](https://github.com/xavierjohn/Trellis.AspTemplate/blob/main/template/.devcontainer/README.md)
+- OpenTelemetry guide: [`template/DockerOpenTelemetry/README.md`](https://github.com/xavierjohn/Trellis.AspTemplate/blob/main/template/DockerOpenTelemetry/README.md)
+
+## Related repositories
+
+- [`xavierjohn/Trellis`](https://github.com/xavierjohn/Trellis) — the framework: `Result<T>`, `Maybe<T>`, value objects, DDD primitives, ASP.NET / EF Core / Mediator integration.
+- [`xavierjohn/Trellis.Microservices`](https://github.com/xavierjohn/Trellis.Microservices) — microservice trust-boundary packages: YARP gateway integration + consumer-side actor provider for multi-tenant ABAC.
+- [`xavierjohn/Trellis.Microservices.Template`](https://github.com/xavierjohn/Trellis.Microservices.Template) — `dotnet new trellis-microservices` Project Tracker starter (multi-service topology with Aspire).
+- [`xavierjohn/Trellis.ServiceLevelIndicators`](https://github.com/xavierjohn/Trellis.ServiceLevelIndicators) — latency SLI metrics library for emitting operation-duration histograms via System.Diagnostics.Metrics + OpenTelemetry.
 
 ## Requirements
 
 - .NET 10 SDK
+
+## License
+
+[MIT](LICENSE).

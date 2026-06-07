@@ -10,7 +10,7 @@ This repository contains the **Trellis ASP.NET template** (`dotnet new`). There 
 ## Repository Structure
 
 ```
-TrellisAspTemplate/
+Trellis.AspTemplate/
 ├── templatepack.csproj            ← NuGet template pack project
 ├── version.json                   ← Nerdbank.GitVersioning
 ├── template/                      ← The actual template content (installed by `dotnet new`)
