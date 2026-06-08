@@ -16,8 +16,8 @@
     <Description>A dotnet new template for creating ASP.NET services using the Trellis framework with Railway-Oriented Programming (ROP) and Domain-Driven Design (DDD). Includes solution structure, build system, test infrastructure, copilot instructions, and API reference.</Description>
     <Authors>Xavier John</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/xavierjohn/TrellisAspTemplate</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/xavierjohn/TrellisAspTemplate</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/xavierjohn/Trellis.AspTemplate</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/xavierjohn/Trellis.AspTemplate</RepositoryUrl>
     <PackageTags>dotnet-new;template;trellis;rop;ddd;aspnet;api;railway-oriented-programming;domain-driven-design</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
