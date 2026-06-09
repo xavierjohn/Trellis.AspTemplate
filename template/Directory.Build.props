@@ -27,7 +27,7 @@
     <InternalsVisibleTo Include="$(MSBuildProjectName).Tests" />
     <Using Include="Trellis" />
     <PackageReference Include="DotNet.ReproducibleBuilds" PrivateAssets="All" />
-    <PackageReference Include="Trellis.Analyzers" />
+    <PackageReference Include="Trellis.Analyzers" PrivateAssets="All" />
   </ItemGroup>
 
   <PropertyGroup Condition=" '$(IsTestProject)' == 'false' ">
