@@ -41,6 +41,7 @@ Read **every** file relevant to your implementation. For a typical service using
 
 - **Rule:** 🔴 MUST use `Result<T>` for expected failures and `Maybe<T>` for optional values. Never throw for business logic. Never use `try/catch` in Domain or Application layers for expected outcomes.
 - **Rationale:** Trellis relies on Railway Oriented Programming; exceptions for expected paths break the pipeline and reduce testability.
+- **Exceptions are still for the _exceptional_.** The rule is "never throw for an **expected** outcome" (validation, not-found, conflict, forbidden, optional absence — model these as `Result<T>` / `Maybe<T>`), **not** "never throw at all". `throw` remains correct for unrecoverable faults that signal a bug or broken environment: API misuse, failed startup/configuration checks, and infrastructure errors. For internal "shouldn't happen" faults you may also return the value `Error.Unexpected(reasonCode, faultId?)` instead of throwing. Analyzer **TRLS010** enforces the no-throw rule inside Result chains (`Bind`/`Map`/`Tap`/`Ensure`).
 - **Correct:**
 ```csharp
 using Trellis;
