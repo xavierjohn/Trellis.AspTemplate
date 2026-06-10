@@ -96,6 +96,11 @@ internal static class DependencyInjection
             {
                 builder.AddAspNetCoreInstrumentation();
                 builder.AddPrimitiveValueObjectInstrumentation();
+                // Trellis.Mediator's TracingBehavior emits a span per command/query from the
+                // "Trellis.Mediator" ActivitySource (TracingBehavior<,>.ActivitySourceName).
+                // Register it so each handler shows in the trace next to the HTTP and
+                // value-object spans; without it those command/query spans are dropped.
+                builder.AddSource("Trellis.Mediator");
                 builder.AddOtlpExporter();
             });
 
