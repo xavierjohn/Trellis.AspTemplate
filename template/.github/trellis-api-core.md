@@ -1,7 +1,7 @@
 ﻿---
 package: Trellis.Core
 namespaces: [Trellis]
-types: [Result, "Result<T>", IResult, "IResult<TValue>", "IFailureFactory<TSelf>", IPersistOnFailure, "Maybe<T>", Maybe, MaybeInvariant, Error, ITransportFault, RetryAdvice, RetryClassification, ErrorRetryExtensions, Unit, "Page<T>", Page, Cursor, PageSize, CursorCodec, PageBuilder, "EquatableArray<T>", EquatableArray, ResourceRef, InputPointer, FieldViolation, RuleViolation, IAggregate, "Aggregate<TId>", IEntity, "Entity<TId>", IDomainEvent, ITrackedAggregateSource, ValueObject, "ScalarValueObject<TSelf,T>", "IScalarValue<TSelf,TPrimitive>", "IFormattableScalarValue<TSelf,TPrimitive>", "RequiredString<TSelf>", "RequiredInt<TSelf>", "RequiredLong<TSelf>", "RequiredDecimal<TSelf>", "RequiredBool<TSelf>", "RequiredGuid<TSelf>", "RequiredDateTime<TSelf>", "RequiredDateTimeOffset<TSelf>", "RequiredEnum<TSelf>", "RequiredEnumJsonConverter<T>", "ParsableJsonConverter<T>", ResultRequiresExplicitHttpMappingConverter, PrimitiveValueObjectTrace, "Specification<T>", TrellisJsonValidationException, RangeAttribute, StringLengthAttribute, NotDefaultAttribute, TrimAttribute, AllowEmptyAttribute, AllowWhitespaceAttribute, NoTrimAttribute, AllowZeroAttribute, AllowMinValueAttribute, PositiveAttribute, NonNegativeAttribute, NegativeAttribute, NonPositiveAttribute, RailwayTrackAttribute, TrackBehavior, EnumValueAttribute, ResourceCollectionNameAttribute, ResultDebugSettings]
+types: [Result, "Result<T>", IResult, "IResult<TValue>", "IFailureFactory<TSelf>", IPersistOnFailure, "Maybe<T>", Maybe, MaybeInvariant, Error, ITransportFault, RetryAdvice, RetryClassification, ErrorRetryExtensions, Unit, "Page<T>", Page, Cursor, PageSize, CursorCodec, PageBuilder, "EquatableArray<T>", EquatableArray, ResourceRef, InputPointer, FieldViolation, RuleViolation, IAggregate, "Aggregate<TId>", IEntity, "Entity<TId>", IDomainEvent, IIntegrationEvent, ITrackedAggregateSource, ValueObject, "ScalarValueObject<TSelf,T>", "IScalarValue<TSelf,TPrimitive>", "IFormattableScalarValue<TSelf,TPrimitive>", "RequiredString<TSelf>", "RequiredInt<TSelf>", "RequiredLong<TSelf>", "RequiredDecimal<TSelf>", "RequiredBool<TSelf>", "RequiredGuid<TSelf>", "RequiredDateTime<TSelf>", "RequiredDateTimeOffset<TSelf>", "RequiredEnum<TSelf>", "RequiredEnumJsonConverter<T>", "ParsableJsonConverter<T>", ResultRequiresExplicitHttpMappingConverter, PrimitiveValueObjectTrace, "Specification<T>", TrellisJsonValidationException, RangeAttribute, StringLengthAttribute, NotDefaultAttribute, TrimAttribute, AllowEmptyAttribute, AllowWhitespaceAttribute, NoTrimAttribute, AllowZeroAttribute, AllowMinValueAttribute, PositiveAttribute, NonNegativeAttribute, NegativeAttribute, NonPositiveAttribute, RailwayTrackAttribute, TrackBehavior, EnumValueAttribute, ResourceCollectionNameAttribute, ResultDebugSettings]
 version: v3
 last_verified: 2026-06-03
 audience: [llm]
@@ -22,6 +22,21 @@ See also: [trellis-api-cookbook.md](trellis-api-cookbook.md#trellis-cross-packag
 - You are composing domain/application flows and need the canonical ROP operation: `Bind`, `Map`, `Tap`, `Ensure`, `Combine`, `ParallelAsync`, `AsTask`, or `AsValueTask`.
 - You are defining aggregates, entities, domain events, specifications, or source-generated `Required*<TSelf>` value objects.
 
+## Error-handling philosophy
+
+Trellis models **expected failures as values, not exceptions.** Anything a caller can reasonably anticipate — input validation, not-found, conflict, forbidden, optional absence — is returned as `Result<T>` (or modelled as `Maybe<T>`) and pattern-matched at the boundary. This keeps the railway intact and every failure path testable.
+
+`throw` is **not** banned — it is reserved for the *truly exceptional*: a programming error, a "can't happen" invariant that was violated, or a startup/configuration/infrastructure fault the process cannot recover from. The rule is "never throw for an **expected** outcome," **not** "never throw at all."
+
+| Situation | Do | Not |
+|---|---|---|
+| Expected domain failure (validation, not-found, conflict, forbidden) | `Result.Fail<T>(new Error.X(...))` | `throw` |
+| Expected absence of a value | `Maybe<T>` | `null` / `throw` |
+| Truly exceptional / unrecoverable (bug, broken environment, violated precondition) | `throw` | wrap a normal outcome in a Result just to avoid throwing |
+| Internal "shouldn't happen" you still want to flow as a value | return `new Error.Unexpected(reasonCode, faultId?)` (renders 500 at the boundary, no exception) | `throw new Exception(...)` inside a Result chain |
+
+Analyzer **TRLS010** flags `throw` inside Result chains (`Bind`/`Map`/`Tap`/`Ensure`); reading `result.Error` never throws. Never use `try`/`catch` in Domain or Application layers to drive an *expected* outcome — use `Result.Try(...)` only to convert a genuinely unexpected exception at an integration seam into a typed `Error`.
+
 ## Patterns Index
 
 Use this table before searching the long type catalog.
@@ -39,11 +54,14 @@ Use this table before searching the long type catalog.
 | Adapt an already-computed result to async APIs | `.AsTask()` / `.AsValueTask()` | [`ResultTaskAdapterExtensions`](#task-adapter-family--resulttaskadapterextensions) |
 | Model expected absence | `Maybe<T>`, `Maybe.From(value)`, `Maybe<T>.None` | [`Maybe<T>`](#public-readonly-struct-maybet-where-t--notnull) |
 | Convert absence to a domain failure | `maybe.ToResult(error)` / `maybe.ToResult(errorFactory)` | [`MaybeExtensions`](#maybeextensions) |
+| Convert a nullable reference / value to a domain failure (sync or async) | `obj.ToResult(error)` / `task.ToResultAsync(error)` / `valueTask.ToResultAsync(errorFactory)` — works on `T?` for both `class` and `struct`, plus `Task<T?>` and `ValueTask<T?>` | [`Nullable to Result`](#nullable-to-result--nullableextensions-nullableextensionsasync) |
 | Create HTTP-oriented domain errors | Closed `Error` cases plus `ResourceRef.For<TResource>(id)` | [`Error`](#public-abstract-record-error), [`Error Cases`](#error-cases-closed-adt) |
 | Page list responses | `new Page<T>(items, next, previous, requestedLimit, appliedLimit)` (or `Page.Empty<T>(...)` when there are no items), `Cursor` | [`Pagination`](#pagination) |
 | Model aggregates/entities/events | `Aggregate<TId>`, `Entity<TId>`, `IDomainEvent` | [`Domain-Driven Design`](#domain-driven-design) |
+| Define a stable published integration contract | `IIntegrationEvent` | [`IIntegrationEvent`](#iintegrationevent) |
 | Move reusable query predicates out of repositories | `Specification<T>` | [`Specification<T>`](#specificationt) |
 | Define custom required value objects | `partial class X : RequiredString<X>` / `RequiredGuid<X>` / other `Required*` bases | [`Primitive value object base classes`](#primitive-value-object-base-classes) |
+| Extract a success value or throw at a trust boundary (DTO → entity rehydration, JSON deserialization) | `result.GetValueOrThrow($"context message")` / `GetValueOrThrowAsync(...)` | [`GetValueOrThrowExtensions`](#extension-class-catalog-full-signatures) (entry in the extension catalog), [cookbook Recipe 30](trellis-api-cookbook.md#recipe-30--rehydrating-entities-from-persistence-fail-loud-vs-result-track) |
 
 ## Canonical async handler skeleton
 
@@ -521,7 +539,7 @@ Nested `sealed record` cases under `Error`. The base constructor is `private`, s
 | `Error.Forbidden` | `(string PolicyId, ResourceRef? Resource = null)` | The caller is authenticated but not allowed by the named policy. |
 | `Error.Conflict` | `(ResourceRef? Resource, string ReasonCode)` | The request collides with current state (for example duplicate keys or concurrent modification). |
 | `Error.Gone` | `(ResourceRef Resource)` | The resource previously existed but has been permanently removed (tombstone). |
-| `Error.AuthenticationRequired` | `(string? Scheme = null)` | Authentication is missing or could not be established. |
+| `Error.AuthenticationRequired` | `(string? Scheme = null, string? ReasonCode = null)` | Authentication is missing or could not be established. `ReasonCode` (when supplied) distinguishes causes that share the 401 surface — e.g. `"Authentication.InvalidCredentials"` vs `"Authentication.MissingCredentials"` vs `"Authentication.TokenExpired"` — so telemetry, dashboards, and client branching don't have to parse `Detail`. |
 | `Error.Unavailable` | `(string? ReasonCode = null, RetryAdvice? Retry = null)` | A dependency or subsystem is temporarily unavailable; retry may succeed later. |
 | `Error.RateLimited` | `(RetryAdvice? Retry = null)` | The caller exceeded a quota or rate limit. |
 | `Error.Unexpected` | `(string ReasonCode, string? FaultId = null)` | Unhandled internal failure or “shouldn't happen” condition. `FaultId`, when supplied, correlates to telemetry. |
@@ -840,6 +858,7 @@ The result API contains a large generated extension surface. Exact public famili
 | `DiscardExtensions`, `DiscardTaskExtensions`, `DiscardValueTaskExtensions` | Drops the `Result<T>` value entirely (returns `void`/`Task`/`ValueTask`) for intentional fire-and-forget pipelines |
 | `EnsureExtensions`, `EnsureExtensionsAsync`, `EnsureAllExtensions`, `EnsureAllExtensionsAsync` | Predicate-based validation on successful values; includes collection-wide validation |
 | `GetValueOrDefaultExtensions` | Non-throwing value fallback helpers |
+| `GetValueOrThrowExtensions` | Production-safe throwing extractor for trust-boundary crossings (DTO → entity rehydration, JSON deserialization). Mirrors `Maybe<T>.GetValueOrThrow(string?)`; throws `InvalidOperationException` on failure. Sync + `Task<Result<T>>` + `ValueTask<Result<T>>` overloads. See cookbook Recipe 30. |
 | `ResultLinqExtensions`, `ResultLinqExtensionsTaskAsync`, `ResultLinqExtensionsTaskLeftAsync`, `ResultLinqExtensionsTaskRightAsync`, `ResultLinqExtensionsValueTaskAsync`, `ResultLinqExtensionsValueTaskLeftAsync`, `ResultLinqExtensionsValueTaskRightAsync` | LINQ query syntax support via `Select`/`SelectMany`/`Where` for `Result<T>`, `Task<Result<T>>` and `ValueTask<Result<T>>` (mixed sync/async sources and continuations) |
 | `MapExtensions`, `MapExtensionsAsync`, `MapIfExtensions`, `MapOnFailureExtensions` | Success-path mapping, conditional mapping, and failure remapping; tuple overloads generated for arities 2-9 |
 | `MatchExtensions`, `MatchExtensionsAsync`, `MatchTupleExtensions`, `MatchTupleExtensionsAsync` | Terminal branching for normal and tuple results. (The previous `MatchErrorExtensions` API was removed — use `result.Match(_ => ..., e => e switch { Error.NotFound nf => ..., ... })` against the closed catalog.) |
@@ -1000,7 +1019,7 @@ Task<Result<Settings>> Load(UserId id) =>
 
 #### Ensure family — `EnsureExtensions`, `EnsureExtensionsAsync`, `EnsureAllExtensions`, `EnsureAllExtensionsAsync`
 
-Predicate-based validation. `Ensure` short-circuits on the first failed predicate; `EnsureAll` accumulates every failure into a single `Error.Aggregate` for applicative-style validation.
+Predicate-based validation. `Ensure` short-circuits on the first failed predicate; `EnsureAll` accumulates every failure via `Error.Combine` (homogeneous `Error.InvalidInput` failures merge into a single `Error.InvalidInput`; heterogeneous failures fold into `Error.Aggregate`) for applicative-style validation.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -1048,9 +1067,9 @@ Aggregates results into tuples (success-track) or merges errors via `Error.Aggre
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static Result<(T1, T2)> Combine<T1, T2>(this Result<T1> t1, Result<T2> t2)` | `Result<(T1, T2)>` | Tuple combine; failures fold via `Error.Aggregate`. When either operand is `Result<Unit>`, `Unit` becomes the next tuple element (use `_` in the destructuring lambda to ignore it). |
+| `public static Result<(T1, T2)> Combine<T1, T2>(this Result<T1> t1, Result<T2> t2)` | `Result<(T1, T2)>` | Tuple combine; failures fold via `Error.Combine` (two `Error.InvalidInput` merge into one `Error.InvalidInput`; otherwise `Error.Aggregate`). When either operand is `Result<Unit>`, `Unit` becomes the next tuple element (use `_` in the destructuring lambda to ignore it). |
 | `public static Task<Result<(T1, T2)>> CombineAsync<T1, T2>(this Task<Result<T1>> tt1, Task<Result<T2>> tt2)` | `Task<Result<(T1, T2)>>` | `CombineExtensionsAsync` covers every Task/ValueTask × Task/ValueTask combination. Task overloads validate null `Task` inputs before awaiting either side. |
-| `public static Error Combine(this Error? left, Error right)` | `Error` | On `CombineErrorExtensions`: combines two errors into an `Error.Aggregate`, flattening nested aggregates and treating `null` left as right. |
+| `public static Error Combine(this Error? left, Error right)` | `Error` | On `CombineErrorExtensions`: if both errors are `Error.InvalidInput`, merges their `Fields`/`Rules` into a single `Error.InvalidInput`; otherwise combines into an `Error.Aggregate` (flattening nested aggregates). Treats `null` left as right. |
 
 ```csharp
 return Result.Combine(streetCity, contact)
@@ -1210,7 +1229,7 @@ Conditional execution and async fan-in.
 | `public static Result<T> When<T>(this Result<T> result, Func<T, bool> predicate, Func<T, Result<T>> operation)` | `Result<T>` | Runs `operation` only when the predicate holds. |
 | `public static Result<T> Unless<T>(this Result<T> result, Func<T, bool> predicate, Func<T, Result<T>> operation)` | `Result<T>` | Inverse of `When`. |
 | `public static Task<Result<T>> WhenAsync<T>(this Result<T> result, Func<T, bool> predicate, Func<T, Task<Result<T>>> operation)` | `Task<Result<T>>` | `WhenExtensionsAsync` covers Task/ValueTask × predicate-/no-predicate × Result/Task-Result combinations for both `WhenAsync` and `UnlessAsync`. |
-| `public static Task<Result<T>> UnlessAsync<T>(this Task<Result<T>> resultTask, Func<T, Task<Result<T>>> operation)` | `Task<Result<T>>` | Async inverse-`When`. |
+| `public static Task<Result<T>> UnlessAsync<T>(this Task<Result<T>> resultTask, Func<T, bool> predicate, Func<T, Task<Result<T>>> operation)` | `Task<Result<T>>` | Async inverse-`When` (a `bool condition` overload also exists). |
 | `public static Task<Result<(T1, T2)>> WhenAllAsync<T1, T2>(this (Task<Result<T1>> t1, Task<Result<T2>> t2) tasks)` | `Task<Result<(T1, T2)>>` | `WhenAllExtensionsAsync` runs tasks concurrently via `Task.WhenAll` and folds the results. Tuple arities 2–9 are generated. |
 
 ```csharp
@@ -1230,6 +1249,42 @@ Project a `Result<T>` to a `Maybe<T>` (failure → `None`).
 
 ```csharp
 Maybe<Order> maybe = await repo.TryLoadAsync(id).ToMaybeAsync();
+```
+
+#### Nullable to Result — `NullableExtensions`, `NullableExtensionsAsync`
+
+Bridge a plain nullable value (`T?` for reference or value types) into the Result track. Mirrors `Maybe<T>.ToResult` for repositories that return raw nullables instead of `Maybe<T>`. The async overloads extend `Task<T?>` and `ValueTask<T?>` directly, so call sites can chain `.ToResultAsync(error)` onto a repository call without an intermediate `await` — matching the receiver pattern used by `BindAsync` / `EnsureAsync` / `MapAsync`.
+
+The `Func<Error>` async overloads delegate to the sync `ToResult` after awaiting, so the `ArgumentNullException.ThrowIfNull(errorFactory)` check fires on the awaited continuation rather than synchronously. The thrown exception still surfaces from the returned `Task` / `ValueTask`. This intentionally differs from `MaybeExtensionsAsync.ToResultAsync(Func<Error>)`, which validates the factory before awaiting.
+
+**Sync — `NullableExtensions` (4 overloads)**
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static Result<T> ToResult<T>(this T? nullable, Error error) where T : struct` | `Result<T>` | Value-type variant. `null` → `Fail(error)`; otherwise `Ok(nullable.Value)`. |
+| `public static Result<T> ToResult<T>(this T? nullable, Func<Error> errorFactory) where T : struct` | `Result<T>` | Value-type factory variant. Throws `ArgumentNullException` when `errorFactory` is `null`. |
+| `public static Result<T> ToResult<T>(this T? obj, Error error) where T : class` | `Result<T>` | Reference-type variant. |
+| `public static Result<T> ToResult<T>(this T? obj, Func<Error> errorFactory) where T : class` | `Result<T>` | Reference-type factory variant. |
+
+**Async — `NullableExtensionsAsync` (8 overloads)**
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static Task<Result<T>> ToResultAsync<T>(this Task<T?> nullableTask, Error error) where T : struct` | `Task<Result<T>>` | `Task<T?>` value-type variant. |
+| `public static Task<Result<T>> ToResultAsync<T>(this Task<T?> nullableTask, Func<Error> errorFactory) where T : struct` | `Task<Result<T>>` | `Task<T?>` value-type factory variant. |
+| `public static Task<Result<T>> ToResultAsync<T>(this Task<T?> nullableTask, Error error) where T : class` | `Task<Result<T>>` | `Task<T?>` reference-type variant — the canonical "repo returns `Task<User?>`" bridge. |
+| `public static Task<Result<T>> ToResultAsync<T>(this Task<T?> nullableTask, Func<Error> errorFactory) where T : class` | `Task<Result<T>>` | `Task<T?>` reference-type factory variant. |
+| `public static ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> nullableTask, Error error) where T : struct` | `ValueTask<Result<T>>` | `ValueTask<T?>` value-type variant. |
+| `public static ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> nullableTask, Func<Error> errorFactory) where T : struct` | `ValueTask<Result<T>>` | `ValueTask<T?>` value-type factory variant. |
+| `public static ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> nullableTask, Error error) where T : class` | `ValueTask<Result<T>>` | `ValueTask<T?>` reference-type variant — the canonical "repo returns `ValueTask<Order?>`" bridge. |
+| `public static ValueTask<Result<T>> ToResultAsync<T>(this ValueTask<T?> nullableTask, Func<Error> errorFactory) where T : class` | `ValueTask<Result<T>>` | `ValueTask<T?>` reference-type factory variant. |
+
+```csharp
+// Repository returns ValueTask<Order?>. ToResultAsync extends the task receiver
+// directly, so no intermediate await + sync ToResult call is required.
+private ValueTask<Result<Order>> LoadOrderAsync(OrderId id, CancellationToken ct) =>
+    _orderRepository.FindByIdAsync(id, ct)
+        .ToResultAsync(new Error.NotFound(ResourceRef.For<Order>(id)));
 ```
 
 ---
@@ -1279,7 +1334,7 @@ public readonly record struct Page<T>
 
 | Member | Description |
 | --- | --- |
-| `Page(IReadOnlyList<T>, Cursor?, Cursor?, int, int)` | Validated constructor. Throws `ArgumentNullException` on null `Items`, `ArgumentOutOfRangeException` on a non-positive limit or `AppliedLimit > RequestedLimit`. Copies the input sequence so later caller-side list mutations cannot change the page. |
+| `Page(IReadOnlyList<T>, Cursor?, Cursor?, int, int)` | Validated constructor. Throws `ArgumentNullException` on null `Items`, `ArgumentException` when `Next`/`Previous` is `default(Cursor)` (use `null` to signal absence), `ArgumentOutOfRangeException` on a non-positive limit or `AppliedLimit > RequestedLimit`. Copies the input sequence so later caller-side list mutations cannot change the page. |
 | `Items` | The items returned for this page. Never null; `default(Page<T>)` observes an empty sequence. |
 | `Next` | Cursor for the next page, or `null` on the last page. |
 | `Previous` | Cursor for the previous page, or `null` on the first page (or when the source doesn't support reverse). |
@@ -1333,7 +1388,7 @@ public readonly record struct PageSize
 | `Requested` / `Applied` | The pair the caller asked for and the value the server actually used. Composes directly with `Page<T>` so `WasCapped` round-trips through the wire envelope. |
 | `WasCapped` | `true` when `Applied < Requested`. |
 | `FromRequested(int?, int)` | Lenient parser. When `requested` is `null` or non-positive, returns `Requested = Default` and `Applied = min(Default, max)` (so a custom `max < Default` still clamps `Applied` and surfaces as `WasCapped`). When `requested` is positive, preserves it verbatim and clamps `Applied` to `max`. |
-| `TryCreate(int?, int, string?)` | Strict parser. Returns `Result.Fail<PageSize>` with `Error.InvalidInput` on a non-positive or out-of-range value; uses `fieldName ?? "pageSize"` for the field violation. |
+| `TryCreate(int?, int, string?)` | Strict parser. A `null` `requested` returns `Result.Ok` with `Default` (like `FromRequested`); a non-positive or out-of-range value returns `Result.Fail<PageSize>` with `Error.InvalidInput` (uses `fieldName ?? "pageSize"` for the field violation). |
 
 ### `public static class CursorCodec`
 
@@ -1357,7 +1412,7 @@ public static class CursorCodec
 
 | Member | Description |
 | --- | --- |
-| `Encode<TKey>(TKey)` | Single-key cursor: URL-safe base64 of the key's invariant-culture string form. Supported keys include `Guid`, `long`, `int`, and `string`. Project Trellis value-object IDs to their underlying primitive (`.Value`) before calling. |
+| `Encode<TKey>(TKey)` | Single-key cursor: URL-safe base64 of the key's invariant-culture string form. Supported keys include `Guid`, `long`, `int`, and `string`. Source-generated `Required*` value-object IDs round-trip directly (they inherit `IFormattable` and gain `IParsable<TSelf>` from the generator); only hand-written value objects lacking `IParsable<TSelf>` need projecting to their underlying primitive (`.Value`). |
 | `TryDecode<TKey>(Cursor, string?)` | Inverse of the single-key `Encode`. Returns `Error.InvalidInput` (reason code `cursor.malformed`, field `fieldName ?? "cursor"`) on malformed base64, oversized tokens, invalid UTF-8, or unparseable payload. |
 | `Encode<TKey>(DateTimeOffset, TKey)` | Composite cursor for stable time-ordered seek: URL-safe base64 of `"{createdAt:O}&#124;{id}"` in invariant culture. |
 | `TryDecodeComposite<TKey>` | Inverse of the composite `Encode`. Returns `Error.InvalidInput` (reason code `cursor.malformed`, field `fieldName ?? "cursor"`) on malformed base64, oversized tokens, invalid UTF-8, missing separator, or unparseable segments. Splits at the **first** `&#124;` only, so an Id that happens to contain a pipe is still unambiguous. |
@@ -1436,9 +1491,9 @@ public async Task<Result<Page<OrderListItem>>> Handle(ListOrdersQuery query, Can
 | `Error.InvariantViolation` | `(string ReasonCode, ResourceRef? Resource = null)` | `ReasonCode` | `invariant-violation` |
 | `Error.NotFound` | `(ResourceRef Resource)` | `not-found` | `not-found` |
 | `Error.Forbidden` | `(string PolicyId, ResourceRef? Resource = null)` | `PolicyId` | `forbidden` |
-| `Error.Conflict` | `(ResourceRef? Resource, string ReasonCode)` | `ReasonCode` | `conflict` |
+| `Error.Conflict` | `(ResourceRef? Resource, string ReasonCode)` — plus `[JsonIgnore]` init-only `ConstraintName`/`ConstraintTableName` (telemetry-only, set by EF Core helpers such as `TryInsertUniqueAsync`) | `ReasonCode` | `conflict` |
 | `Error.Gone` | `(ResourceRef Resource)` | `gone` | `gone` |
-| `Error.AuthenticationRequired` | `(string? Scheme = null)` | `authentication-required` | `authentication-required` |
+| `Error.AuthenticationRequired` | `(string? Scheme = null, string? ReasonCode = null)` | `ReasonCode ?? "authentication-required"` | `authentication-required` |
 | `Error.Unavailable` | `(string? ReasonCode = null, RetryAdvice? Retry = null)` | `ReasonCode ?? "unavailable"` | `unavailable` |
 | `Error.RateLimited` | `(RetryAdvice? Retry = null)` | `rate-limited` | `rate-limited` |
 | `Error.Unexpected` | `(string ReasonCode, string? FaultId = null)` | `ReasonCode` | `unexpected` |
@@ -1588,6 +1643,22 @@ public interface IDomainEvent
 | Name | Type | Description |
 | --- | --- | --- |
 | `OccurredAt` | `DateTimeOffset` | Timestamp (with explicit UTC offset) for when the domain event occurred. |
+
+### `IIntegrationEvent`
+
+```csharp
+public interface IIntegrationEvent
+```
+
+Represents an integration event - the stable, published contract a bounded context emits to the outside world (other services or bounded contexts), as distinct from an [`IDomainEvent`](#idomainevent) which stays inside the context and is raised by aggregates.
+
+Domain events are internal: they are raised by aggregates, dispatched in-process to `IDomainEventHandler<T>`, and free to expose the domain's ubiquitous language because only the owning context observes them. Integration events are external: they are versioned wire contracts other systems depend on, so they should be deliberately shaped, stable, and free of internal domain types.
+
+Integration events are typically translated from domain events: a domain-event handler observes a domain event and produces one or more integration events describing the same business fact in contract terms. Publish them through the transactional outbox so external delivery is atomic with the state change and survives a crash. The outbox relays integration events through `IIntegrationEventPublisher`, whose default implementation fans out to in-process `IIntegrationEventHandler<T>` registrations and can be replaced with a message-broker adapter.
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `OccurredAt` | `DateTimeOffset` | Timestamp (with explicit UTC offset) for when the business fact this integration event describes occurred. Use this as the single event timestamp. |
 
 ### `ITrackedAggregateSource`
 
@@ -1937,7 +2008,7 @@ public static class StringExtensions
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static string NormalizeFieldName(this string? fieldName, string defaultName)` | `string` | Uses `fieldName` when present, otherwise camel-cases `defaultName`. |
+| `public static string NormalizeFieldName(this string? fieldName, string defaultName)` | `string` | Camel-cases `fieldName` when present; otherwise returns `defaultName` verbatim. |
 | `public static T ParseScalarValue<T>(string? s) where T : class, IScalarValue<T, string>` | `T` | Throws `FormatException` based on `T.TryCreate`. |
 | `public static bool TryParseScalarValue<T>([NotNullWhen(true)] string? s, [MaybeNullWhen(false)] out T result) where T : class, IScalarValue<T, string>` | `bool` | Safe parsing helper based on `T.TryCreate`. |
 | `public static string ToCamelCase(this string? str)` | `string` | Lowercases the first character only. |

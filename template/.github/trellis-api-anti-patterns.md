@@ -1,7 +1,7 @@
 ﻿---
 package: Trellis.Analyzers (applied form)
 namespaces: [Trellis, Trellis.Analyzers]
-types: [TRLS001, TRLS003, TRLS010, TRLS013, TRLS015, TRLS016, TRLS017, TRLS018, TRLS019, TRLS020, TRLS035, TRLS036, TRLS037, TRLS038, TRLS039, TRLS054, TRLS055, TRLS056]
+types: [TRLS001, TRLS003, TRLS010, TRLS013, TRLS015, TRLS016, TRLS018, TRLS019, TRLS020, TRLS035, TRLS036, TRLS037, TRLS038, TRLS039, TRLS054, TRLS055, TRLS056]
 related_docs: [trellis-api-analyzers.md, trellis-api-cookbook.md]
 version: v4
 last_verified: 2026-06-03
@@ -73,18 +73,6 @@ b.HasIndex(c => c.Email);                          // TRLS016 — silently no-op
 
 // FIX
 b.HasTrellisIndex(c => new { c.Email });
-```
-
-## TRLS017 — Wrong attribute namespace on a value object
-
-```csharp
-// WRONG — System.ComponentModel.DataAnnotations
-[System.ComponentModel.DataAnnotations.StringLength(10)]    // TRLS017 — generator ignores it
-public sealed partial class CurrencyCode : RequiredString<CurrencyCode>;
-
-// FIX
-[Trellis.StringLength(10)]
-public sealed partial class CurrencyCode : RequiredString<CurrencyCode>;
 ```
 
 ## TRLS018 — Unsafe `Result<T>` deconstruction
@@ -197,7 +185,7 @@ Pick FIX 1 when the non-UoW caller discards the affected-row count.
 await db.SaveChangesAsync(ct);
 
 // FIX 1 — preserve Result pipeline semantics when the count is not needed
-await db.SaveChangesResultUnitAsync(ct);
+return await db.SaveChangesResultUnitAsync(ct);   // propagate the Result up the ROP chain
 ```
 
 Pick FIX 2 when the non-UoW caller needs the affected-row count.
@@ -207,7 +195,7 @@ Pick FIX 2 when the non-UoW caller needs the affected-row count.
 int count = await db.SaveChangesAsync(ct);
 
 // FIX 2 — keep the affected-row count inside Result<int>
-Result<int> result = await db.SaveChangesResultAsync(ct);
+return await db.SaveChangesResultAsync(ct);       // Result<int> carries the affected-row count
 ```
 
 > Under `AddTrellisUnitOfWork<TContext>`, repositories should stage changes only and not call `SaveChanges`/`SaveChangesAsync` at all. `TransactionalCommandBehavior` owns commit.

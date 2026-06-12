@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using OpenTelemetry.Logs;
 using Scalar.AspNetCore;
 using Trellis.ServiceLevelIndicators;
 using Trellis.Asp;
@@ -96,8 +97,30 @@ internal static class DependencyInjection
             {
                 builder.AddAspNetCoreInstrumentation();
                 builder.AddPrimitiveValueObjectInstrumentation();
+                // Trellis.Mediator's TracingBehavior emits a span per command/query from the
+                // "Trellis.Mediator" ActivitySource (TracingBehavior<,>.ActivitySourceName).
+                // Register it so each handler shows in the trace next to the HTTP and
+                // value-object spans; without it those command/query spans are dropped.
+                builder.AddSource("Trellis.Mediator");
                 builder.AddOtlpExporter();
             });
+
+        // Export ILogger logs over OTLP so they appear in the Aspire dashboard's Structured
+        // Logs view (and any OTLP backend), correlated to traces by traceId/spanId. Without
+        // this only metrics and traces are exported and the logs view stays empty.
+        services.AddLogging(logging => logging.AddOpenTelemetry(options =>
+        {
+            options.IncludeFormattedMessage = true;
+            options.IncludeScopes = true;
+            // Export structured ILogger state (e.g. LogInformation("User {UserId}", id)) as
+            // OTLP log attributes so the Structured Logs view shows the key/value pairs, not
+            // just the formatted message.
+            options.ParseStateValues = true;
+            var resourceBuilder = ResourceBuilder.CreateDefault();
+            configureResource(resourceBuilder);
+            options.SetResourceBuilder(resourceBuilder);
+            options.AddOtlpExporter();
+        }));
 
         return services;
     }

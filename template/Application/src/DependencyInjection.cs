@@ -2,8 +2,8 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using TodoSample.Application.Todos;
-using Trellis.FluentValidation;
 using Trellis.Mediator;
+using Trellis.Mediator.FluentValidation;
 
 public static class DependencyInjection
 {
