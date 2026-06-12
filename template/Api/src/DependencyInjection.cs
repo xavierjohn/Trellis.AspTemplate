@@ -112,6 +112,10 @@ internal static class DependencyInjection
         {
             options.IncludeFormattedMessage = true;
             options.IncludeScopes = true;
+            // Export structured ILogger state (e.g. LogInformation("User {UserId}", id)) as
+            // OTLP log attributes so the Structured Logs view shows the key/value pairs, not
+            // just the formatted message.
+            options.ParseStateValues = true;
             var resourceBuilder = ResourceBuilder.CreateDefault();
             configureResource(resourceBuilder);
             options.SetResourceBuilder(resourceBuilder);
