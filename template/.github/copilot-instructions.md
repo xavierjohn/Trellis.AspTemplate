@@ -346,7 +346,7 @@ private Order() : base(default!)
 - **Reference:** See `.github/trellis-api-statemachine.md §LazyStateMachine<TState, TTrigger>` and `.github/trellis-api-statemachine.md §StateMachineExtensions`.
 ### Follow Trellis EF Core conventions exactly
 
-- **Rule:** 🔴 MUST use `ApplyTrellisConventions`, `AddTrellisInterceptors`, `SaveChangesResultUnitAsync`, `partial Maybe<T>` properties, `HasTrellisIndex`, and EF materialization boilerplate exactly as Trellis expects.
+- **Rule:** 🔴 MUST use `ApplyTrellisConventionsFor<TContext>()`, `AddTrellisInterceptors`, `SaveChangesResultUnitAsync`, `partial Maybe<T>` properties, `HasTrellisIndex`, and EF materialization boilerplate exactly as Trellis expects.
 - **Rationale:** Trellis persistence relies on conventions and generators; overriding them with manual EF patterns silently breaks mapping, timestamps, or generated backing fields.
 - **Correct:**
 ```csharp
@@ -365,7 +365,7 @@ public class Customer : Aggregate<CustomerId>
 }
 
 protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) =>
-    configurationBuilder.ApplyTrellisConventions(typeof(Customer).Assembly);
+    configurationBuilder.ApplyTrellisConventionsFor<AppDbContext>();
 
 protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
     optionsBuilder.AddTrellisInterceptors();
@@ -654,7 +654,7 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 
 | Scenario | Use | Not |
 |---|---|---|
-| Conventions | `ApplyTrellisConventions(...)` | Manual `HasConversion()` / `OwnsOne()` for Trellis-supported types |
+| Conventions | `ApplyTrellisConventionsFor<TContext>()` (source-generated, preferred) | Reflection `ApplyTrellisConventions(assembly)` fallback unless the context is private/generic/abstract; manual `HasConversion()` / `OwnsOne()` for Trellis-supported types |
 | Interceptors | `AddTrellisInterceptors()` | Reimplement timestamp or ETag plumbing |
 | Save changes in repositories | `SaveChangesResultUnitAsync()` | Bare `SaveChangesAsync()` |
 | Optional lookup | `FirstOrDefaultMaybeAsync(...)` | `FirstOrDefaultAsync(...)` + `null` |

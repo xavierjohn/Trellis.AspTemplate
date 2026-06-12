@@ -17,7 +17,7 @@ public class AppDbContext : DbContext
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
-        configurationBuilder.ApplyTrellisConventions(typeof(TodoId).Assembly);
+        configurationBuilder.ApplyTrellisConventionsFor<AppDbContext>();
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
