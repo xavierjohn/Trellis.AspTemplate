@@ -1,7 +1,7 @@
 ﻿---
 package: Trellis.Mediator
 namespaces: [Trellis.Mediator]
-types: [ICommand<T>, IQuery<T>, "IRequestHandler<,>", "IPipelineBehavior<,>", "AuthorizationBehavior<TMessage,TResponse>", "ExceptionBehavior<TMessage,TResponse>", IValidate, "LoggingBehavior<TMessage,TResponse>", "ResourceAuthorizationViaBehavior<TMessage,TLeaf,TOwner,TResponse>", ResolvedAuthorizationPath, ResolvedAuthorizationHop, HopLoadResult, "ResolvedAuthorizationPathHolder<TMessage,TLeaf,TOwner,TResponse>", ResourceAuthorizationPathResolver, "ResourceAuthorizationBehavior<TMessage,TResource,TResponse>", ServiceCollectionExtensions, "TracingBehavior<TMessage,TResponse>", TrellisMediatorTelemetryOptions, IMessageValidator<TMessage>, IDomainEventHandler<TEvent>, IDomainEventPublisher, DomainEventHandlerCascadedException, CascadeOffender, "DomainEventDispatchBehavior<,>", DomainEventDispatchServiceCollectionExtensions, DomainEventPublisherExtensions, "TrackedAggregateDomainEventDispatchBehavior<,>", TrackedAggregateDomainEventDispatchServiceCollectionExtensions]
+types: [ICommand<T>, IQuery<T>, "IRequestHandler<,>", "IPipelineBehavior<,>", "AuthorizationBehavior<TMessage,TResponse>", "ExceptionBehavior<TMessage,TResponse>", IValidate, "LoggingBehavior<TMessage,TResponse>", "ResourceAuthorizationViaBehavior<TMessage,TLeaf,TOwner,TResponse>", ResolvedAuthorizationPath, ResolvedAuthorizationHop, HopLoadResult, "ResolvedAuthorizationPathHolder<TMessage,TLeaf,TOwner,TResponse>", ResourceAuthorizationPathResolver, "ResourceAuthorizationBehavior<TMessage,TResource,TResponse>", ServiceCollectionExtensions, "TracingBehavior<TMessage,TResponse>", TrellisMediatorTelemetryOptions, IMessageValidator<TMessage>, IDomainEventHandler<TEvent>, IDomainEventPublisher, IIntegrationEventHandler<TEvent>, IIntegrationEventPublisher, IIntegrationEventCollector, DomainEventHandlerCascadedException, CascadeOffender, "DomainEventDispatchBehavior<,>", DomainEventDispatchServiceCollectionExtensions, DomainEventPublisherExtensions, IntegrationEventDispatchServiceCollectionExtensions, "TrackedAggregateDomainEventDispatchBehavior<,>", TrackedAggregateDomainEventDispatchServiceCollectionExtensions]
 version: v3
 last_verified: 2026-06-03
 audience: [llm]
@@ -29,6 +29,7 @@ See also: [trellis-api-cookbook.md](trellis-api-cookbook.md#patterns-index) — 
 | Add static permission authorization | Message implements `IAuthorize`; register `AddTrellisBehaviors()` | [`AuthorizationBehavior<TMessage,TResponse>`](#authorizationbehaviortmessage-tresponse) |
 | Add resource authorization with assembly scanning | `services.AddResourceAuthorization(typeof(SomeType).Assembly)` | [`ServiceCollectionExtensions`](#servicecollectionextensions) |
 | Add resource authorization explicitly | `services.AddResourceAuthorization<TMessage,TResource,TResponse>()` plus loader registration | [`ResourceAuthorizationBehavior<TMessage,TResource,TResponse>`](#resourceauthorizationbehaviortmessage-tresource-tresponse) |
+| Hide existence of sensitive resources from unauthorized callers | `services.AddResourceAuthorization(o => o.HideExistence<TResource>())` | [`ResourceAuthorizationOptions`](#resourceauthorizationoptions) |
 | Bridge `IIdentifyResource<TResource,TId>` to a shared loader | `services.AddSharedResourceLoader<TMessage,TResource,TId>()` | [`ServiceCollectionExtensions`](#servicecollectionextensions) |
 | Register EF unit-of-work behavior | `services.AddTrellisUnitOfWork<TContext>()` | [`Canonical pipeline order`](#canonical-pipeline-order) |
 | Keep commits inside the pipeline | Repositories stage changes; `TransactionalCommandBehavior` commits on success | [`Behavioral notes`](#behavioral-notes) |
@@ -36,6 +37,10 @@ See also: [trellis-api-cookbook.md](trellis-api-cookbook.md#patterns-index) — 
 | Dispatch domain events with explicit (AOT-friendly) handler registration | `services.AddDomainEventHandler<TEvent, THandler>()` | [`DomainEventDispatchServiceCollectionExtensions`](#domaineventdispatchservicecollectionextensions) |
 | Auto-dispatch domain events from every tracked aggregate (regardless of response shape) | `services.AddTrackedAggregateDomainEventDispatch()` | [`TrackedAggregateDomainEventDispatchServiceCollectionExtensions`](#trackedaggregatedomaineventdispatchservicecollectionextensions) |
 | Implement a domain-event handler | Implement `IDomainEventHandler<TEvent>` | [`IDomainEventHandler`](#idomaineventhandler) |
+| Define an external/integration contract | Implement `IIntegrationEvent` with stable, primitive or nullable transport members | [`IIntegrationEventHandler`](#iintegrationeventhandler) |
+| Translate a domain event into an integration event | A domain-event handler injects `IIntegrationEventCollector` and calls `Add(...)` | [`IIntegrationEventCollector`](#iintegrationeventcollector) |
+| Consume an integration event in-process | Implement `IIntegrationEventHandler<TEvent>` | [`IIntegrationEventHandler`](#iintegrationeventhandler) |
+| Register integration-event publishing | `services.AddIntegrationEventDispatch(...)` or `services.AddIntegrationEventHandler<TEvent, THandler>()` | [`IntegrationEventDispatchServiceCollectionExtensions`](#integrationeventdispatchservicecollectionextensions) |
 
 ## Common traps
 
@@ -51,7 +56,7 @@ Mediator pipeline work is rarely isolated. Load these companion references befor
 |---|---|---|
 | EF-backed command commits or `AddTrellisUnitOfWork<TContext>()` | [`trellis-api-efcore.md`](trellis-api-efcore.md#unitofworkservicecollectionextensions), [`trellis-api-servicedefaults.md`](trellis-api-servicedefaults.md#trellisservicebuilder) | The transaction behavior is registered by EF Core and applied last by the service-defaults builder. |
 | Resource authorization | [`trellis-api-authorization.md`](trellis-api-authorization.md#resource-based-authorization-with-a-shared-loader), [`trellis-api-efcore.md`](trellis-api-efcore.md#repositorybasetaggregate-tid) when resources load from repositories | The interfaces live in Authorization; resource loading often composes with EF repository/result semantics. |
-| FluentValidation in the validation stage | [`trellis-api-fluentvalidation.md`](trellis-api-fluentvalidation.md#fluentvalidationservicecollectionextensions) | FluentValidation contributes `IMessageValidator<TMessage>` instances to `ValidationBehavior`; it does not add another pipeline slot. |
+| FluentValidation in the validation stage | [`trellis-api-mediator-fluentvalidation.md`](trellis-api-mediator-fluentvalidation.md#fluentvalidationservicecollectionextensions) | FluentValidation contributes `IMessageValidator<TMessage>` instances to `ValidationBehavior`; it does not add another pipeline slot. The adapter lives in the dedicated `Trellis.Mediator.FluentValidation` package. |
 | ASP endpoints that send commands/queries | [`trellis-api-asp.md`](trellis-api-asp.md#endpoint-checklist-for-generated-apis) | Endpoint response mapping and scalar validation happen at the ASP boundary; handlers should stay transport-free. |
 
 ## Types
@@ -158,9 +163,10 @@ public sealed partial class LoggingBehavior<TMessage, TResponse> : IPipelineBeha
 **Declaration**
 
 ```csharp
-public sealed class ResourceAuthorizationViaBehavior<TMessage, TLeaf, TOwner, TResponse>
+public sealed partial class ResourceAuthorizationViaBehavior<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] TMessage, TLeaf, TOwner, TResponse>
     : IPipelineBehavior<TMessage, TResponse>
     where TMessage : IAuthorizeResourceVia<TOwner>, global::Mediator.IMessage
+    where TLeaf : class
     where TResponse : IResult, IFailureFactory<TResponse>
 ```
 
@@ -170,14 +176,14 @@ Pipeline behavior implementing indirect (multi-hop) resource authorization. Load
 
 | Signature | Description |
 | --- | --- |
-| `public ResourceAuthorizationViaBehavior(IActorProvider actorProvider, IServiceProvider serviceProvider, ResolvedAuthorizationPathHolder<TMessage, TLeaf, TOwner, TResponse> pathHolder)` | DI-friendly constructor; the closed-generic holder is registered per via-command so DI naturally disambiguates. |
-| `public ResourceAuthorizationViaBehavior(IActorProvider actorProvider, IServiceProvider serviceProvider, ResolvedAuthorizationPath path)` | Test/manual constructor accepting a hand-built path. Validates `path.MessageType`/`LeafType`/`OwnerType` match the behavior's generic arguments. |
+| `public ResourceAuthorizationViaBehavior(IActorProvider actorProvider, IServiceProvider serviceProvider, ResolvedAuthorizationPathHolder<TMessage, TLeaf, TOwner, TResponse> pathHolder, IOptions<ResourceAuthorizationOptions>? options = null, ILogger<ResourceAuthorizationViaBehavior<TMessage, TLeaf, TOwner, TResponse>>? logger = null)` | DI-friendly constructor; the closed-generic holder is registered per via-command so DI naturally disambiguates. `options` defaults to a fresh `ResourceAuthorizationOptions` (`DefaultExposurePolicy = Propagate`); `logger` defaults to `NullLogger.Instance`. |
+| `public ResourceAuthorizationViaBehavior(IActorProvider actorProvider, IServiceProvider serviceProvider, ResolvedAuthorizationPath path, IOptions<ResourceAuthorizationOptions>? options = null, ILogger<ResourceAuthorizationViaBehavior<TMessage, TLeaf, TOwner, TResponse>>? logger = null)` | Test/manual constructor accepting a hand-built path. Validates `path.MessageType`/`LeafType`/`OwnerType` match the behavior's generic arguments. |
 
 **Methods**
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Resolves the actor before doing any I/O (including resolving the leaf loader from DI — loader construction is treated as I/O because the DI factory may open a `DbContext` or pre-fetch state). When the actor provider returns `Maybe<Actor>.None`, short-circuits with `TResponse.CreateFailure(new Error.AuthenticationRequired { Detail = "Authentication required." })`; provider-side `InvalidOperationException` still propagates as a deployment bug. Loads the leaf via `IResourceLoader<TMessage, TLeaf>` — leaf load failure bubbles verbatim. Walks the resolved path: per hop extracts IDs (de-duplicated, nulls filtered), loads each via the registered `SharedResourceLoaderById<TTo, TToId>` — intermediate/owner load failures collapse to `Error.Forbidden` (no existence leak); empty ID list at any hop short-circuits to `Error.Forbidden`. Finally calls `message.Authorize(actor, IReadOnlyList<TOwner>)` and returns its result, or invokes the handler when the authorization passes. **Null-payload defense.** A loader that violates its `Result<T>` contract by returning `Result.Ok(null)` is treated as fail-closed rather than crashing the pipeline: a leaf null-payload short-circuits to `Error.Forbidden` with code `resource.authorization-via.null-payload` (caller-visible). A hop null-success is treated internally as a hop failure and — like every other intermediate/owner load failure — collapses to `Error.Forbidden` with code `resource.authorization-via.load-failed` (the underlying null-payload code is intentionally not surfaced, mirroring the existence-leak protection on hop failures generally). |
+| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Resolves the actor before doing any I/O (including resolving the leaf loader from DI — loader construction is treated as I/O because the DI factory may open a `DbContext` or pre-fetch state). When the actor provider returns `Maybe<Actor>.None`, short-circuits with `TResponse.CreateFailure(new Error.AuthenticationRequired { Detail = "Authentication required." })`; provider-side `InvalidOperationException` still propagates as a deployment bug. Loads the leaf via `IResourceLoader<TMessage, TLeaf>` — leaf load failure bubbles verbatim. Walks the resolved path: per hop extracts IDs (de-duplicated, nulls filtered), loads each via the registered `SharedResourceLoaderById<TTo, TToId>` — intermediate/owner load failures collapse to `Error.Forbidden` (no existence leak); empty ID list at any hop short-circuits to `Error.Forbidden`. Finally calls `message.Authorize(actor, IReadOnlyList<TOwner>)` and returns its result, or invokes the handler when the authorization passes. **Failure-exposure policy.** Lookup key is `typeof(TLeaf)` (the resource the command identifies, not the owner). When `ResourceAuthorizationOptions` opts `TLeaf` into `HideAsNotFound`, all `Error.Forbidden` and `Error.AuthenticationRequired` outcomes — actor-required, leaf-load Forbidden, intermediate/owner load failures, empty-hop, null-payload, and `message.Authorize` denial — translate to `new Error.NotFound(ResourceRef)` referencing `TLeaf` (never `TOwner`). The pass-through guarantee for operational errors (`Error.Unexpected`, `Error.Unavailable`, transport faults) applies only to the LEAF loader's direct return value; intermediate / owner hop failures are already collapsed to the synthetic `Forbidden("resource.authorization-via.load-failed")` by the v1 multi-hop security model BEFORE the exposure-policy translation runs, so under `HideAsNotFound` an underlying `Unavailable` from a downstream owner service surfaces as `404` to the consumer. Translation emits the same `[LoggerMessage]` `ExistenceHidden` event as the direct behavior. See [Recipe 32](trellis-api-cookbook.md#recipe-32--hide-existence-with-authfailureexposurepolicyhideasnotfound). **Null-payload defense.** A loader that violates its `Result<T>` contract by returning `Result.Ok(null)` is treated as fail-closed rather than crashing the pipeline: a leaf null-payload short-circuits to `Error.Forbidden` with code `resource.authorization-via.null-payload` (caller-visible). A hop null-success is treated internally as a hop failure and — like every other intermediate/owner load failure — collapses to `Error.Forbidden` with code `resource.authorization-via.load-failed` (the underlying null-payload code is intentionally not surfaced, mirroring the existence-leak protection on hop failures generally). |
 
 ### ResolvedAuthorizationPath
 **Declaration**
@@ -281,14 +287,14 @@ Resolves a `ResolvedAuthorizationPath` from a leaf type to an owner type by walk
 **Declaration**
 
 ```csharp
-public sealed class ResourceAuthorizationBehavior<TMessage, TResource, TResponse>(IActorProvider actorProvider, IServiceProvider serviceProvider) : IPipelineBehavior<TMessage, TResponse> where TMessage : IAuthorizeResource<TResource>, global::Mediator.IMessage where TResponse : IResult, IFailureFactory<TResponse>
+public sealed partial class ResourceAuthorizationBehavior<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] TMessage, TResource, TResponse>(IActorProvider actorProvider, IServiceProvider serviceProvider, IOptions<ResourceAuthorizationOptions>? options = null, ILogger<ResourceAuthorizationBehavior<TMessage, TResource, TResponse>>? logger = null) : IPipelineBehavior<TMessage, TResponse> where TMessage : IAuthorizeResource<TResource>, global::Mediator.IMessage where TResource : class where TResponse : IResult, IFailureFactory<TResponse>
 ```
 
 **Constructors**
 
 | Signature | Description |
 | --- | --- |
-| `public ResourceAuthorizationBehavior(IActorProvider actorProvider, IServiceProvider serviceProvider)` | Builds the resource-loading authorization behavior. |
+| `public ResourceAuthorizationBehavior(IActorProvider actorProvider, IServiceProvider serviceProvider, IOptions<ResourceAuthorizationOptions>? options = null, ILogger<ResourceAuthorizationBehavior<TMessage, TResource, TResponse>>? logger = null)` | Builds the resource-loading authorization behavior. `options` defaults to a fresh `ResourceAuthorizationOptions` with `DefaultExposurePolicy = Propagate` (back-compat for consumers that have not opted any resource into hide-as-NotFound). `logger` defaults to `NullLogger.Instance`. |
 
 **Properties**
 
@@ -300,7 +306,53 @@ public sealed class ResourceAuthorizationBehavior<TMessage, TResource, TResponse
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Resolves the actor from `IActorProvider` first (returns `Error.AuthenticationRequired` when no actor is available — fail fast before doing any I/O; provider-side `InvalidOperationException` still propagates as a deployment bug). Then resolves `IResourceLoader<TMessage, TResource>` from the current scope, returns loader failures directly, and finally calls `message.Authorize(actor, resource)` before invoking the handler. **Null-payload defense.** A loader that violates its `Result<T>` contract by returning `Result.Ok(null)` is treated as fail-closed: the behavior short-circuits to `Error.Forbidden` with code `resource.authorization.null-payload` rather than letting a downstream `NullReferenceException` from `message.Authorize` bubble as a 500. This behavior is only active when registered explicitly or via `AddResourceAuthorization(...)`; it is not included in `AddTrellisBehaviors()` or `PipelineBehaviors`. |
+| `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Resolves the actor from `IActorProvider` first (returns `Error.AuthenticationRequired` when no actor is available — fail fast before doing any I/O; provider-side `InvalidOperationException` still propagates as a deployment bug). Then resolves `IResourceLoader<TMessage, TResource>` from the current scope, returns loader failures directly, and finally calls `message.Authorize(actor, resource)` before invoking the handler. After `Authorize` succeeds the loaded resource is published via the per-async-flow accessor backing `IAuthorizedResource<TMessage, TResource>` — a linked-frame design with a volatile `IsActive` flag whose dispose (after `next` returns) flips `IsActive` and restores the parent frame, so handlers can read the same instance and avoid a duplicate load while orphan tasks that outlive the dispatch cannot observe the resource. See [Recipe 31](trellis-api-cookbook.md#recipe-31--avoid-duplicate-load-with-iauthorizedresourcetcommand-tresource). **Failure-exposure policy.** When `ResourceAuthorizationOptions` opts `TResource` into `AuthFailureExposurePolicy.HideAsNotFound`, both load-failure and authorize-failure `Error.Forbidden` / `Error.AuthenticationRequired` are translated to `new Error.NotFound(ResourceRef)` where the resource type comes from the configured public type (defaults to `TResource`) and the id is extracted via reflection on `IIdentifyResource<TResource, TId>` (or the public type for the projection overload). Other error kinds pass through unchanged. Translation emits a `[LoggerMessage]` event `ExistenceHidden` (`EventId = 1`, `Level = Information`) carrying the original `Kind` and `Code`. See [Recipe 32](trellis-api-cookbook.md#recipe-32--hide-existence-with-authfailureexposurepolicyhideasnotfound). **Null-payload defense.** A loader that violates its `Result<T>` contract by returning `Result.Ok(null)` is treated as fail-closed: the behavior short-circuits to `Error.Forbidden` with code `resource.authorization.null-payload` rather than letting a downstream `NullReferenceException` from `message.Authorize` bubble as a 500. Under `HideAsNotFound` that synthetic Forbidden is also translated. This behavior is only active when registered explicitly or via `AddResourceAuthorization(...)`; it is not included in `AddTrellisBehaviors()` or `PipelineBehaviors`. |
+
+### AuthFailureExposurePolicy
+**Declaration**
+
+```csharp
+public enum AuthFailureExposurePolicy { Propagate = 0, HideAsNotFound = 1 }
+```
+
+| Member | Description |
+| --- | --- |
+| `Propagate` | Default. `Error.Forbidden` and `Error.AuthenticationRequired` flow through verbatim. |
+| `HideAsNotFound` | `Error.Forbidden` and `Error.AuthenticationRequired` are translated to `new Error.NotFound(ResourceRef)` so unauthorized actors cannot distinguish "resource does not exist" from "resource exists but you may not access it." Only those two error kinds translate — other errors pass through. |
+
+### ResourceAuthorizationOptions
+**Declaration**
+
+```csharp
+public sealed class ResourceAuthorizationOptions
+```
+
+**Constructors**
+
+| Signature | Description |
+| --- | --- |
+| `public ResourceAuthorizationOptions()` | Constructs the options bag with `DefaultExposurePolicy = AuthFailureExposurePolicy.Propagate` and no per-resource overrides. |
+
+**Properties**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `DefaultExposurePolicy` | `AuthFailureExposurePolicy` | Policy applied to resources that have no per-resource override. Defaults to `Propagate`. Set to `HideAsNotFound` to flip the default for an entire service; use `Propagate<TResource>()` to mark individual safe-to-disclose resources. |
+
+**Methods**
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public ResourceAuthorizationOptions HideExistence<TResource>() where TResource : class` | `ResourceAuthorizationOptions` | Opt `TResource` into `HideAsNotFound`. Synthetic `NotFound.ResourceRef.Type` uses the simple name of `TResource` with backtick mangling stripped via `ResourceRef.FormatTypeName`. ID extraction uses `IIdentifyResource<TResource, TId>` on the message (returns `ResourceRef` without an id when the message does not implement it). Returns `this` for chaining. |
+| `public ResourceAuthorizationOptions HideExistence<TAuthorizationResource, TPublicResource>() where TAuthorizationResource : class` | `ResourceAuthorizationOptions` | Projection-loader overload. Use when the loader returns an internal authorization-only projection (`TAuthorizationResource`) and the wire-public type is different (`TPublicResource`). The synthetic `NotFound.ResourceRef.Type` is the public type name. ID extraction tries `IIdentifyResource<TPublicResource, TId>` first, then falls back to `IIdentifyResource<TAuthorizationResource, TId>`. |
+| `public ResourceAuthorizationOptions Propagate<TResource>() where TResource : class` | `ResourceAuthorizationOptions` | Explicitly opt `TResource` into `Propagate`. Useful for overriding a non-default `DefaultExposurePolicy`. |
+
+**Behavioral notes**
+
+- **Translation scope is narrow by design.** Only `Error.Forbidden` and `Error.AuthenticationRequired` translate. `Error.Unexpected`, `Error.Unavailable`, `Error.NotFound` from the loader, and transport faults pass through verbatim — hiding transient infrastructure failures behind 404 would destroy operational signal. The pass-through guarantee applies to the leaf loader's direct return value only; for the via path, intermediate / owner hop failures are already collapsed to a synthetic `Forbidden("resource.authorization-via.load-failed")` by the v1 multi-hop security model (existence-leak protection on related resources) BEFORE exposure translation runs, so under `HideAsNotFound` an underlying `Unavailable` from a downstream owner service surfaces as `404` to the consumer. Consumers needing finer-grained downstream-failure visibility on the related-resource graph should use the direct `IAuthorizeResource<TResource>` model instead of the via fan-out shape.
+- **Via commands key on `TLeaf`.** `HideExistence<Match>()` covers commands implementing `IAuthorizeResourceVia<Team>` + `IIdentifyResource<Match, MatchId>`; the synthetic `NotFound` references `Match`, never `Team`. Opting `Team` (the authorization implementation detail) is a no-op.
+- **`AuthorizationBehavior` short-circuits earlier.** Commands implementing both `IAuthorize` and `IAuthorizeResource<T>` have their static-permission failures emitted by `AuthorizationBehavior` before resource authorization runs. Those failures are NOT translated. Commands needing full existence-hiding must omit `IAuthorize`.
+- **Cache safety.** Hidden 404s look identical to real 404s on the wire — a shared cache will misdirect responses across actors. Mark protected endpoints with `Cache-Control: no-store` or `private`.
 
 ### ServiceCollectionExtensions
 **Declaration**
@@ -323,14 +375,15 @@ No public constructors.
 
 | Signature | Returns | Description |
 | --- | --- | --- |
-| `public static IServiceCollection AddTrellisBehaviors(this IServiceCollection services)` | `IServiceCollection` | Registers the five open generic behaviors listed in `PipelineBehaviors` and a default `TrellisMediatorTelemetryOptions` singleton (Detail redacted). **Idempotent** — uses `TryAddEnumerable`/`TryAddSingleton` so repeat calls (e.g. from plug-in extensions like `AddTrellisFluentValidation`, `AddTrellisAsp`) do not duplicate registrations. |
+| `public static IServiceCollection AddTrellisBehaviors(this IServiceCollection services)` | `IServiceCollection` | Registers the five open generic behaviors listed in `PipelineBehaviors` and a default `TrellisMediatorTelemetryOptions` singleton (Detail redacted). **Idempotent** — uses `TryAddEnumerable`/`TryAddSingleton` so calling it more than once (directly, or from an extension that calls it as a precondition) does not duplicate registrations. |
 | `public static IServiceCollection AddTrellisBehaviors(this IServiceCollection services, Action<TrellisMediatorTelemetryOptions> configure)` | `IServiceCollection` | Same as the parameterless overload, but applies `configure` to the registered `TrellisMediatorTelemetryOptions` singleton. Replaces any prior options registration so this call wins regardless of ordering. |
-| `public static IServiceCollection AddResourceAuthorization<TMessage, TResource, TResponse>(this IServiceCollection services) where TMessage : IAuthorizeResource<TResource>, global::Mediator.IMessage where TResponse : IResult, IFailureFactory<TResponse>` | `IServiceCollection` | Registers `ResourceAuthorizationBehavior<TMessage, TResource, TResponse>` and inserts it immediately before `ValidationBehavior<,>` when validation is already registered. **Idempotent** for the same closed service type + implementation type; different response types or via behaviors remain distinct. **Throws `InvalidOperationException`** when `TMessage` also implements `IAuthorizeResourceVia<TOwner>` (dual-mode commands are rejected at every entry point — security primitives are never silently composed). |
-| `[RequiresUnreferencedCode("Assembly scanning requires unreferenced types. Use explicit registration for AOT/trimming scenarios.")] [RequiresDynamicCode("Constructs closed generic types at runtime. Use explicit registration for AOT scenarios.")] public static IServiceCollection AddResourceAuthorization(this IServiceCollection services, params Assembly[] assemblies)` | `IServiceCollection` | Scans assemblies for `IAuthorizeResource<TResource>` AND `IAuthorizeResourceVia<TOwner>` implementations, resolves `TResponse` from `ICommand<T>`, `IQuery<T>`, or `IRequest<T>`, registers closed `ResourceAuthorizationBehavior<,,>` / `ResourceAuthorizationViaBehavior<,,,>` instances, registers discovered `IResourceLoader<,>` and `SharedResourceLoaderById<,>` implementations, and bridges `IIdentifyResource<TResource, TId>` messages to shared loaders. Closed behavior registration is idempotent across repeated scans and explicit-plus-scanned overlap when service type + implementation type match. For `IAuthorizeResourceVia<TOwner>` commands the scanner runs `ResourceAuthorizationPathResolver.Resolve(...)` over every scanned entity type and registers the closed `ResolvedAuthorizationPathHolder<,,,>` so the behavior receives its path via DI. **Throws `InvalidOperationException` at startup** when (a) any message's `TResponse` does not implement both `IResult` and `IFailureFactory<TResponse>` (security-marker fail-fast), (b) any message implements both `IAuthorizeResource<T>` and `IAuthorizeResourceVia<TOwner>` (security primitives are never silently composed), (c) any `IAuthorizeResourceVia<TOwner>` command does not also implement `IIdentifyResource<TLeaf, TLeafId>` (silent skip would leave the via-marker unprotected at runtime), or (d) the path resolver finds zero or multiple distinct simple paths from leaf to owner. |
+| `public static IServiceCollection AddResourceAuthorization<TMessage, TResource, TResponse>(this IServiceCollection services) where TMessage : IAuthorizeResource<TResource>, global::Mediator.IMessage where TResource : class where TResponse : IResult, IFailureFactory<TResponse>` | `IServiceCollection` | Registers `ResourceAuthorizationBehavior<TMessage, TResource, TResponse>` and inserts it immediately before `ValidationBehavior<,>` when validation is already registered. Also registers `IAuthorizedResource<TMessage, TResource>` as scoped (backed by `AuthorizedResourceHolder<,>`) so handlers can inject the v4 typed accessor; see [Recipe 31](trellis-api-cookbook.md#recipe-31--avoid-duplicate-load-with-iauthorizedresourcetcommand-tresource). **Idempotent** for the same closed service type + implementation type; different response types or via behaviors remain distinct. **Throws `InvalidOperationException`** when `TMessage` also implements `IAuthorizeResourceVia<TOwner>` (dual-mode commands are rejected at every entry point — security primitives are never silently composed). |
+| `[RequiresUnreferencedCode("Assembly scanning requires unreferenced types. Use explicit registration for AOT/trimming scenarios.")] [RequiresDynamicCode("Constructs closed generic types at runtime. Use explicit registration for AOT scenarios.")] public static IServiceCollection AddResourceAuthorization(this IServiceCollection services, params Assembly[] assemblies)` | `IServiceCollection` | Scans assemblies for `IAuthorizeResource<TResource>` AND `IAuthorizeResourceVia<TOwner>` implementations, resolves `TResponse` from `ICommand<T>`, `IQuery<T>`, or `IRequest<T>`, registers closed `ResourceAuthorizationBehavior<,,>` / `ResourceAuthorizationViaBehavior<,,,>` instances, registers discovered `IResourceLoader<,>` and `SharedResourceLoaderById<,>` implementations, and bridges `IIdentifyResource<TResource, TId>` messages to shared loaders. Also auto-registers `IAuthorizedResource<TMessage, TResource>` (for direct commands) and `IAuthorizedResource<TMessage, TLeaf>` (for via commands — leaf only, owner accessor not in v4) so handlers can inject the v4 typed accessor. Closed behavior registration is idempotent across repeated scans and explicit-plus-scanned overlap when service type + implementation type match. For `IAuthorizeResourceVia<TOwner>` commands the scanner runs `ResourceAuthorizationPathResolver.Resolve(...)` over every scanned entity type and registers the closed `ResolvedAuthorizationPathHolder<,,,>` so the behavior receives its path via DI. **Throws `InvalidOperationException` at startup** when (a) any message's `TResponse` does not implement both `IResult` and `IFailureFactory<TResponse>` (security-marker fail-fast), (b) any message implements both `IAuthorizeResource<T>` and `IAuthorizeResourceVia<TOwner>` (security primitives are never silently composed), (c) any `IAuthorizeResourceVia<TOwner>` command does not also implement `IIdentifyResource<TLeaf, TLeafId>` (silent skip would leave the via-marker unprotected at runtime), (d) the path resolver finds zero or multiple distinct simple paths from leaf to owner, or (e) any discovered resource type or via-leaf type is a value type (the v4 accessor closed generics require `where TResource : class` / `where TLeaf : class`; the friendly diagnostic names the offending command and resource type). |
 | `[RequiresUnreferencedCode("Assembly scanning requires unreferenced types. Use explicit registration for AOT/trimming scenarios.")] public static IServiceCollection AddResourceLoaders(this IServiceCollection services, Assembly assembly)` | `IServiceCollection` | Registers discovered `IResourceLoader<,>` implementations with `TryAddScoped`. Throws `ArgumentNullException` when `services` or `assembly` is null. |
 | `public static IServiceCollection AddSharedResourceLoader<TMessage, TResource, TId>(this IServiceCollection services) where TMessage : IIdentifyResource<TResource, TId>` | `IServiceCollection` | Registers `SharedResourceLoaderAdapter<TMessage, TResource, TId>` as `IResourceLoader<TMessage, TResource>`. Constraint loosened from also requiring `IAuthorizeResource<TResource>` so via-commands (which use `IAuthorizeResourceVia<TOwner>` instead) can reuse the same bridging. There is no `AddSharedResourceLoaderById` helper; register `SharedResourceLoaderById<TResource,TId>` in DI separately. |
 | `public static IServiceCollection AddRelatedResourceAuthorization<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] TMessage, TLeaf, TLeafId, TOwner, TOwnerId, TResponse>(this IServiceCollection services, Func<TLeaf, TOwnerId?> extractOwnerId) where TMessage : IAuthorizeResourceVia<TOwner>, IIdentifyResource<TLeaf, TLeafId>, global::Mediator.IMessage where TLeaf : class where TOwner : class where TOwnerId : notnull where TResponse : IResult, IFailureFactory<TResponse>` | `IServiceCollection` | Explicit single-hop registration for AOT / non-scanning consumers. Builds a `ResolvedAuthorizationPath` with one hop using `extractOwnerId` to extract the owner id from the loaded leaf, then registers `ResourceAuthorizationViaBehavior<TMessage, TLeaf, TOwner, TResponse>` as a typed descriptor and `ResolvedAuthorizationPathHolder<TMessage, TLeaf, TOwner, TResponse>` as a singleton. Throws `ArgumentNullException` when `services` or `extractOwnerId` is null. Throws `InvalidOperationException` if `TMessage` also implements `IAuthorizeResource<T>` (dual-mode security primitives are never silently composed). The hop loader throws `InvalidOperationException` at request time if `SharedResourceLoaderById<TOwner, TOwnerId>` is not registered (deployment bug, not authorization denial). |
-| `public static IServiceCollection AddRelatedResourceAuthorization<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] TMessage, TLeaf, TOwner, TResponse>(this IServiceCollection services, ResolvedAuthorizationPath path) where TMessage : IAuthorizeResourceVia<TOwner>, global::Mediator.IMessage where TResponse : IResult, IFailureFactory<TResponse>` | `IServiceCollection` | Explicit registration accepting a hand-built `ResolvedAuthorizationPath` for shapes the single-hop overload cannot express (chains, plural-terminal fan-out, custom extractors). Throws `ArgumentNullException` when `services` or `path` is null. Same dual-mode rejection as the single-hop overload. |
+| `public static IServiceCollection AddRelatedResourceAuthorization<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] TMessage, TLeaf, TOwner, TResponse>(this IServiceCollection services, ResolvedAuthorizationPath path) where TMessage : IAuthorizeResourceVia<TOwner>, global::Mediator.IMessage where TLeaf : class where TResponse : IResult, IFailureFactory<TResponse>` | `IServiceCollection` | Explicit registration accepting a hand-built `ResolvedAuthorizationPath` for shapes the single-hop overload cannot express (chains, plural-terminal fan-out, custom extractors). Also registers `IAuthorizedResource<TMessage, TLeaf>` as scoped so handlers can inject the v4 typed accessor for the leaf (the typical mutation target); the owner accessor is intentionally not in v4. Throws `ArgumentNullException` when `services` or `path` is null. Same dual-mode rejection as the single-hop overload. |
+| `public static IServiceCollection AddResourceAuthorization(this IServiceCollection services, Action<ResourceAuthorizationOptions> configure)` | `IServiceCollection` | Configures the per-resource failure-exposure policy via `ResourceAuthorizationOptions`. Repeated calls compose configure delegates rather than overwriting. Always-on side-effect: registers `IOptions<ResourceAuthorizationOptions>` (also added by every other `AddResourceAuthorization` / `AddRelatedResourceAuthorization` overload — behaviors can therefore always resolve options regardless of registration order). Throws `ArgumentNullException` when `services` or `configure` is null. See [Recipe 32](trellis-api-cookbook.md#recipe-32--hide-existence-with-authfailureexposurepolicyhideasnotfound). |
 
 ### TracingBehavior<TMessage, TResponse>
 **Declaration**
@@ -363,6 +416,18 @@ public sealed class TracingBehavior<TMessage, TResponse> : IPipelineBehavior<TMe
 | --- | --- | --- |
 | `public async ValueTask<TResponse> Handle(TMessage message, MessageHandlerDelegate<TMessage, TResponse> next, CancellationToken cancellationToken)` | `ValueTask<TResponse>` | Starts an activity named after `TMessage`. On failed results, tags the activity with `error.code` (the stable `Error.Code`) and `error.type` (the stable error class name); sets `ActivityStatusCode.Error`. The `StatusDescription` is left empty by default — the free-text `Error.Detail` is included only when `TrellisMediatorTelemetryOptions.IncludeErrorDetail` is `true`. On success sets `ActivityStatusCode.Ok`. Rethrows consumer-initiated `OperationCanceledException` when the request `cancellationToken` is canceled and the exception carries that token, after recording the OpenTelemetry exception event and tagging `otel.status_description` = `canceled`; the activity status remains `Unset`. Other thrown exceptions are marked `ActivityStatusCode.Error`, tagged with `error.type`, recorded as an OpenTelemetry exception event (`exception.type`, `exception.message`, `exception.stacktrace`), and rethrown; the exception message is **not** copied into `Activity.StatusDescription`. |
 
+**Recording these spans**
+
+`AddTrellisBehaviors()` registers `TracingBehavior`, so on each command/query it *calls* `ActivitySource.StartActivity` — but that only returns a live `Activity` if your `TracerProvider` listens to the `"Trellis.Mediator"` source. If the source is not registered, `StartActivity` returns `null` and the per-command/query span never appears (you still see the HTTP and value-object spans, but not the handler). Add the source to your tracing setup:
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddSource("Trellis.Mediator") // == TracingBehavior<TMessage, TResponse>.ActivitySourceName
+        .AddOtlpExporter());
+```
+
 ### TrellisMediatorTelemetryOptions
 **Declaration**
 
@@ -386,7 +451,7 @@ public interface IMessageValidator<in TMessage>
     where TMessage : global::Mediator.IMessage
 ```
 
-Extensibility hook for the unified validation stage. Implementations are resolved from DI as `IEnumerable<IMessageValidator<TMessage>>` by `ValidationBehavior<TMessage, TResponse>`; every registered validator runs before the handler. External packages (e.g., `Trellis.FluentValidation`) plug additional validation sources into the pipeline through this interface without taking a dependency on a specific validation library or message-side interface from `Trellis.Mediator`.
+Extensibility hook for the unified validation stage. Implementations are resolved from DI as `IEnumerable<IMessageValidator<TMessage>>` by `ValidationBehavior<TMessage, TResponse>`; every registered validator runs before the handler. External packages (e.g., `Trellis.Mediator.FluentValidation`) plug additional validation sources into the pipeline through this interface without taking a dependency on a specific validation library or message-side interface from `Trellis.Mediator`.
 
 **Methods**
 
@@ -433,7 +498,7 @@ Handles a domain event raised by an `IAggregate`. Implementations are resolved v
 
 Dispatch matches the runtime type of the event **exactly**; base-type and interface-type handlers are not resolved automatically. Handlers must be **idempotent** and **side-effect-only**: send email, publish to a bus, update a projection, or enqueue external work, but do not mutate aggregates or raise more domain events from inside the dispatch loop. If a handler raises a new event on the same aggregate, or mutates another aggregate participating in tracked dispatch, post-dispatch validation throws [`DomainEventHandlerCascadedException`](#domaineventhandlercascadedexception). To perform more domain mutation, issue a follow-up Mediator command from the application layer after the originating command completes, or queue post-commit work that runs as a separate top-level command.
 
-Non-cancellation exceptions thrown by a handler are logged at error level and swallowed by the default publisher so that other handlers, other events, and the originating command still complete. `OperationCanceledException` propagates when the publisher's supplied cancellation token is canceled, so the request can abort. Cascade detection does not make handler-side failures durable; durable at-least-once side effects require an outbox pattern (planned for a future release, not shipped today).
+Non-cancellation exceptions thrown by a handler are logged at error level and swallowed by the default publisher so that other handlers, other events, and the originating command still complete. `OperationCanceledException` propagates when the publisher's supplied cancellation token is canceled, so the request can abort. Cascade detection does not make handler-side failures durable; durable at-least-once external side effects require the transactional outbox and integration-event translation pattern.
 
 **Methods**
 
@@ -455,6 +520,63 @@ Publishes a single `IDomainEvent` by resolving and invoking all `IDomainEventHan
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `ValueTask PublishAsync(IDomainEvent domainEvent, CancellationToken cancellationToken)` | `ValueTask` | Publishes to all matching handlers. Resolution uses `domainEvent.GetType()`. Non-cancellation handler exceptions are logged and swallowed; `OperationCanceledException` propagates when the supplied token is canceled so the caller can abort. Default implementation (`MediatorDomainEventPublisher`) is `internal` and registered by `AddDomainEventDispatch()`. |
+
+### IIntegrationEventHandler
+**Declaration**
+
+```csharp
+public interface IIntegrationEventHandler<in TEvent>
+    where TEvent : IIntegrationEvent
+```
+
+Handles an `IIntegrationEvent` - the in-process consumer side of the external contract. Implementations are resolved via DI and invoked once per matching event by the default [`IIntegrationEventPublisher`](#iintegrationeventpublisher). Dispatch matches the runtime type of the event **exactly**; base-type and interface-type handlers are not resolved automatically.
+
+This is the framework's default, in-process consumer for integration events: it lets a modular monolith react to its own published contracts without a message broker, and it makes integration events testable. When you move a consumer to a separate service, replace the default publisher with a broker adapter and the producing side is unchanged.
+
+Like domain-event handlers, integration-event handlers are best-effort side effects: the default publisher logs and swallows non-cancellation exceptions so one handler's failure does not block the others. Handlers must be idempotent - the transactional outbox delivers at least once.
+
+**Methods**
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `ValueTask HandleAsync(TEvent integrationEvent, CancellationToken cancellationToken)` | `ValueTask` | Handles the specified integration event. The cancellation token is supplied by the publisher/relay. |
+
+### IIntegrationEventPublisher
+**Declaration**
+
+```csharp
+public interface IIntegrationEventPublisher
+```
+
+Publishes a single `IIntegrationEvent` to its consumers. The transactional outbox relay resolves this contract to deliver integration events durably after the producing transaction commits.
+
+The default implementation fans out to in-process `IIntegrationEventHandler<TEvent>` registrations for the event's runtime type - the right choice for a modular monolith and for tests. To deliver to other services, replace this registration with a message-broker adapter (for example Azure Service Bus or Kafka); the producing side - aggregates, translators, and the outbox - does not change. This is the seam that keeps the outbox transport-agnostic.
+
+Implementations are expected to be best-effort: non-cancellation handler exceptions are logged and swallowed so one consumer's failure does not block the others. `OperationCanceledException` matching the supplied token is the one exception that propagates so the relay can abort cleanly.
+
+**Methods**
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `ValueTask PublishAsync(IIntegrationEvent integrationEvent, CancellationToken cancellationToken)` | `ValueTask` | Publishes the specified integration event to all matching consumers. Resolution uses `integrationEvent.GetType()`. Default implementation (`MediatorIntegrationEventPublisher`) is `internal` and registered by `AddIntegrationEventDispatch()`. |
+
+### IIntegrationEventCollector
+**Declaration**
+
+```csharp
+public interface IIntegrationEventCollector
+```
+
+Collects `IIntegrationEvent` instances produced while handling a domain event (or a command), so the transactional outbox can capture them durably and the relay can publish them after the producing work is committed. This is the translation seam: a domain-event handler observes a domain event and adds the integration events that describe the same fact in contract terms.
+
+Register the collector as scoped (the Trellis registration helpers do this for you). Translators add to it; the outbox drains it. Integration events added without the outbox enabled are never delivered, because the collector is only a hand-off buffer - durable storage and publishing are the outbox's job.
+
+**Methods**
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `void Add(IIntegrationEvent integrationEvent)` | `void` | Enqueues an integration event for durable capture and later publishing. Throws `ArgumentNullException` from the default collector when the event is null. |
+| `IReadOnlyList<IIntegrationEvent> DrainPending()` | `IReadOnlyList<IIntegrationEvent>` | Returns the integration events collected so far in insertion order and clears the buffer, so a subsequent drain in the same scope does not observe them again. Empty when none were added. |
 
 ### DomainEventHandlerCascadedException
 **Declaration**
@@ -516,7 +638,7 @@ When `TransactionalCommandBehavior` is also registered, dispatch fires after the
 On cascade or cancellation, `AcceptChanges()` is not called. The aggregate retains the original events and any cascaded events so operators can inspect the in-memory state. Mid-dispatch cancellation still propagates immediately; handlers that already ran are not rolled back, so handlers must remain idempotent for at-least-once retry. Non-cancellation handler exceptions are still swallowed by the default `MediatorDomainEventPublisher`; cascade detection is about handler-caused mutations of the aggregate's pending-event list, not handler-side failures.
 
 > [!WARNING]
-> **Post-commit throw caveat.** With `TransactionalCommandBehavior` registered, the database commit is already durable before domain-event dispatch starts. If cascade detection throws, the caller receives a failure-shaped response (via the outer exception behavior in the standard pipeline) even though the write committed; a retry may therefore hit normal "already committed" semantics. Durable at-least-once delivery requires an outbox pattern — planned for a future release, not shipped today.
+> **Post-commit throw caveat.** With `TransactionalCommandBehavior` registered, the database commit is already durable before domain-event dispatch starts. If cascade detection throws, the caller receives a failure-shaped response (via the outer exception behavior in the standard pipeline) even though the write committed; a retry may therefore hit normal "already committed" semantics. Durable at-least-once delivery requires the transactional outbox and integration-event translation pattern.
 
 **Constructors**
 
@@ -546,6 +668,23 @@ DI registration helpers for the dispatch behavior, default publisher, and per-ev
 | `public static IServiceCollection AddDomainEventDispatch(this IServiceCollection services)` | `IServiceCollection` | Registers `DomainEventDispatchBehavior<,>` (open generic, scoped) and the default `IDomainEventPublisher` (`MediatorDomainEventPublisher`, scoped). Calls `AddTrellisBehaviors()` first so the always-on behaviors are present. **Idempotent**. AOT-friendly (no scanning). |
 | `public static IServiceCollection AddDomainEventHandler<TEvent, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler>(this IServiceCollection services) where TEvent : IDomainEvent where THandler : class, IDomainEventHandler<TEvent>` | `IServiceCollection` | Registers a single `IDomainEventHandler<TEvent>` implementation as scoped, and ensures the dispatch behavior + publisher are wired. Use this for AOT/trim scenarios. **Idempotent**. |
 | `[RequiresUnreferencedCode("Assembly scanning requires unreferenced types. Use AddDomainEventHandler<TEvent, THandler> for AOT/trim scenarios.")] [RequiresDynamicCode("Constructs closed generic IDomainEventHandler<TEvent> at runtime.")] public static IServiceCollection AddDomainEventDispatch(this IServiceCollection services, params Assembly[] assemblies)` | `IServiceCollection` | Scans the assemblies for concrete `IDomainEventHandler<TEvent>` implementations and registers each as scoped. A type implementing handlers for multiple event types is registered once per interface. Also wires the dispatch behavior + publisher (idempotent). Throws `ArgumentNullException` when `services` or `assemblies` is null and `ArgumentException` when the array is empty or contains null. |
+
+### IntegrationEventDispatchServiceCollectionExtensions
+**Declaration**
+
+```csharp
+public static class IntegrationEventDispatchServiceCollectionExtensions
+```
+
+DI registration helpers for integration-event publishing. Unlike domain-event dispatch, integration events are not dispatched by a command-pipeline behavior; they are produced via the [`IIntegrationEventCollector`](#iintegrationeventcollector) during domain-event handling and published by the transactional outbox relay. These helpers register the default in-process publisher, the scoped collector, and any in-process consumers.
+
+**Methods**
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public static IServiceCollection AddIntegrationEventDispatch(this IServiceCollection services)` | `IServiceCollection` | Registers the default `IIntegrationEventPublisher` (`MediatorIntegrationEventPublisher`, scoped) and the scoped `IIntegrationEventCollector` (`IntegrationEventCollector`, scoped). AOT/trim-friendly. **Idempotent**. To deliver integration events to other services, replace the `IIntegrationEventPublisher` registration with a message-broker adapter after calling this method. |
+| `public static IServiceCollection AddIntegrationEventHandler<TEvent, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler>(this IServiceCollection services) where TEvent : IIntegrationEvent where THandler : class, IIntegrationEventHandler<TEvent>` | `IServiceCollection` | Registers a single `IIntegrationEventHandler<TEvent>` implementation as scoped, and ensures the publisher + collector are wired. Use this for AOT/trim scenarios. **Idempotent**. |
+| `[RequiresUnreferencedCode("Assembly scanning requires unreferenced types. Use AddIntegrationEventHandler<TEvent, THandler> for AOT/trim scenarios.")] [RequiresDynamicCode("Constructs closed generic IIntegrationEventHandler<TEvent> at runtime.")] public static IServiceCollection AddIntegrationEventDispatch(this IServiceCollection services, params Assembly[] assemblies)` | `IServiceCollection` | Scans the assemblies for concrete `IIntegrationEventHandler<TEvent>` implementations and registers each as scoped. A type implementing handlers for multiple event types is registered once per interface. Also wires the publisher + collector (idempotent). Throws `ArgumentNullException` when `services` or `assemblies` is null and `ArgumentException` when the array is empty or contains null. |
 
 ### TrackedAggregateDomainEventDispatchBehavior
 **Declaration**
@@ -596,7 +735,7 @@ DI registration helper for the tracked dispatch behavior.
 ```csharp
 public static IServiceCollection AddTrellisBehaviors(this IServiceCollection services)
 public static IServiceCollection AddTrellisBehaviors(this IServiceCollection services, Action<TrellisMediatorTelemetryOptions> configure)
-public static IServiceCollection AddResourceAuthorization<TMessage, TResource, TResponse>(this IServiceCollection services) where TMessage : IAuthorizeResource<TResource>, global::Mediator.IMessage where TResponse : IResult, IFailureFactory<TResponse>
+public static IServiceCollection AddResourceAuthorization<TMessage, TResource, TResponse>(this IServiceCollection services) where TMessage : IAuthorizeResource<TResource>, global::Mediator.IMessage where TResource : class where TResponse : IResult, IFailureFactory<TResponse>
 [RequiresUnreferencedCode("Assembly scanning requires unreferenced types. Use explicit registration for AOT/trimming scenarios.")]
 [RequiresDynamicCode("Constructs closed generic types at runtime. Use explicit registration for AOT scenarios.")]
 public static IServiceCollection AddResourceAuthorization(this IServiceCollection services, params Assembly[] assemblies)
@@ -611,6 +750,7 @@ public static IServiceCollection AddRelatedResourceAuthorization<TMessage, TLeaf
     where TResponse : IResult, IFailureFactory<TResponse>
 public static IServiceCollection AddRelatedResourceAuthorization<TMessage, TLeaf, TOwner, TResponse>(this IServiceCollection services, ResolvedAuthorizationPath path)
     where TMessage : IAuthorizeResourceVia<TOwner>, global::Mediator.IMessage
+    where TLeaf : class
     where TResponse : IResult, IFailureFactory<TResponse>
 ```
 
@@ -642,8 +782,22 @@ public static Task DispatchAggregateEventsAsync(
 - **Snapshot + cascade semantics:** Snapshots `aggregate.UncommittedEvents()` once, publishes only that snapshot sequentially, validates that no handler appended new events, and calls `IChangeTracking.AcceptChanges()` only after clean validation. Throws [`DomainEventHandlerCascadedException`](#domaineventhandlercascadedexception) on cascade (`AcceptChanges()` is not called — original and cascaded events remain on the aggregate).
 - **Cancellation:** Cancellation propagates above `AcceptChanges()` so undispatched events remain on the aggregate; dispatched events stay dispatched and handlers must be idempotent for retry.
 - **Handler exceptions (publisher contract):** Handler exceptions follow the publisher's contract: the default `MediatorDomainEventPublisher` logs and swallows non-cancellation handler exceptions so the helper continues; a custom publisher that propagates handler exceptions causes the helper to rethrow without calling `AcceptChanges()`.
-- **When to call:** **Must only be called after the underlying unit of work has committed** — calling it inside a handler that relies on `TransactionalCommandBehavior` for its commit publishes events before the database transaction is durable. Durable at-least-once dispatch requires an outbox pattern, planned for a future release.
+- **When to call:** **Must only be called after the underlying unit of work has committed** — calling it inside a handler that relies on `TransactionalCommandBehavior` for its commit publishes events before the database transaction is durable. Durable at-least-once dispatch requires the transactional outbox and integration-event translation pattern.
 - **Cross-doc link:** See [Dispatching events from non-aggregate response shapes](../articles/integration-mediator.md#dispatching-events-from-non-aggregate-response-shapes-post-commit-safe) for the integration article.
+
+### Trellis.Mediator.IntegrationEventDispatchServiceCollectionExtensions
+
+```csharp
+public static IServiceCollection AddIntegrationEventDispatch(this IServiceCollection services)
+public static IServiceCollection AddIntegrationEventHandler<TEvent, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler>(this IServiceCollection services)
+    where TEvent : IIntegrationEvent
+    where THandler : class, IIntegrationEventHandler<TEvent>
+[RequiresUnreferencedCode("Assembly scanning requires unreferenced types. Use AddIntegrationEventHandler<TEvent, THandler> for AOT/trim scenarios.")]
+[RequiresDynamicCode("Constructs closed generic IIntegrationEventHandler<TEvent> at runtime.")]
+public static IServiceCollection AddIntegrationEventDispatch(this IServiceCollection services, params Assembly[] assemblies)
+```
+
+Registers the default in-process integration-event publisher, the scoped collector used by translators, and optional in-process consumers. The transactional outbox relay drains collected integration events after each domain event dispatch and publishes them through `IIntegrationEventPublisher`; replace that publisher registration with a broker adapter when events must leave the process.
 
 ### Trellis.Mediator.TrackedAggregateDomainEventDispatchServiceCollectionExtensions
 
@@ -660,6 +814,9 @@ public interface IValidate
 public interface IMessageValidator<in TMessage> where TMessage : global::Mediator.IMessage
 public interface IDomainEventHandler<in TEvent> where TEvent : IDomainEvent
 public interface IDomainEventPublisher
+public interface IIntegrationEventHandler<in TEvent> where TEvent : IIntegrationEvent
+public interface IIntegrationEventPublisher
+public interface IIntegrationEventCollector
 ```
 
 ## Behavioral notes
@@ -673,7 +830,7 @@ The Trellis pipeline executes outermost → innermost in this order. `AddTrellis
 3. **`LoggingBehavior<,>`** — structured logging with start/end and elapsed-ms entries; emits the stable `Error.Code` on failure. Inherits the same correlation context propagated by the surrounding `Activity`. `Error.Detail` is redacted unless `IncludeErrorDetail` is `true`.
 4. **`AuthorizationBehavior<,>`** — runs for `IAuthorize` messages; resolves the actor, returns `Error.AuthenticationRequired` when no actor is available, and rejects with `new Error.Forbidden("authorization.insufficient.permissions")` when `RequiredPermissions` are not satisfied.
 5. **`ResourceAuthorizationBehavior<,,>`** *(opt-in via `AddResourceAuthorization(...)`)* — runs for `IAuthorizeResource<TResource>` messages. Inserted **immediately before `ValidationBehavior<,>`** so a 403 short-circuits before a 422 is computed; duplicate closed behavior registrations are ignored so the same behavior does not run twice per request. Resolves the actor before loader construction or resource I/O, returns `Error.AuthenticationRequired` when no actor is available, then loads the resource via `IResourceLoader<TMessage, TResource>` and calls `message.Authorize(actor, resource)`.
-6. **`ValidationBehavior<,>`** — unified validation stage. Runs `IValidate.Validate()` if implemented, then every `IMessageValidator<TMessage>` resolved from DI; aggregates all `Error.InvalidInput` failures into a single response. External validation sources (e.g., the `Trellis.FluentValidation` adapter) participate here without occupying their own pipeline slot.
+6. **`ValidationBehavior<,>`** — unified validation stage. Runs `IValidate.Validate()` if implemented, then every `IMessageValidator<TMessage>` resolved from DI; aggregates all `Error.InvalidInput` failures into a single response. External validation sources (e.g., the `Trellis.Mediator.FluentValidation` adapter) participate here without occupying their own pipeline slot.
 7. **`DomainEventDispatchBehavior<,>`** *(opt-in via `AddDomainEventDispatch(...)`)* — runs for `ICommand<TResponse>` messages where `TResponse` is `IResult<TAggregate>` (typically `Result<TAggregate>`) and `TAggregate : IAggregate`. After the inner pipeline returns success, snapshots `aggregate.UncommittedEvents()`, dispatches only that snapshot to registered `IDomainEventHandler<TEvent>` instances, validates that handlers did not append events, and calls `AcceptChanges()` only on clean dispatch. When `TransactionalCommandBehavior` is registered innermost, dispatch fires after the transaction commits — handlers see committed state, and a later cascade exception cannot roll back the database write. Non-cancellation handler exceptions are logged and swallowed; `OperationCanceledException` propagates when the request token is canceled and skips `AcceptChanges()`. **Mutually exclusive** with `TrackedAggregateDomainEventDispatchBehavior<,>`: `AddTrackedAggregateDomainEventDispatch()` removes any prior response-shape registration, and later `AddDomainEventDispatch()` / `AddDomainEventHandler<,>()` calls do not reintroduce it while tracked dispatch is present.
    - **Or** `TrackedAggregateDomainEventDispatchBehavior<,>` *(opt-in via `AddTrackedAggregateDomainEventDispatch(...)`)* — sits at the same slot but reads the aggregates from `ITrackedAggregateSource.CommittedAggregates` (populated by the unit-of-work at commit time), snapshots each aggregate's events, and throws `DomainEventHandlerCascadedException` when same-aggregate or cross-aggregate cascade is detected. Fires for any response shape, including outcome DTOs. See [`TrackedAggregateDomainEventDispatchBehavior`](#trackedaggregatedomaineventdispatchbehavior).
 8. **`TransactionalCommandBehavior<,>`** *(opt-in, lives in `Trellis.EntityFrameworkCore`, not registered by `AddTrellisBehaviors()`)* — wraps the handler for `ICommand<TResponse>` messages and calls `IUnitOfWork.CommitAsync` on success. Register via `AddTrellisUnitOfWork<TContext>()` from the EFCore package **after** `AddTrellisBehaviors()` and `AddDomainEventDispatch(...)` so it lands innermost (closest to the handler) and commit failures remain visible to outer logging/tracing/dispatch. Queries are skipped.

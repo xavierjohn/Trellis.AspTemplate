@@ -7,9 +7,9 @@
     </PackageReference>
     <PackageReference Include="FluentValidation" />
     <PackageReference Include="Trellis.Authorization" />
-    <PackageReference Include="Trellis.FluentValidation" />
     <PackageReference Include="Trellis.Http.Abstractions" />
     <PackageReference Include="Trellis.Mediator" />
+    <PackageReference Include="Trellis.Mediator.FluentValidation" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\Domain\src\Domain.csproj" />

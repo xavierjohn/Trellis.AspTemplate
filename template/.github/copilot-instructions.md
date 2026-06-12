@@ -18,7 +18,8 @@ Read **every** file relevant to your implementation. For a typical service using
 | MVC/Minimal API result mappers, `ETagHelper`, scalar binding, validation middleware | `.github/trellis-api-asp.md` |
 | EF Core conventions, interceptors, `HasTrellisIndex`, `FirstOrDefaultMaybeAsync` | `.github/trellis-api-efcore.md` |
 | Actor-based authorization, `IAuthorize`, resource authorization | `.github/trellis-api-authorization.md` |
-| FluentValidation bridge | `.github/trellis-api-fluentvalidation.md` |
+| FluentValidation bridge: `AddTrellisFluentValidation` DI registration + pipeline adapter | `.github/trellis-api-mediator-fluentvalidation.md` |
+| FluentValidation bridge: low-level `IResult` converters + JSON-pointer normalization | `.github/trellis-api-fluentvalidation.md` |
 | `HttpClient` result extensions | `.github/trellis-api-http.md` |
 | Mediator pipeline behaviors | `.github/trellis-api-mediator.md` |
 | `LazyStateMachine<TState, TTrigger>` and `FireResult()` | `.github/trellis-api-statemachine.md` |
@@ -739,12 +740,14 @@ services.AddScoped<IActorProvider, HttpActorProvider>();
 │   ├── trellis-api-asp.md
 │   ├── trellis-api-asp-apiversioning.md
 │   ├── trellis-api-efcore.md
+│   ├── trellis-api-efcore-outbox.md
 │   ├── trellis-api-mediator.md
 │   ├── trellis-api-authorization.md
 │   ├── trellis-api-http.md
 │   ├── trellis-api-http-abstractions.md
 │   ├── trellis-api-statemachine.md
 │   ├── trellis-api-fluentvalidation.md
+│   ├── trellis-api-mediator-fluentvalidation.md
 │   ├── trellis-api-analyzers.md
 │   ├── trellis-api-cookbook.md
 │   ├── trellis-api-testing-reference.md
