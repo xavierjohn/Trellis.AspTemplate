@@ -18,7 +18,8 @@ Read **every** file relevant to your implementation. For a typical service using
 | MVC/Minimal API result mappers, `ETagHelper`, scalar binding, validation middleware | `.github/trellis-api-asp.md` |
 | EF Core conventions, interceptors, `HasTrellisIndex`, `FirstOrDefaultMaybeAsync` | `.github/trellis-api-efcore.md` |
 | Actor-based authorization, `IAuthorize`, resource authorization | `.github/trellis-api-authorization.md` |
-| FluentValidation bridge | `.github/trellis-api-fluentvalidation.md` |
+| FluentValidation bridge: `AddTrellisFluentValidation` DI registration + pipeline adapter | `.github/trellis-api-mediator-fluentvalidation.md` |
+| FluentValidation bridge: low-level `IResult` converters + JSON-pointer normalization | `.github/trellis-api-fluentvalidation.md` |
 | `HttpClient` result extensions | `.github/trellis-api-http.md` |
 | Mediator pipeline behaviors | `.github/trellis-api-mediator.md` |
 | `LazyStateMachine<TState, TTrigger>` and `FireResult()` | `.github/trellis-api-statemachine.md` |
@@ -41,6 +42,7 @@ Read **every** file relevant to your implementation. For a typical service using
 
 - **Rule:** 🔴 MUST use `Result<T>` for expected failures and `Maybe<T>` for optional values. Never throw for business logic. Never use `try/catch` in Domain or Application layers for expected outcomes.
 - **Rationale:** Trellis relies on Railway Oriented Programming; exceptions for expected paths break the pipeline and reduce testability.
+- **Exceptions are still for the _exceptional_.** The rule is "never throw for an **expected** outcome" (validation, not-found, conflict, forbidden, optional absence — model these as `Result<T>` / `Maybe<T>`), **not** "never throw at all". `throw` remains correct for unrecoverable faults that signal a bug or broken environment: API misuse, failed startup/configuration checks, and infrastructure errors. For internal "shouldn't happen" faults you may also return the value `Error.Unexpected(reasonCode, faultId?)` instead of throwing. Analyzer **TRLS010** enforces the no-throw rule inside Result chains (`Bind`/`Map`/`Tap`/`Ensure`).
 - **Correct:**
 ```csharp
 using Trellis;
@@ -344,7 +346,7 @@ private Order() : base(default!)
 - **Reference:** See `.github/trellis-api-statemachine.md §LazyStateMachine<TState, TTrigger>` and `.github/trellis-api-statemachine.md §StateMachineExtensions`.
 ### Follow Trellis EF Core conventions exactly
 
-- **Rule:** 🔴 MUST use `ApplyTrellisConventions`, `AddTrellisInterceptors`, `SaveChangesResultUnitAsync`, `partial Maybe<T>` properties, `HasTrellisIndex`, and EF materialization boilerplate exactly as Trellis expects.
+- **Rule:** 🔴 MUST use `ApplyTrellisConventionsFor<TContext>()`, `AddTrellisInterceptors`, `SaveChangesResultUnitAsync`, `partial Maybe<T>` properties, `HasTrellisIndex`, and EF materialization boilerplate exactly as Trellis expects.
 - **Rationale:** Trellis persistence relies on conventions and generators; overriding them with manual EF patterns silently breaks mapping, timestamps, or generated backing fields.
 - **Correct:**
 ```csharp
@@ -363,7 +365,7 @@ public class Customer : Aggregate<CustomerId>
 }
 
 protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) =>
-    configurationBuilder.ApplyTrellisConventions(typeof(Customer).Assembly);
+    configurationBuilder.ApplyTrellisConventionsFor<AppDbContext>();
 
 protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
     optionsBuilder.AddTrellisInterceptors();
@@ -652,7 +654,7 @@ customer.AlternatePhoneNumber.HasNoValue.Should().BeTrue();
 
 | Scenario | Use | Not |
 |---|---|---|
-| Conventions | `ApplyTrellisConventions(...)` | Manual `HasConversion()` / `OwnsOne()` for Trellis-supported types |
+| Conventions | `ApplyTrellisConventionsFor<TContext>()` (source-generated, preferred) | Reflection `ApplyTrellisConventions(assembly)` fallback unless the context is private/generic/abstract; manual `HasConversion()` / `OwnsOne()` for Trellis-supported types |
 | Interceptors | `AddTrellisInterceptors()` | Reimplement timestamp or ETag plumbing |
 | Save changes in repositories | `SaveChangesResultUnitAsync()` | Bare `SaveChangesAsync()` |
 | Optional lookup | `FirstOrDefaultMaybeAsync(...)` | `FirstOrDefaultAsync(...)` + `null` |
@@ -738,12 +740,14 @@ services.AddScoped<IActorProvider, HttpActorProvider>();
 │   ├── trellis-api-asp.md
 │   ├── trellis-api-asp-apiversioning.md
 │   ├── trellis-api-efcore.md
+│   ├── trellis-api-efcore-outbox.md
 │   ├── trellis-api-mediator.md
 │   ├── trellis-api-authorization.md
 │   ├── trellis-api-http.md
 │   ├── trellis-api-http-abstractions.md
 │   ├── trellis-api-statemachine.md
 │   ├── trellis-api-fluentvalidation.md
+│   ├── trellis-api-mediator-fluentvalidation.md
 │   ├── trellis-api-analyzers.md
 │   ├── trellis-api-cookbook.md
 │   ├── trellis-api-testing-reference.md

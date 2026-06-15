@@ -1,6 +1,43 @@
+﻿---
+package: Trellis.Core, Trellis.Primitives
+namespaces: [Trellis, Trellis.Primitives]
+types: [ValueObject, "ScalarValueObject<TSelf,T>", RequiredString<TSelf>, RequiredGuid<TSelf>, RequiredInt<TSelf>, RequiredLong<TSelf>, RequiredDecimal<TSelf>, RequiredBool<TSelf>, RequiredDateTime<TSelf>, RequiredDateTimeOffset<TSelf>, RequiredEnum<TSelf>, Maybe<T>]
+version: v3
+last_verified: 2026-06-03
+audience: [llm]
+---
 # Trellis Value Object Taxonomy
 
-**Packages:** `Trellis.DomainDrivenDesign`, `Trellis.Results`, `Trellis.Primitives` | **Namespaces:** `Trellis`, `Trellis.Primitives` | **Purpose:** canonical category map for Trellis value-like types: scalar, symbolic, structured, and optionality wrappers.
+**Packages:** `Trellis.Core` (DDD primitives `Aggregate<T>`, `Entity<T>`, `ValueObject`, `Specification<T>`, `IDomainEvent`, plus VO base classes `RequiredString<TSelf>`, `RequiredGuid<TSelf>`, `RequiredInt<TSelf>`, `RequiredLong<TSelf>`, `RequiredDecimal<TSelf>`, `RequiredBool<TSelf>`, `RequiredDateTime<TSelf>`, `RequiredDateTimeOffset<TSelf>`, `RequiredEnum<TSelf>`); `Trellis.Primitives` (concrete VOs only — `EmailAddress`, `Money`, etc.) | **Namespaces:** `Trellis`, `Trellis.Primitives` | **Purpose:** canonical category map for Trellis value-like types: scalar, symbolic, structured, and optionality wrappers.
+
+## Patterns Index
+
+Use this table to pick the right base class before reading the per-type signatures below.
+
+| Goal | Canonical base / type | See |
+|---|---|---|
+| Wrap a single primitive (string, Guid, int, long, decimal, bool, date/time, enum) into a typed value object | `RequiredString<TSelf>`, `RequiredGuid<TSelf>`, `RequiredInt<TSelf>`, `RequiredLong<TSelf>`, `RequiredDecimal<TSelf>`, `RequiredBool<TSelf>`, `RequiredDateTime<TSelf>`, `RequiredDateTimeOffset<TSelf>`, `RequiredEnum<TSelf>` (one base per primitive family) | [`RequiredString<TSelf>`](#requiredstringtself), [`RequiredGuid<TSelf>`](#requiredguidtself), [`RequiredInt<TSelf>`](#requiredinttself), [`RequiredDecimal<TSelf>`](#requireddecimaltself), [`RequiredEnum<TSelf>`](#requiredenumtself) |
+| Define a custom-validated scalar with no source-generated infrastructure | `ScalarValueObject<TSelf, T>` + `IScalarValue<TSelf, T>` | [`ScalarValueObject<TSelf, T>`](#scalarvalueobjecttself-t) |
+| Compose multiple value-typed fields into a structural value object | `ValueObject` (override `GetEqualityComponents`) | [`ValueObject`](#valueobject) |
+| Wrap an entity with identity (mutable through methods) | `Entity<TId>` | See [trellis-api-core.md → Domain-Driven Design](trellis-api-core.md#domain-driven-design) |
+| Wrap a consistency boundary with domain events | `Aggregate<TId>` | See [trellis-api-core.md → Domain-Driven Design](trellis-api-core.md#domain-driven-design) |
+| Express expected absence of a value | `Maybe<T>` | See [trellis-api-core.md → Maybe](trellis-api-core.md#public-readonly-struct-maybet-where-t--notnull) |
+| Move a query predicate out of a repository | `Specification<T>` | See [trellis-api-core.md → Domain-Driven Design](trellis-api-core.md#domain-driven-design) |
+| Pick a built-in concrete value object instead of writing your own | `EmailAddress`, `Money`, `CountryCode`, `Url`, etc. | See [trellis-api-primitives.md](trellis-api-primitives.md#built-in-primitives-table) |
+
+
+## Required base defaults
+
+`Required*<TSelf>` bases are strict by default. Remove legacy `[NotDefault]` / `[Trim]`; use the per-base opt-outs only when the sentinel is valid domain state.
+
+| Base | Default rejects | Opt-out |
+|---|---|---|
+| `RequiredString<TSelf>` | `null`, `""`, whitespace-only; trims accepted values | `[AllowEmpty]`, `[AllowWhitespace]`, `[NoTrim]` |
+| `RequiredGuid<TSelf>` | `null`, `Guid.Empty` | `[AllowEmpty]` |
+| `RequiredInt<TSelf>` / `RequiredLong<TSelf>` / `RequiredDecimal<TSelf>` | `null`, `0` / `0L` / `0m` | `[AllowZero]` |
+| `RequiredDateTime<TSelf>` / `RequiredDateTimeOffset<TSelf>` | `null`, `MinValue` | `[AllowMinValue]` |
+| `RequiredBool<TSelf>` | `null` | none (`false` is valid) |
+| `RequiredEnum<TSelf>` | `null`, undeclared names | none (smart-enum lookup) |
 
 ## Types
 
@@ -16,6 +53,8 @@ public abstract class ValueObject : IComparable<ValueObject>, IComparable, IEqua
 
 | Signature | Returns | Description |
 | --- | --- | --- |
+| `protected abstract IEnumerable<IComparable?> GetEqualityComponents()` | `IEnumerable<IComparable?>` | Derived types override this to define structural identity. |
+| `protected static IComparable? MaybeComponent<T>(Maybe<T> maybe) where T : notnull, IComparable` | `IComparable?` | Helper for optional equality components: returns the contained value when present, otherwise `null`. |
 | `public override bool Equals(object? obj)` | `bool` | Structural equality. |
 | `public bool Equals(ValueObject? other)` | `bool` | Strongly typed structural equality. |
 | `public override int GetHashCode()` | `int` | Cached structural hash. |
@@ -89,7 +128,7 @@ public abstract class RequiredString<TSelf> : ScalarValueObject<TSelf, string>
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `Value` | `string` | Canonical scalar identity for required text. |
+| `Value` | `string` | Canonical scalar identity for required text; non-empty, non-whitespace, and trimmed by default. |
 | `Length` | `int` | String convenience member. |
 
 | Signature | Returns | Description |
@@ -107,7 +146,7 @@ public abstract class RequiredGuid<TSelf> : ScalarValueObject<TSelf, Guid>
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `Value` | `Guid` | Canonical scalar identity for non-empty GUIDs. |
+| `Value` | `Guid` | Canonical scalar identity for non-empty GUIDs by default. |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -122,7 +161,7 @@ public abstract class RequiredInt<TSelf> : ScalarValueObject<TSelf, int>
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `Value` | `int` | Canonical scalar identity for required integers. |
+| `Value` | `int` | Canonical scalar identity for required integers; zero is rejected by default. |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -137,7 +176,7 @@ public abstract class RequiredDecimal<TSelf> : ScalarValueObject<TSelf, decimal>
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `Value` | `decimal` | Canonical scalar identity for required decimals. |
+| `Value` | `decimal` | Canonical scalar identity for required decimals; zero is rejected by default. |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -152,7 +191,7 @@ public abstract class RequiredLong<TSelf> : ScalarValueObject<TSelf, long>
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `Value` | `long` | Canonical scalar identity for required longs. |
+| `Value` | `long` | Canonical scalar identity for required longs; zero is rejected by default. |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -167,7 +206,7 @@ public abstract class RequiredBool<TSelf> : ScalarValueObject<TSelf, bool>
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `Value` | `bool` | Canonical scalar identity for required booleans. |
+| `Value` | `bool` | Canonical scalar identity for required booleans; `true` and `false` are both valid. |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
@@ -182,12 +221,28 @@ public abstract class RequiredDateTime<TSelf> : ScalarValueObject<TSelf, DateTim
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `Value` | `DateTime` | Canonical scalar identity for non-default dates. |
+| `Value` | `DateTime` | Canonical scalar identity for non-`DateTime.MinValue` dates by default. |
 
 | Signature | Returns | Description |
 | --- | --- | --- |
 | `public override string ToString()` | `string` | Invariant ISO 8601 round-trip string. |
 | `public static TSelf Create(DateTime value)` | `TSelf` | Inherited throwing scalar factory. |
+
+### `RequiredDateTimeOffset<TSelf>`
+
+```csharp
+public abstract class RequiredDateTimeOffset<TSelf> : ScalarValueObject<TSelf, DateTimeOffset>
+    where TSelf : RequiredDateTimeOffset<TSelf>, IScalarValue<TSelf, DateTimeOffset>
+```
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `Value` | `DateTimeOffset` | Canonical scalar identity for non-`DateTimeOffset.MinValue` timestamps by default. |
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `public override string ToString()` | `string` | Invariant ISO 8601 round-trip string. |
+| `public static TSelf Create(DateTimeOffset value)` | `TSelf` | Inherited throwing scalar factory. |
 
 ### `RequiredEnum<TSelf>`
 
@@ -297,6 +352,7 @@ public class Money : ValueObject
     - `RequiredLong<TSelf>`
     - `RequiredBool<TSelf>`
     - `RequiredDateTime<TSelf>`
+    - `RequiredDateTimeOffset<TSelf>`
   - Built-in scalar concretes:
     - `Age`
     - `CountryCode`
@@ -315,15 +371,15 @@ public class Money : ValueObject
 - **Structured value objects**
   - `Money` -> `ValueObject`
 - **Optionality wrappers**
-  - `Maybe<T>` belongs to `Trellis.Results`; it wraps presence/absence and is not a value object category peer to scalar/symbolic/structured types.
+  - `Maybe<T>` belongs to `Trellis.Core`; it wraps presence/absence and is not a value object category peer to scalar/symbolic/structured types.
 
 ## Source-generated members
 
 The primitive generator adds category-specific members to partial types:
 
-- `RequiredGuid<TSelf>`: `NewUniqueV4()`, `NewUniqueV7()`, `TryCreate(Guid value, string? fieldName = null)`, `TryCreate(Guid? requiredGuidOrNothing, string? fieldName = null)`, `TryCreate(string? stringOrNull, string? fieldName = null)`, `Create(string stringValue)`, `Parse`, `TryParse`, explicit cast, and `ValidateAdditional(Guid value, string fieldName, ref string? errorMessage)`.
+- `RequiredGuid<TSelf>`: `NewUniqueV4()`, `NewUniqueV7()`, `NewUniqueV7(TimeProvider timeProvider)`, `TryCreate(Guid value, string? fieldName = null)`, `TryCreate(Guid? requiredGuidOrNothing, string? fieldName = null)`, `TryCreate(string? stringOrNull, string? fieldName = null)`, `Create(string stringValue)`, `Parse`, `TryParse`, explicit cast, and `ValidateAdditional(Guid value, string fieldName, ref string? errorMessage)`.
 - `RequiredString<TSelf>`: `TryCreate(string? value, string? fieldName = null)`, `Create(string? value, string? fieldName = null)`, `Parse`, `TryParse`, explicit cast, and `ValidateAdditional(string value, string fieldName, ref string? errorMessage)`.
-- `RequiredInt<TSelf>`, `RequiredDecimal<TSelf>`, `RequiredLong<TSelf>`, and `RequiredDateTime<TSelf>`: the invariant `TryCreate(string? stringOrNull, string? fieldName = null)` overload plus the culture-aware `TryCreate(string? value, IFormatProvider? provider, string? fieldName = null)` overload, `Create(string stringValue)`, `Parse`, `TryParse`, explicit cast, and `ValidateAdditional(...)`.
+- `RequiredInt<TSelf>`, `RequiredDecimal<TSelf>`, `RequiredLong<TSelf>`, `RequiredDateTime<TSelf>`, and `RequiredDateTimeOffset<TSelf>`: the invariant `TryCreate(string? stringOrNull, string? fieldName = null)` overload plus the culture-aware `TryCreate(string? value, IFormatProvider? provider, string? fieldName = null)` overload, `Create(string stringValue)`, `Parse`, `TryParse`, explicit cast, and `ValidateAdditional(...)`.
 - `RequiredBool<TSelf>`: primitive/string factories, `Parse`, `TryParse`, explicit cast, and `ValidateAdditional(bool value, string fieldName, ref string? errorMessage)`.
 - `RequiredEnum<TSelf>`: `TryCreate(string value)`, `TryCreate(string? value, string? fieldName = null)`, `Parse`, `TryParse`, and `Create(string value)`. Generated enum creation uses `TryFromName` only.
 
@@ -396,7 +452,6 @@ public static class Example
 
 ## Cross-references
 
-- [trellis-api-primitives.md](trellis-api-primitives.md)
-- [trellis-api-results.md](trellis-api-results.md)
-- [trellis-api-ddd.md](trellis-api-ddd.md)
-- [trellis-api-efcore.md](trellis-api-efcore.md)
+- [trellis-api-primitives.md](trellis-api-primitives.md#base-class-hierarchy)
+- [trellis-api-core.md](trellis-api-core.md#domain-driven-design)
+- [trellis-api-efcore.md](trellis-api-efcore.md#maybet-storage-owned-types-and-migrations)
