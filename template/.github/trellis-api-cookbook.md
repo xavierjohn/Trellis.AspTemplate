@@ -4,7 +4,7 @@ namespaces: [Trellis, Trellis.Asp, Trellis.EntityFrameworkCore, Trellis.Mediator
 types: [recipes]
 related_docs: [trellis-api-core.md, trellis-api-asp.md, trellis-api-efcore.md, trellis-api-mediator.md]
 version: v3
-last_verified: 2026-06-05
+last_verified: 2026-06-17
 audience: [llm]
 ---
 # Trellis Cross-Package Cookbook
@@ -463,9 +463,11 @@ app.MapGet("/blobs/{id:guid}", async (Guid id, IBlobRepository repo, Cancellatio
 **Problem.** Resource-based ownership check on an update command (the 90% case) plus a static permission gate on a delete command, all via the mediator pipeline.
 
 ```csharp
+using Mediator;
 using Trellis;
 using Trellis.Asp.Authorization;
 using Trellis.Authorization;
+using Trellis.Mediator;
 using Trellis.Primitives;
 
 // CANONICAL OWNER CHECK — the 90% case. Implement IAuthorizeResource<TResource> for the
@@ -814,7 +816,7 @@ public class PlaceOrderHandlerTests
         var result = await sut.Handle(command, CancellationToken.None);
 
         result.Should().BeSuccess();
-        result.Should().HaveValue(repo.Last().Id);                  // structural equality on Result<T>
+        result.Should().HaveValue(repo.Last().Id);                  // asserts the Result<T> value equals
     }
 
     [Fact]
@@ -830,7 +832,7 @@ public class PlaceOrderHandlerTests
 }
 ```
 
-**What it shows.** `ResultAssertions<TValue>.HaveValue(...)` does structural comparison; `UnwrapError()` is the safe accessor that *only* returns the error and is intended for use after `Should().BeFailure...`. Calling `.Should()` on an `Error.InvalidInput` returns the specialized `ValidationErrorAssertions` (with `HaveFieldError`, `HaveFieldErrorWithDetail`, `HaveFieldCount`). Async assertions have two valid shapes: await the pipeline first and assert the resulting `Result<T>`, or call `BeSuccessAsync` / `BeFailureAsync` directly on `Task<Result<T>>` or `ValueTask<Result<T>>`. The unsupported shape is `await result.Should().BeSuccessAsync()` because `.Should()` returns synchronous `ResultAssertions<TValue>`.
+**What it shows.** `ResultAssertions<TValue>.HaveValue(expected)` asserts the success value **equals** `expected` (use `HaveValueEquivalentTo` for member-wise structural equivalence); `UnwrapError()` is the safe accessor that *only* returns the error and is intended for use after `Should().BeFailure...`. Calling `.Should()` on an `Error.InvalidInput` returns the specialized `ValidationErrorAssertions` (with `HaveFieldError`, `HaveFieldErrorWithDetail`, `HaveFieldCount`). Async assertions have two valid shapes: await the pipeline first and assert the resulting `Result<T>`, or call `BeSuccessAsync` / `BeFailureAsync` directly on `Task<Result<T>>` or `ValueTask<Result<T>>`. The unsupported shape is `await result.Should().BeSuccessAsync()` because `.Should()` returns synchronous `ResultAssertions<TValue>`.
 
 ---
 
@@ -853,6 +855,7 @@ If you are looking up a specific analyzer by ID, the standalone file is faster t
 ```csharp
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Trellis.EntityFrameworkCore;
 using Trellis.ServiceDefaults;
 
 public static class CompositionRoot
@@ -912,12 +915,13 @@ public static class CompositionRoot
 
 The unobvious bits this recipe pins down:
 
-- `ApplyTrellisConventions` already configures composite value objects as owned navigations — **you do not need `builder.OwnsOne(...)` in your `IEntityTypeConfiguration`** (the `CompositeValueObjectConvention` discovers them by **inheritance from `ValueObject`** when the assembly is passed to `ApplyTrellisConventions`). The `[OwnedEntity]` attribute is **not** the convention's discovery key — it drives the source generator (which emits the parameterless ctor EF Core's materializer needs) and the analyzers `TRLS036` / `TRLS037` / `TRLS038`. The convention maps any `ValueObject` subtype in the scanned assemblies as an owned type; without a parameterless constructor materialization fails — Trellis fails fast at model-build with an actionable `TrellisPersistenceMappingException` naming the value object (instead of EF Core's cryptic "No suitable constructor was found"). `[OwnedEntity]` generates the constructor for you. **Domain-purity note (axiom A8):** because `[OwnedEntity]` lives in `Trellis.EntityFrameworkCore`, annotating a domain value object with it references EF Core; to keep a domain value object EF-free, declare a private parameterless constructor yourself instead (as `Money` does) and the convention materializes via it — `[OwnedEntity]` is the convenient default, the hand-written ctor is the EF-free alternative.
+- `ApplyTrellisConventions` already configures composite value objects as owned navigations — **you do not need `builder.OwnsOne(...)` in your `IEntityTypeConfiguration`** (the `CompositeValueObjectConvention` discovers them by **inheritance from `ValueObject`** when the assembly is passed to `ApplyTrellisConventions`). The `[OwnedEntity]` attribute is **not** the convention's discovery key — it drives the source generator (which emits the parameterless ctor EF Core's materializer needs) and the analyzers `TRLS036` / `TRLS037` / `TRLS038`. The convention maps any `ValueObject` subtype in the scanned assemblies as an owned type; without a parameterless constructor materialization fails — Trellis fails fast at model-build with an actionable `TrellisPersistenceMappingException` naming the value object (instead of EF Core's cryptic "No suitable constructor was found"). `[OwnedEntity]` generates the constructor for you. **Domain-purity note (axiom A8):** because `[OwnedEntity]` lives in `Trellis.EntityFrameworkCore`, annotating a domain value object with it references EF Core; to keep a domain value object EF-free, declare a private parameterless constructor yourself instead (as `Money` does) and the convention materializes via it — `[OwnedEntity]` is the convenient default, the hand-written ctor is the EF-free alternative. Referencing the package analyzer-only (`OutputItemType="Analyzer" ReferenceOutputAssembly="false"`) pulls in the generators but does **not** make the layer EF-free — see [trellis-api-efcore.md](trellis-api-efcore.md#maybet-storage-owned-types-and-migrations).
 - **With `[OwnedEntity]`,** the class **must** be `partial` (`TRLS036`), inherit `ValueObject` (`TRLS038`), and have **no** hand-written parameterless constructor (`TRLS037`) — the source generator emits one for EF Core's materialization path. (To keep the value object EF-free instead, omit `[OwnedEntity]` and hand-write a `private` parameterless constructor, as the previous bullet describes.)
 - `[JsonConverter(typeof(CompositeValueObjectJsonConverter<TSelf>))]` routes JSON deserialization through the public `TryCreate`, so the API surface and the domain agree on what's valid. Without it, model binding produces a default-constructed VO that bypasses `TryCreate`.
 
 ```csharp
 using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 using Trellis;
 using Trellis.EntityFrameworkCore;
 using Trellis.Primitives;
@@ -988,8 +992,9 @@ public sealed partial class Customer : Aggregate<CustomerId>
 }
 
 // CONFIGURATION — note the absence of OwnsOne(c => c.ShippingAddress).
-// CompositeValueObjectConvention picks up [OwnedEntity] types automatically
-// through the source-generated ApplyTrellisConventionsFor<TContext>() entry point.
+// CompositeValueObjectConvention discovers composite ValueObject types by their inheritance
+// from ValueObject (NOT the [OwnedEntity] attribute) through the source-generated
+// ApplyTrellisConventionsFor<TContext>().
 internal sealed class CustomerConfiguration : IEntityTypeConfiguration<Customer>
 {
     public void Configure(EntityTypeBuilder<Customer> builder)
@@ -1016,7 +1021,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 **What it shows.**
 
 - `[OwnedEntity]` + `partial` + `ValueObject` + private ctor is the contract. The three diagnostics (`TRLS036`/`037`/`038`) catch each violation at compile time.
-- `CompositeValueObjectJsonConverter<T>` makes JSON deserialization round-trip through `TryCreate`, so an API request body with a missing `state` produces the same `Error.InvalidInput` shape the domain emits.
+- `CompositeValueObjectJsonConverter<T>` makes JSON deserialization round-trip through `TryCreate`, so an API request body with an **invalid** `state` (one that fails the VO's rule) produces the same `Error.InvalidInput` shape the domain emits. A **missing** required inner field is caught earlier as a `TrellisJsonValidationException` ("required property missing") *before* `TryCreate` runs.
 - `ApplyTrellisConventions` removes the boilerplate `OwnsOne` call. You only need `OwnsOne` when you want to **override** the convention (custom column names, table splitting, indexes on inner properties).
 
 **Storage shape.**
@@ -1024,7 +1029,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 | Aggregate property | Storage |
 |---|---|
 | Required `ShippingAddress` (non-nullable) | Table-split: 5 columns on the `Customers` table — `ShippingAddress_Street`, `ShippingAddress_City`, `ShippingAddress_State`, `ShippingAddress_PostalCode`, `ShippingAddress_Country` (all `NOT NULL`). |
-| Optional `Maybe<ShippingAddress>` | Because the inner properties are non-nullable, `CompositeValueObjectConvention` switches to a **separate table** named `{Owner}_{Property}` (e.g., `Customer_BillingAddress`) with a `1:0..1` FK back to `Customers`. See the storage rules in [trellis-api-efcore.md](trellis-api-efcore.md#maybet-storage-owned-types-and-migrations) for the full decision matrix. |
+| Optional `Maybe<ShippingAddress>` | `CompositeValueObjectConvention` **table-splits** it into the `Customers` table as **nullable** columns (`BillingAddress_Street`, …, all `NULL`-able); absence is encoded as all-null. It uses a **separate table** `{Owner}_{Property}` when the composite has **nested owned navigations** *or* a **non-nullable value-type inner property** — table-splitting can't represent either for an optional dependent (all-null columns would make existence ambiguous, and EF Core rejects making a non-nullable value-type column optional), so row existence encodes presence instead. See the storage rules in [trellis-api-efcore.md](trellis-api-efcore.md#maybet-storage-owned-types-and-migrations) for the full decision matrix. |
 
 **JSON wire shape.**
 
@@ -1032,9 +1037,9 @@ The `[JsonConverter(typeof(CompositeValueObjectJsonConverter<T>))]` attribute on
 
 | C# property | JSON request/response shape |
 |---|---|
-| `ShippingAddress ShippingAddress { get; private set; }` (required composite VO) | `"shippingAddress": { "street": "1 Main St", "city": "Redmond", "state": "WA", "postalCode": "98052", "country": "US" }` — every field present; missing inner field → `Error.InvalidInput` with field path `/shippingAddress/<field>`. |
+| `ShippingAddress ShippingAddress { get; private set; }` (required composite VO) | `"shippingAddress": { "street": "1 Main St", "city": "Redmond", "state": "WA", "postalCode": "98052", "country": "US" }` — every field present; an **invalid** inner field (fails `TryCreate`) → `Error.InvalidInput` with field path `/shippingAddress/<field>`; a **missing** inner field → a "required property missing" `TrellisJsonValidationException`. |
 | `partial Maybe<ShippingAddress> BillingAddress { get; set; }` (optional composite VO on a domain model — **not** used directly on a request DTO; see Recipe 14) | Domain model only. On the wire, request DTOs use a **nullable transport** (`ShippingAddress?`) and the controller adapts via `Maybe.From(...)`. Response DTOs project to `ShippingAddress?` for the same reason. |
-| `Money Total { get; private set; }` (required composite VO with scalar inner properties — `decimal Amount`, `Currency Currency`) | `"total": { "amount": 49.99, "currency": "USD" }` — the property casing comes from System.Text.Json's `PropertyNamingPolicy.CamelCase` (set by `AddTrellisAsp()`). Inner scalar VOs (e.g., `Currency : RequiredString<Currency>`) serialize as their underlying primitive (`"USD"`, not `{"value":"USD"}`). |
+| `Money Total { get; private set; }` (required composite VO with scalar inner properties — `decimal Amount`, `Currency Currency`) | `"total": { "amount": 49.99, "currency": "USD" }` — the inner field casing is camelCase (the `CompositeValueObjectJsonConverter` emits camelCase property names). Inner scalar VOs (e.g., `Currency : RequiredString<Currency>`) serialize as their underlying primitive (`"USD"`, not `{"value":"USD"}`). |
 | Scalar VO (`OrderId : RequiredGuid<OrderId>`, `EmailAddress : RequiredString<EmailAddress>`) | Always serializes as the underlying primitive (`"550e8400-..."`, `"a@b.com"`). Never wrapped in `{ "value": ... }`. This is automatic via the source-generated `IScalarValue<T,P>` JSON converter. |
 
 **Anti-pattern → fix.**
@@ -1088,7 +1093,22 @@ public partial class ShippingAddress { /* … */ }
 
 ### Owned collections with a private backing field
 
-When an aggregate exposes a collection navigation as an `IReadOnlyList<T>` (or `IReadOnlyCollection<T>`) facade over a private `List<T>` field, **ignore the facade and map via the backing field name**. EF Core cannot instantiate an interface type for a navigation, so it has to bind directly to the concrete `List<T>` field.
+When an aggregate or composite value object exposes a collection as an `IReadOnlyList<T>` (or `IReadOnlyCollection<T>`) facade over a private `List<T>` field, **how you map it depends on whether the element `T` is a value object or an entity:**
+
+- **`T` is a composite value object** (derives from `ValueObject`): **no configuration is required.** `CompositeValueObjectConvention` registers every composite VO as an owned type, and EF Core's navigation discovery binds the read-only facade to its `_camelCase` backing field automatically — including when the collection lives *inside another composite VO*, and whether the owner is required or `Maybe<T>`. Writing `Ignore` + `OwnsMany` for a value-object collection is redundant.
+- **`T` is an entity** (has its own identity, not a `ValueObject`): the element is **not auto-owned** — Trellis conventions auto-own value objects only. By convention EF treats an entity collection as a *separate, independently-tracked* relationship, so configure `OwnsMany` explicitly to make it an owned aggregate child, as shown below.
+
+```csharp
+// VALUE-OBJECT collection — zero configuration; the convention owns it.
+[OwnedEntity]
+public partial class Innings : ValueObject
+{
+    private readonly List<FallOfWicket> _fallOfWickets = [];            // FallOfWicket : ValueObject
+    public IReadOnlyList<FallOfWicket> FallOfWickets => _fallOfWickets; // auto-mapped — no Ignore/OwnsMany
+}
+```
+
+Map an **entity** collection explicitly with `OwnsMany`. Binding against the private backing field by name keeps the public surface an immutable `IReadOnlyList<T>` while EF writes through the field:
 
 ```csharp
 public sealed partial class Order : Aggregate<OrderId>
@@ -1126,9 +1146,11 @@ The string `"_lineItems"` is unfortunately part of the public mapping contract: 
 |---|---|---|
 | Raw string `"_lineItems"` | None — typo or rename breaks at runtime model-validation. | Zero. The pattern shown above. |
 | `private const string LineItemsField = "_lineItems";` on `Order`, then `builder.OwnsMany<LineItem>(Order.LineItemsField, …)` | Refactoring tools follow the constant. Still no compile check that the field actually exists. | Leaks the field name through `internal`/`public` constant on the aggregate — adds public surface for a persistence concern. |
-| `builder.OwnsMany(o => o.LineItems, …)` directly against the facade | n/a | Does not work: EF reports it cannot determine the relationship from `IReadOnlyList<LineItem>`. |
+| `builder.OwnsMany(o => o.LineItems, cfg => cfg.HasKey(...))` directly against the facade | Refactor-safe — no magic string; renaming the field is transparent. | Works: EF binds the read-only `IReadOnlyList<LineItem>` navigation to the backing `List<LineItem>` field by convention and round-trips. The `cfg` callback still configures the owned type (`cfg.ToTable(...)`, `cfg.Property(...).HasColumnName(...)`, etc.). Prefer this form; fall back to the string-based `OwnsMany<LineItem>("_field", …)` only when the backing field is named differently from what the convention binds, or convention cannot resolve the facade-to-field link. |
 
-**Why no `[OwnedEntity]`-style convention for collections (yet).** `CompositeValueObjectConvention` discovers composite owned *value objects* by inheritance from `ValueObject`. An equivalent collection convention would need to walk every aggregate, find `IReadOnlyList<T>` / `IReadOnlyCollection<T>` properties whose `T` is an entity, locate a matching `_camelCase` backing field, and register the `OwnsMany` against it. This is on the roadmap (tracked as the analogue of `MaybeConvention` for collections); for now the cookbook pattern above is the supported approach.
+**Why no convention for _entity_ collections (yet).** Composite **value-object** collections are already handled automatically (see the value-object case above) — `CompositeValueObjectConvention` registers each composite VO as owned, so EF Core's navigation discovery maps the `IReadOnlyList<VO>` facade with no extra configuration. An equivalent convention for **entity** collections would need to walk every aggregate, find `IReadOnlyList<T>` / `IReadOnlyCollection<T>` properties whose `T` is an entity, locate a matching `_camelCase` backing field, and register the `OwnsMany` against it. This is on the roadmap (tracked as the analogue of `MaybeConvention` for collections); for now the manual pattern above is the supported approach for entity collections.
+
+> **Testing on SQLite?** An `OwnsMany` whose per-row key is a store-generated integer inserts fine on SQL Server (`int IDENTITY`) but fails on SQLite with `NOT NULL constraint failed: <Table>.Id`, because SQLite only auto-increments a single-column `INTEGER PRIMARY KEY`. This is stock EF Core + SQLite behavior, not a Trellis issue. Give the collection a client-generated `Guid` key to make it provider-independent — see [trellis-api-efcore.md](trellis-api-efcore.md#provider-specific-behavior-owned-collections-on-sqlite).
 
 ### Supported property shapes inside a composite VO — when to map to a DTO instead
 
@@ -1208,8 +1230,9 @@ The answer depends on whether the inner type is a **scalar** (single-primitive) 
 using Trellis;
 using Trellis.Primitives;
 
-public sealed partial class EmailAddress : RequiredString<EmailAddress>;
-public sealed partial class PhoneNumber  : RequiredString<PhoneNumber>;
+// EmailAddress and PhoneNumber are the shipped, validating value objects from Trellis.Primitives
+// (PhoneNumber validates E.164, EmailAddress validates format). Use them — do NOT redeclare bare
+// RequiredString subclasses, which are lenient (reject null only) and would skip format validation.
 
 public sealed record CreateCustomerRequest(
     EmailAddress         Email,           // required
@@ -1223,7 +1246,7 @@ public sealed class CustomersController(ISender sender) : ControllerBase
     public ValueTask<ActionResult<CustomerResponse>> Create(
         [FromBody] CreateCustomerRequest request, CancellationToken ct) =>
         sender.Send(new CreateCustomerCommand(request.Email, request.PhoneNumber), ct)
-              .ToHttpResponseAsync(CustomerResponse.From, /* … */)
+              .ToHttpResponseAsync(CustomerResponse.From)
               .AsActionResultAsync<CustomerResponse>();
 }
 ```
@@ -1255,7 +1278,7 @@ public sealed class CustomersController(ISender sender) : ControllerBase
             : Maybe.From(request.ShippingAddress);
 
         return sender.Send(new CreateCustomerCommand(request.Email, shipping), ct)
-                     .ToHttpResponseAsync(CustomerResponse.From, /* … */)
+                     .ToHttpResponseAsync(CustomerResponse.From)
                      .AsActionResultAsync<CustomerResponse>();
     }
 }
@@ -1324,11 +1347,11 @@ public sealed class CreateOrderHandler(IOrderRepository repo)
 
 > `repo.Add(entity)` stages the aggregate for insertion via EF Core; `TransactionalCommandBehavior`, registered by `services.AddTrellisUnitOfWork<TContext>()` in your ACL composition root, automatically calls `SaveChangesAsync` after every successful handler — no explicit save call is needed in the handler.
 
-**What it shows.** Handlers in Trellis follow a strict separation: the handler shapes domain state and the pipeline owns the commit boundary. `IRepository.Add` returns `void` precisely to signal "staged, not yet persisted" — the `void` return makes it impossible to write the (wrong) `await repo.Add(...).Should().BeSuccess()`. The mediator pipeline wraps the handler; from innermost (closest to the handler) outward it is: `TransactionalCommandBehavior` → `ValidationBehavior` → `AuthorizationBehavior` → `LoggingBehavior` → `TracingBehavior` → `ExceptionBehavior` (the opt-in `ResourceAuthorizationBehavior` sits just outside `ValidationBehavior`). When the handler returns a successful `Result<T>`, the transactional behavior calls `SaveChangesAsync` and only then surfaces the result; on failure or exception, nothing is committed.
+**What it shows.** Handlers in Trellis follow a strict separation: the handler shapes domain state and the pipeline owns the commit boundary. `RepositoryBase.Add` (the base behind your `IOrderRepository`) returns `void` precisely to signal "staged, not yet persisted" — the `void` return makes it impossible to write the (wrong) `await repo.Add(...).Should().BeSuccess()`. The mediator pipeline wraps the handler; from innermost (closest to the handler) outward it is: `TransactionalCommandBehavior` → `ValidationBehavior` → `AuthorizationBehavior` → `LoggingBehavior` → `TracingBehavior` → `ExceptionBehavior` (the opt-in `ResourceAuthorizationBehavior` sits just outside `ValidationBehavior`). When the handler returns a successful `Result<T>`, the transactional behavior calls `SaveChangesAsync` and only then surfaces the result; on failure or exception, nothing is committed (unless the command opts into `IPersistOnFailure`, which deliberately commits the failure path).
 
 | Method | Signature | Saves immediately? | When to use |
 |---|---|---|---|
-| `IRepository.Add(T)` (and `Remove(T)`, `RemoveByIdAsync(TId)`) | `void` / `Task<Result<Unit>>` for not-found | **No** — staged for the UoW | Handlers and any production-shaped repository contract |
+| `RepositoryBase.Add(T)` (and `Remove(T)`, `RemoveByIdAsync(TId)`) | `void` / `Task<Result<Unit>>` for not-found | **No** — staged for the UoW | Handlers and any production-shaped repository contract |
 | `FakeRepository.Add(T)` | `void` | n/a (in-memory; visible immediately) | **Test setup** — "put this in the store so the handler can find it" |
 | `FakeRepository.SaveAsync(T)` | `Task<Result<Unit>>` | n/a (in-memory; visible immediately) | Tests that explicitly assert on the `Result` shape, e.g., conflict-result handling |
 
@@ -1865,7 +1888,7 @@ foreach (var li in order.LineItems)
     product.ReleaseStock(li.Quantity);
 }
 
-// ✅ Fail-loud with full preflight — same shape as the worked example above.
+// ✅ Fail-loud with full preflight — same two-pass shape as the worked example above.
 // Compute the missing set BEFORE any side effect; only enter the release loop
 // when every related aggregate is reachable.
 var missing = order.LineItems.Select(li => li.ProductId).Distinct()
@@ -1877,13 +1900,19 @@ if (missing.Length > 0)
         : new Error.Aggregate(missing.Select(id =>
             (Error)new Error.NotFound(ResourceRef.For<Product>(id))).ToArray()));
 
+// Preflight the per-aggregate domain invariants (Recipe 25) BEFORE any mutation.
+// Releasing stock on Product A then failing on Product B would leave A partially
+// released — TransactionalCommandBehavior cannot roll back the in-memory aggregate
+// graph within the request. Never mutate-and-bail in the loop.
+var preflight = order.LineItems
+    .Select(li => byId[li.ProductId].CanReleaseStock(li.Quantity))
+    .SequenceAll();
+if (preflight.IsFailure)
+    return Result.Fail<Order>(preflight.Error);
+
+// Pass 2: every mutation has a matching Can* that just returned Ok — provably non-failing.
 foreach (var li in order.LineItems)
-{
-    var product = byId[li.ProductId];
-    var release = product.ReleaseStock(li.Quantity);
-    if (release.Error is { } err)
-        return Result.Fail<Order>(err);
-}
+    byId[li.ProductId].ReleaseStock(li.Quantity).Discard();
 ```
 
 ---
@@ -1933,7 +1962,7 @@ app.MapPut("/orders/{id:guid}", (OrderId id, ReplaceOrderRequest request, OrderD
 
 ## Cross-cutting tips
 
-- **Run analyzers in CI.** `Trellis.Analyzers` ships in the framework and runs as part of every `dotnet build`. Treat warnings as errors for `TRLS00x` once your codebase is clean.
+- **Run analyzers in CI.** `Trellis.Analyzers` ships with the Trellis ASP template and runs on every build of a project that references it. Treat warnings as errors for `TRLS00x` once your codebase is clean.
 - **Two independent `await` calls in a handler?** `Result.ParallelAsync` + `WhenAllAsync` is the framework idiom — **but only when the loads hit different resources**. Two repository reads against the same scoped `DbContext` (the typical Trellis setup with `AddTrellisUnitOfWork<TContext>()`) race EF Core and throw `InvalidOperationException`; keep those sequential. The recipe spells out the safe shapes (HTTP + DB, two distinct upstream services, factory-created `DbContext`s via `IDbContextFactory<T>`) and the anti-pattern. See [Recipe 21](#recipe-21--parallel-independent-loads-in-handlers-resultparallelasync--whenallasync). The rule for "independent": the second factory's body does not reference any value produced by the first **and** the two factories hit distinct underlying resources.
 - **Do not mix sync chain methods with async lambdas.** `result.Map(async v => …)` triggers `TRLS009`; use `MapAsync`. The fix provider can apply this rewrite automatically.
 - **Construct errors via the closed ADT.** `new Error.NotFound(ResourceRef.For<Order>(id))` — never `new Error("not_found", "...")`, which won't compile against the abstract base record.
@@ -1972,8 +2001,10 @@ The naive workaround is a per-handler ownership guard (e.g. cricket's old `Match
 ### Cricket fan-out — end to end
 
 ```csharp
+using Mediator;
 using Trellis;
 using Trellis.Authorization;
+using Trellis.Mediator;
 
 public sealed partial class MatchId : RequiredGuid<MatchId>;
 public sealed partial class TeamId  : RequiredGuid<TeamId>;
@@ -2604,11 +2635,11 @@ public sealed class PaymentsController : ControllerBase
 app.MapPost("/payments", CreatePaymentAsync).WithMetadata(new IdempotentAttribute());
 ```
 
-**What it shows.** The middleware reads the configured header (default `Idempotency-Key`), rejects raw header values above the parser's 4 KiB defensive cap, parses accepted values as the [RFC 8941](https://www.rfc-editor.org/rfc/rfc8941) `sf-string` subset, buffers the request body up to `MaxRequestBodyBytes`, computes a SHA-256 fingerprint over `(method, path, normalized headers, body)`, resolves a tenant/actor scope through `IIdempotencyScopeResolver` (default: per-actor via `IActorProvider`, falling back to anonymous when no actor is established), and calls `IIdempotencyStore.TryReserveAsync(scope, key, fingerprint, ct)`. The store either issues a `Reserved` outcome (carrying an opaque CAS reservation token), reports `AlreadyInFlight` (concurrent reservation still open — the middleware responds `409 Conflict` with `Retry-After`), `Replay` (a completed snapshot — the middleware writes the captured status code, headers, and body verbatim), or `BodyHashMismatch` (same key, different fingerprint — the middleware responds `422 Unprocessable Entity` so the client knows the key was reused with a mutated request). When the reservation is `Reserved`, the middleware decorates `IHttpResponseBodyFeature` with `CapturingResponseBodyFeature` (a tee — bytes still flow to the client while a bounded copy is captured) and registers an `OnStarting` callback that snapshots the final status code and response headers before the first byte flushes. On a successful flush within `MaxResponseBodyBytes`, the middleware calls `IIdempotencyStore.CompleteAsync(reservationId, snapshot, ct)` against a bounded 5-second cancellation token (NOT `HttpContext.RequestAborted`, so finalisation still runs if the client disconnected). On any failure path — exception, response-too-large, `SendFileAsync` (uncapturable), middleware abort, **5xx response status** (treated as transient per the IETF Idempotency-Key draft), or **response trailers** (cannot be replayed by the snapshot writer) — the middleware calls `AbandonAsync(reservationId, ct)` so the next retry can re-reserve. Reservation tokens are opaque `string` GUIDs the store uses for CAS so a stale completer cannot finalise a reservation the store already abandoned via the reservation-timeout sweeper.
+**What it shows.** The middleware reads the configured header (default `Idempotency-Key`), rejects raw header values above the parser's 4 KiB defensive cap, parses accepted values as the [RFC 8941](https://www.rfc-editor.org/rfc/rfc8941) `sf-string` subset, buffers the request body up to `MaxRequestBodyBytes`, computes a SHA-256 fingerprint over `(method, path, normalized headers, body)`, resolves a tenant/actor scope through `IIdempotencyScopeResolver` (default: per-actor via `IActorProvider`, falling back to anonymous when no actor is established), and calls `IIdempotencyStore.TryReserveAsync(scope, key, fingerprint, ct)`. The store either issues a `Reserved` outcome (carrying an opaque CAS reservation token), reports `AlreadyInFlight` (concurrent reservation still open — the middleware responds `409 Conflict` with `Retry-After`), `Replay` (a completed snapshot — the middleware writes the captured status code, headers, and body verbatim), or `BodyHashMismatch` (same key, different fingerprint — the middleware responds `422 Unprocessable Entity` so the client knows the key was reused with a mutated request). When the reservation is `Reserved`, the middleware decorates `IHttpResponseBodyFeature` with `CapturingResponseBodyFeature` (a tee — bytes still flow to the client while a bounded copy is captured) and registers an `OnStarting` callback that snapshots the final status code and response headers before the first byte flushes. On a successful flush within `MaxResponseBodyBytes`, the middleware calls `IIdempotencyStore.CompleteAsync(scope, key, reservationId, snapshot, ct)` against a bounded 5-second cancellation token (NOT `HttpContext.RequestAborted`, so finalisation still runs if the client disconnected). On any failure path — exception, response-too-large, `SendFileAsync` (uncapturable), middleware abort, **5xx response status** (treated as transient per the IETF Idempotency-Key draft), or **response trailers** (cannot be replayed by the snapshot writer) — the middleware calls `AbandonAsync(scope, key, reservationId, ct)` so the next retry can re-reserve. Reservation tokens are opaque `string` GUIDs the store uses for CAS so a stale completer cannot finalise a reservation the store already took over after the reservation timeout elapsed (a later same-key request re-reserves; there is no background sweeper).
 
 **Composition rules.** `services.AddTrellisIdempotency(...)` (or the builder slot `t.UseIdempotency(...)`) registers options + scope resolver + an internal marker; `services.AddInMemoryIdempotencyStore()` is a separate, explicit call so a dev-only in-memory store is never silently inherited into production. `app.UseTrellisIdempotency()` throws at startup if `AddTrellisIdempotency(...)` was not called. The `IIdempotencyStore` registration is also validated at startup when the container exposes `IServiceProviderIsService` (the default Microsoft.Extensions.DependencyInjection container does); on containers that do not expose it the missing-store failure surfaces as a per-request resolution error on the first opted-in request. The in-memory store is single-process only; multi-instance hosts need an EF-backed store (per-tenant table or shared with `Scope` as a discriminator column) that implements the same CAS contract. `MaxRequestBodyBytes` and `MaxResponseBodyBytes` are hard caps: exceeding the request cap returns `413 Payload Too Large` before any handler runs; exceeding the response cap aborts capture and records no snapshot (the next retry re-executes), so the cap should be set high enough to envelop the largest legitimate response from any opted-in endpoint. Endpoints that stream via `SendFileAsync` cannot be captured and are equivalent to exceeding the response cap — model those as non-idempotent or convert them to a buffered response.
 
-**Tests.** Use `Microsoft.AspNetCore.TestHost.TestServer` (the same harness pattern as Recipe 26) plus an `IIdempotencyStore` registered as a singleton (`InMemoryIdempotencyStore`) plus `TimeProvider` swapped for `Microsoft.Extensions.Time.Testing.FakeTimeProvider` (from the `Microsoft.Extensions.TimeProvider.Testing` NuGet package). Drive the same `(key, body)` twice — assert the second call returns the captured status code, headers, and body byte-for-byte. Drive `(key, mutated-body)` — assert `422` and the original snapshot is still replayable. Advance `FakeTimeProvider` past `ReservationTimeout` to exercise the sweep + re-reserve path. The NuGet package is `Microsoft.Extensions.TimeProvider.Testing` (the namespace containing `FakeTimeProvider` is `Microsoft.Extensions.Time.Testing`); the test project should reference the package the same way `Trellis.Testing.Worker`'s harness does.
+**Tests.** Use `Microsoft.AspNetCore.TestHost.TestServer` (the same harness pattern as Recipe 26) plus an `IIdempotencyStore` registered as a singleton (`InMemoryIdempotencyStore`) plus `TimeProvider` swapped for `Microsoft.Extensions.Time.Testing.FakeTimeProvider` (from the `Microsoft.Extensions.TimeProvider.Testing` NuGet package). Drive the same `(key, body)` twice — assert the second call returns the captured status code, headers, and body byte-for-byte. Drive `(key, mutated-body)` — assert `422` and the original snapshot is still replayable. Advance `FakeTimeProvider` past `ReservationTimeout` to exercise the reservation-timeout takeover path (a later same-key request re-reserves the stale entry). The NuGet package is `Microsoft.Extensions.TimeProvider.Testing` (the namespace containing `FakeTimeProvider` is `Microsoft.Extensions.Time.Testing`); the test project should reference the package the same way `Trellis.Testing.Worker`'s harness does.
 
 ---
 
@@ -2907,9 +2938,7 @@ The pipeline extracts the ID from `IIdentifyResource<Incident, IncidentId>` firs
 ```csharp
 endpoints.MapGet("/incidents/{id}", async (...) =>
     (await mediator.Send(new GetIncidentQuery(...)))
-        .Build()
-        .WithCacheControl(CacheControl.NoStore())   // safe under HideAsNotFound
-        .ToHttpResponse());
+        .ToHttpResponse(o => o.WithCacheControl(CacheControl.NoStore())));   // safe under HideAsNotFound
 ```
 
 **Observability.** Every translation emits a structured log at `Information`:
