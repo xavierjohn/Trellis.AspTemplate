@@ -244,6 +244,8 @@ Static factory and helper surface for `Result<TValue>`. There is no non-generic 
 | `public static Result<TValue> Fail<TValue>(Error error)` | Failure factory |
 | `public static Result<Unit> Fail(Error error)` | Failure without payload (returns `Result<Unit>`) |
 | `public static Result<TValue> FailAfterCommit<TValue>(Error error)` | Persist-on-failure factory. Still a failure (`IsFailure == true`), but sets [`IPersistOnFailure.PersistOnFailure`](#public-interface-ipersistonfailure) so `TransactionalCommandBehavior` (and any other opt-in pipeline behavior) commits staged changes alongside the failure. Canonical use: worker handler that converts a transient external-service rejection into a persisted `permanently_failed` row. Throws `ArgumentNullException` on null `error`. |
+
+> **`null` and `Result.Ok`.** `Ok<TValue>(TValue value)` is unconstrained and performs **no null check** — at runtime a `null` argument yields a *successful* result whose value is `null` (`IsSuccess == true`, `TryGetValue` returns `true` with a `null` out-value). Nullable-reference annotations catch only the obvious mistake: a literal `null` against a non-nullable `T` (e.g. `Result.Ok<string>(null)`) raises the nullable-reference *warning* `CS8625` — a build error only where warnings are promoted (`TreatWarningsAsErrors`, as this repo sets). They do **not** stop the common case — passing an already-nullable value, where inference widens `TValue` to the nullable type and the null success compiles silently. A success that wraps `null` is almost never intended: model optionality with `Maybe<T>` (absence is data) and a missing-but-required value with `Result.Fail(Error.NotFound.For<T>(id))`, not `Result.Ok(null)`.
 | `public static Result<Unit> FailAfterCommit(Error error)` | No-payload persist-on-failure factory (returns `Result<Unit>`). |
 | `public static Result<Unit> Ensure(bool flag, Error error)` | Converts a boolean to `Result<Unit>` |
 | `public static Result<Unit> Ensure(Func<bool> predicate, Error error)` | Deferred predicate version |
@@ -521,9 +523,9 @@ Closed discriminated union of domain error values. Each case is a nested `sealed
 | `public override bool Equals(object? obj)` / `Equals(Error? other)` | Value equality over discriminator + typed payload + `Detail`. **`Cause` is excluded** so two errors with identical surface payload compare equal regardless of how deeply they were wrapped (mirrors `System.Exception` precedent). Collection-bearing payloads use `EquatableArray<T>` for sequence equality. |
 | `public override int GetHashCode()` | Hash matches `Equals`. |
 
-#### Construction (no static factory methods)
+#### Construction and case-scoped factories
 
-Construct cases directly: `new Error.NotFound(payload) { Detail = "..." }`. The base type intentionally exposes no static `Error.Validation(...)` / `Error.NotFound(...)` helpers — every call site names the case it produces. <!-- v1-stale-ok: explanatory note about removed v1 factory helpers -->
+Construct cases directly: `new Error.NotFound(payload) { Detail = "..." }`. The base `Error` type intentionally exposes no static `Error.Validation(...)` / `Error.NotFound(...)` helpers — every call site names the case it produces. <!-- v1-stale-ok: explanatory note about removed v1 factory helpers --> For the common single-payload shapes, the resource-oriented cases (`NotFound`, `Gone`, `Conflict`, `Forbidden`) and `InvalidInput` expose **case-scoped** convenience factories (e.g. `Error.NotFound.For<Order>(id, detail)`) that bundle the typed payload and an optional trailing `detail` argument while still naming the case — see each case row below.
 
 ---
 
@@ -535,10 +537,10 @@ Nested `sealed record` cases under `Error`. The base constructor is `private`, s
 | --- | --- | --- |
 | `Error.InvalidInput` | `(EquatableArray<FieldViolation> Fields, EquatableArray<RuleViolation> Rules = default)` | Request input failed semantic validation. Use `ForField(...)` / `ForRule(...)` for the common single-violation shapes. |
 | `Error.InvariantViolation` | `(string ReasonCode, ResourceRef? Resource = null)` | Domain rule failed outside field-bound request validation; use for cross-aggregate invariants or internal preconditions. |
-| `Error.NotFound` | `(ResourceRef Resource)` | The addressed resource does not exist. |
-| `Error.Forbidden` | `(string PolicyId, ResourceRef? Resource = null)` | The caller is authenticated but not allowed by the named policy. |
-| `Error.Conflict` | `(ResourceRef? Resource, string ReasonCode)` | The request collides with current state (for example duplicate keys or concurrent modification). |
-| `Error.Gone` | `(ResourceRef Resource)` | The resource previously existed but has been permanently removed (tombstone). |
+| `Error.NotFound` | `(ResourceRef Resource)` | The addressed resource does not exist. Use `For<TResource>(id, detail)` / `For(type, id, detail)` for the common shape. |
+| `Error.Forbidden` | `(string PolicyId, ResourceRef? Resource = null)` | The caller is authenticated but not allowed by the named policy. Use `For<TResource>(policyId, id, detail)` or `ForPolicy(policyId, detail)` (resourceless). |
+| `Error.Conflict` | `(ResourceRef? Resource, string ReasonCode)` | The request collides with current state (for example duplicate keys or concurrent modification). Use `For<TResource>(id, reasonCode, detail)` / `For(type, id, reasonCode, detail)` / `ForReason(reasonCode, detail)` (resourceless). |
+| `Error.Gone` | `(ResourceRef Resource)` | The resource previously existed but has been permanently removed (tombstone). Use `For<TResource>(id, detail)` / `For(type, id, detail)` for the common shape. |
 | `Error.AuthenticationRequired` | `(string? Scheme = null, string? ReasonCode = null)` | Authentication is missing or could not be established. `ReasonCode` (when supplied) distinguishes causes that share the 401 surface — e.g. `"Authentication.InvalidCredentials"` vs `"Authentication.MissingCredentials"` vs `"Authentication.TokenExpired"` — so telemetry, dashboards, and client branching don't have to parse `Detail`. |
 | `Error.Unavailable` | `(string? ReasonCode = null, RetryAdvice? Retry = null)` | A dependency or subsystem is temporarily unavailable; retry may succeed later. |
 | `Error.RateLimited` | `(RetryAdvice? Retry = null)` | The caller exceeded a quota or rate limit. |
@@ -2099,7 +2101,7 @@ public abstract class RequiredDateTimeOffset<TSelf> : ScalarValueObject<TSelf, D
 
 ```csharp
 public abstract class RequiredEnum<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicFields)] TSelf>
-    : IEquatable<RequiredEnum<TSelf>>
+    : IEquatable<RequiredEnum<TSelf>>, IComparable<RequiredEnum<TSelf>>, IComparable
     where TSelf : RequiredEnum<TSelf>, IScalarValue<TSelf, string>
 ```
 
@@ -2120,6 +2122,12 @@ public abstract class RequiredEnum<[DynamicallyAccessedMembers(DynamicallyAccess
 | `public bool Equals(RequiredEnum<TSelf>? other)` | `bool` | Case-insensitive symbolic equality. |
 | `public static bool operator ==(RequiredEnum<TSelf>? left, RequiredEnum<TSelf>? right)` | `bool` | Equality operator. |
 | `public static bool operator !=(RequiredEnum<TSelf>? left, RequiredEnum<TSelf>? right)` | `bool` | Inequality operator. |
+| `public int CompareTo(RequiredEnum<TSelf>? other)` | `int` | Orders by `Ordinal` (declaration order), like the C# `enum` it replaces; stays consistent with `Value`-based equality (`Value` and `Ordinal` are both unique per member); `null` sorts first. |
+| `int IComparable.CompareTo(object? obj)` | `int` | Non-generic comparison; enables members to be used as composite `ValueObject` equality components and sorted by the default comparer. Throws `ArgumentException` when `obj` is non-null and not a `RequiredEnum<TSelf>` (consistent with `Equals(object?)`). |
+| `public static bool operator <(RequiredEnum<TSelf>? left, RequiredEnum<TSelf>? right)` | `bool` | Less-than by declaration order. |
+| `public static bool operator <=(RequiredEnum<TSelf>? left, RequiredEnum<TSelf>? right)` | `bool` | Less-than-or-equal by declaration order. |
+| `public static bool operator >(RequiredEnum<TSelf>? left, RequiredEnum<TSelf>? right)` | `bool` | Greater-than by declaration order. |
+| `public static bool operator >=(RequiredEnum<TSelf>? left, RequiredEnum<TSelf>? right)` | `bool` | Greater-than-or-equal by declaration order. |
 
 ### `ParsableJsonConverter<T>`
 

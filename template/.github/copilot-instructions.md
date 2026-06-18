@@ -246,7 +246,7 @@ dotnet test -l "console;verbosity=minimal"      # rejected by MTP runner
 
 ### Return `Maybe<T>` from repository lookups
 
-- **Rule:** 🔴 MUST return `Maybe<T>` from repository lookups and convert to `Result<T>` in handlers with `.ToResult(new Error.NotFound(...))`.
+- **Rule:** 🔴 MUST return `Maybe<T>` from repository lookups and convert to `Result<T>` in handlers with `.ToResult(Error.NotFound.For<T>(id))`.
 - **Rationale:** Absence is data, not failure; handlers own the domain meaning of “not found”.
 - **Correct:**
 ```csharp
@@ -260,7 +260,7 @@ public interface ITodoRepository
 public async ValueTask<Result<TodoItem>> Handle(GetTodoByIdQuery query, CancellationToken cancellationToken)
 {
     var maybe = await _repository.FindByIdAsync(query.TodoId, cancellationToken);
-    return maybe.ToResult(new Error.NotFound(ResourceRef.For("Todo", query.TodoId)) { Detail = "Todo not found." });
+    return maybe.ToResult(Error.NotFound.For<TodoItem>(query.TodoId, "Todo not found."));
 }
 ```
 - **Incorrect:**
@@ -482,7 +482,7 @@ internal sealed class UpdateTodoCommandHandler(ITodoRepository repository)
 {
     public Task<Result<Todo>> Handle(UpdateTodoCommand command, CancellationToken cancellationToken) =>
         repository.FindByIdAsync(command.Id, cancellationToken)
-            .ToResult(Error.NotFound.ForResource(nameof(Todo), command.Id.Value.ToString()))
+            .ToResult(Error.NotFound.For<Todo>(command.Id))
             .RequireETag(command.IfMatchETags)
             .Bind(todo => todo.Rename(command.Title))
             .Tap(repository.Update)
@@ -512,7 +512,7 @@ internal sealed class CompleteTodoCommandHandler(ITodoRepository repository)
 {
     public Task<Result<Todo>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken) =>
         repository.FindByIdAsync(command.Id, cancellationToken)
-            .ToResult(Error.NotFound.ForResource(nameof(Todo), command.Id.Value.ToString()))
+            .ToResult(Error.NotFound.For<Todo>(command.Id))
             .Bind(todo => todo.Complete(DateTime.UtcNow))  // state machine guards the transition
             .Tap(repository.Update)
             .Bind(_ => repository.SaveChangesResultUnitAsync(cancellationToken).Map(_ => _));
