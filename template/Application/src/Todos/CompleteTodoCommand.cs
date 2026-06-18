@@ -30,7 +30,7 @@ public sealed record CompleteTodoCommand : ICommand<Result<TodoItem>>, IAuthoriz
     /// <inheritdoc />
     public IResult Authorize(Actor actor, TodoItem resource) =>
         Result.Ensure(actor.IsOwner(resource.CreatedByActorId),
-            new Error.Forbidden("todo.complete.creator-only", ResourceRef.For<TodoItem>(resource.Id)) { Detail = "Only the creator can complete this todo." });
+            Error.Forbidden.For<TodoItem>("todo.complete.creator-only", resource.Id, "Only the creator can complete this todo."));
 
     /// <inheritdoc />
     public TodoId GetResourceId() => TodoId;
@@ -52,6 +52,6 @@ public sealed class CompleteTodoCommandHandler : ICommandHandler<CompleteTodoCom
 
     public async ValueTask<Result<TodoItem>> Handle(CompleteTodoCommand command, CancellationToken cancellationToken) =>
         await _repository.FindByIdAsync(command.TodoId, cancellationToken)
-            .ToResultAsync(new Error.NotFound(ResourceRef.For<TodoItem>(command.TodoId)) { Detail = $"Todo {command.TodoId} not found." })
+            .ToResultAsync(Error.NotFound.For<TodoItem>(command.TodoId, $"Todo {command.TodoId} not found."))
             .CheckAsync(todo => todo.Complete(_timeProvider));
 }
