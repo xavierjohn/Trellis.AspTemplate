@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
     <TrellisVersion>3.0.0-alpha.397</TrellisVersion>
+    <TrellisSliVersion>10.0.0-preview.24</TrellisSliVersion>
   </PropertyGroup>
   <!-- Runtime -->
   <ItemGroup>
@@ -36,9 +37,9 @@
     <PackageVersion Include="Trellis.Mediator.FluentValidation" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Primitives" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.ServiceDefaults" Version="$(TrellisVersion)" />
-    <PackageVersion Include="Trellis.ServiceLevelIndicators" Version="10.0.0-preview.21" />
-    <PackageVersion Include="Trellis.ServiceLevelIndicators.Asp" Version="10.0.0-preview.21" />
-    <PackageVersion Include="Trellis.ServiceLevelIndicators.Asp.ApiVersioning" Version="10.0.0-preview.21" />
+    <PackageVersion Include="Trellis.ServiceLevelIndicators" Version="$(TrellisSliVersion)" />
+    <PackageVersion Include="Trellis.ServiceLevelIndicators.Asp" Version="$(TrellisSliVersion)" />
+    <PackageVersion Include="Trellis.ServiceLevelIndicators.Asp.ApiVersioning" Version="$(TrellisSliVersion)" />
     <PackageVersion Include="Trellis.StateMachine" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Testing" Version="$(TrellisVersion)" />
     <PackageVersion Include="Trellis.Testing.AspNetCore" Version="$(TrellisVersion)" />

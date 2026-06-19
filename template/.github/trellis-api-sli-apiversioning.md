@@ -1,3 +1,12 @@
+---
+package: Trellis.ServiceLevelIndicators.Asp.ApiVersioning
+namespaces: [Trellis.ServiceLevelIndicators]
+types: [ServiceLevelIndicatorServiceCollectionExtensions, ApiVersionEnrichment]
+version: v10
+last_verified: 2026-06-18
+audience: [llm]
+---
+
 # Trellis.ServiceLevelIndicators.Asp.ApiVersioning — API Reference
 
 **Package:** `Trellis.ServiceLevelIndicators.Asp.ApiVersioning`  
