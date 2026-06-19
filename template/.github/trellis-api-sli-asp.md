@@ -1,3 +1,12 @@
+---
+package: Trellis.ServiceLevelIndicators.Asp
+namespaces: [Trellis.ServiceLevelIndicators]
+types: [IServiceLevelIndicatorBuilder, ServiceLevelIndicatorCoreServiceCollectionExtensions, ServiceLevelIndicatorServiceCollectionExtensions, ServiceLevelIndicatorApplicationBuilderExtensions, EndpointBuilderExtensions, ServiceLevelIndicatorAttribute, CustomerResourceIdAttribute, MeasureAttribute, CustomerResourceIdMetadata, MeasureMetadata, WebEnrichmentContext, IServiceLevelIndicatorFeature, HttpContextExtensions]
+version: v10
+last_verified: 2026-06-18
+audience: [llm]
+---
+
 # Trellis.ServiceLevelIndicators.Asp — API Reference
 
 **Package:** `Trellis.ServiceLevelIndicators.Asp`  
