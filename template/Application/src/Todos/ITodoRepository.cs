@@ -25,17 +25,18 @@ public interface ITodoRepository
 
     /// <summary>
     /// Returns a keyset-paginated page of todos matching the specification, ordered by Id.
-    /// The implementation peeks one extra row to determine whether a next page exists.
+    /// Backed by the framework's <c>ToPageAsync</c> seek helper, which owns the cursor decode,
+    /// the seek predicate, the over-fetch, and the slice.
     /// </summary>
     /// <param name="specification">The specification to filter by.</param>
-    /// <param name="afterId">Exclusive lower bound — the Id from the previous page's last item, or <c>null</c> for the first page.</param>
-    /// <param name="limit">Maximum number of items to return.</param>
+    /// <param name="pageSize">The requested and server-applied page size.</param>
+    /// <param name="cursor">Opaque continuation cursor from the previous page, or <c>null</c> for the first page.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A tuple of (items up to <paramref name="limit"/>, hasNext flag).</returns>
-    Task<(IReadOnlyList<TodoItem> Items, bool HasNext)> QueryPageAsync(
+    /// <returns>A <see cref="Page{T}"/> of todos, or <see cref="Error.InvalidInput"/> (<c>cursor.malformed</c>) for a malformed cursor.</returns>
+    Task<Result<Page<TodoItem>>> QueryPageAsync(
         Specification<TodoItem> specification,
-        TodoId? afterId,
-        int limit,
+        PageSize pageSize,
+        Cursor? cursor,
         CancellationToken cancellationToken);
 
     /// <summary>Stages an aggregate for insertion. The unit-of-work commits on handler success.</summary>

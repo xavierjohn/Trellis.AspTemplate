@@ -23,25 +23,34 @@ internal class FakeRepositoryAdapter : ITodoRepository
     public Task<IReadOnlyList<TodoItem>> QueryAsync(Specification<TodoItem> specification, CancellationToken cancellationToken) =>
         _repo.QueryAsync(specification, cancellationToken);
 
-    public Task<(IReadOnlyList<TodoItem> Items, bool HasNext)> QueryPageAsync(
+    public Task<Result<Page<TodoItem>>> QueryPageAsync(
         Specification<TodoItem> specification,
-        TodoId? afterId,
-        int limit,
+        PageSize pageSize,
+        Cursor? cursor,
         CancellationToken cancellationToken)
     {
-        var afterGuid = afterId is null ? (Guid?)null : (Guid)afterId;
-        var query = _repo.GetAll()
+        // The real repository delegates to EF Core's ToPageAsync; the in-memory fake mirrors
+        // its contract with the storage-agnostic CursorCodec + PageBuilder primitives.
+        Guid? afterId = null;
+        if (cursor is { } token)
+        {
+            var decoded = CursorCodec.TryDecode<Guid>(token);
+            if (!decoded.TryGetValue(out var afterGuid, out var cursorError))
+                return Task.FromResult(Result.Fail<Page<TodoItem>>(cursorError));
+            afterId = afterGuid;
+        }
+
+        var ordered = _repo.GetAll()
             .Where(specification.IsSatisfiedBy)
             .OrderBy(t => (Guid)t.Id);
 
-        var filtered = afterGuid is null
-            ? (IEnumerable<TodoItem>)query
-            : query.Where(t => (Guid)t.Id > afterGuid.Value);
+        var seeked = afterId is { } cursorId
+            ? ordered.Where(t => (Guid)t.Id > cursorId)
+            : (IEnumerable<TodoItem>)ordered;
 
-        var rows = filtered.Take(limit + 1).ToList();
-        var hasNext = rows.Count > limit;
-        IReadOnlyList<TodoItem> items = hasNext ? rows.Take(limit).ToList() : rows;
-        return Task.FromResult((items, hasNext));
+        var rows = seeked.Take(pageSize.Applied + 1).ToList();
+        var page = PageBuilder.FromOverFetch(rows, pageSize, t => (Guid)t.Id);
+        return Task.FromResult(Result.Ok(page));
     }
 
     public void Add(TodoItem todo) => _repo.Add(todo);
