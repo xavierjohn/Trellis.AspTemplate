@@ -19,15 +19,15 @@ internal class TodoRepository : RepositoryBase<TodoItem, TodoId>, ITodoRepositor
     {
     }
 
+    // ToPageAsync owns the OrderBy(keySelector), cursor decode, the seek WHERE, the
+    // Take(Applied + 1) over-fetch, and the Page slice — we supply a pre-filtered query
+    // and the sort-key projection. The Id (a stable, unique PK) is the keyset key; a
+    // malformed cursor surfaces as Error.InvalidInput ("cursor.malformed"), never throws.
     public Task<Result<Page<TodoItem>>> QueryPageAsync(
         Specification<TodoItem> specification,
         PageSize pageSize,
         Cursor? cursor,
         CancellationToken cancellationToken) =>
-        // ToPageAsync owns the OrderBy(keySelector), cursor decode, the seek WHERE, the
-        // Take(Applied + 1) over-fetch, and the Page slice — we supply a pre-filtered query
-        // and the sort-key projection. The Id (a stable, unique PK) is the keyset key; a
-        // malformed cursor surfaces as Error.InvalidInput ("cursor.malformed"), never throws.
         DbSet.Where(specification)
             .ToPageAsync(pageSize, cursor, t => (Guid)t.Id, cancellationToken: cancellationToken);
 }
