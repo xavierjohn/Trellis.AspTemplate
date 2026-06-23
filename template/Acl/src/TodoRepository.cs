@@ -1,6 +1,5 @@
 ﻿namespace TodoSample.AntiCorruptionLayer;
 
-using Microsoft.EntityFrameworkCore;
 using TodoSample.Application;
 using TodoSample.Domain;
 using Trellis.EntityFrameworkCore;
@@ -20,29 +19,17 @@ internal class TodoRepository : RepositoryBase<TodoItem, TodoId>, ITodoRepositor
     {
     }
 
-    public async Task<(IReadOnlyList<TodoItem> Items, bool HasNext)> QueryPageAsync(
+    // ToPageAsync owns the OrderBy(keySelector), cursor decode, the seek WHERE, the
+    // Take(Applied + 1) over-fetch, and the Page slice — we supply a pre-filtered query
+    // and the sort-key projection. The Id (a stable, unique PK) is the keyset key; a
+    // malformed cursor surfaces as Error.InvalidInput ("cursor.malformed"), never throws.
+    public Task<Result<Page<TodoItem>>> QueryPageAsync(
         Specification<TodoItem> specification,
-        TodoId? afterId,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        // Apply filters BEFORE OrderBy: Queryable.Where returns IQueryable<T>, not
-        // IOrderedQueryable<T>, so casting the result of Where back to IOrderedQueryable
-        // after an earlier OrderBy is fragile and provider-dependent (LINQ-to-Objects
-        // throws InvalidCastException). OrderBy must be the last clause in the keyset
-        // chain so the IOrderedQueryable shape is preserved for .Take(limit + 1).
-        var filtered = DbSet.Where(specification);
-        if (afterId is not null)
-            filtered = filtered.Where(t => ((Guid)t.Id) > ((Guid)afterId));
-
-        var query = filtered.OrderBy(t => t.Id);
-
-        // Peek one extra to detect a next page without a separate count query.
-        var rows = await query.Take(limit + 1).ToListAsync(cancellationToken);
-        var hasNext = rows.Count > limit;
-        var items = hasNext ? rows.Take(limit).ToList() : rows;
-        return (items, hasNext);
-    }
+        PageSize pageSize,
+        Cursor? cursor,
+        CancellationToken cancellationToken) =>
+        DbSet.Where(specification)
+            .ToPageAsync(pageSize, cursor, t => (Guid)t.Id, cancellationToken: cancellationToken);
 }
 
 
