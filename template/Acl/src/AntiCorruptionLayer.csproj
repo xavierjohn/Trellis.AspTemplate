@@ -3,6 +3,7 @@
     <PackageReference Include="Trellis.EntityFrameworkCore" />
     <PackageReference Include="Trellis.Authorization" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\Application\src\Application.csproj" />

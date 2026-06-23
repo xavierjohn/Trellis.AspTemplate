@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <TrellisVersion>3.0.0-alpha.397</TrellisVersion>
+    <TrellisVersion>3.0.0-alpha.418</TrellisVersion>
     <TrellisSliVersion>10.0.0-preview.24</TrellisSliVersion>
   </PropertyGroup>
   <!-- Runtime -->
@@ -17,6 +17,10 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.3.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.3.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+    <!-- Override the transitive native SQLite lib to the patched 3.50.3 (GHSA-2m69-gcr7-jv3q / NU1903);
+         EF Core Sqlite 10.x still pins the vulnerable 2.1.11. SQLitePCLRaw pairs the native lib
+         independently of core, so 3.50.3 + core 2.1.x is supported. Remove once EF's bump lands. -->
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
     <PackageVersion Include="Microsoft.Extensions.DependencyModel" Version="10.0.9" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.7.0" />
     <PackageVersion Include="Microsoft.OpenApi" Version="3.5.1" />
