@@ -1,7 +1,7 @@
 ﻿---
 package: Trellis.Core
 namespaces: [Trellis]
-types: [Result, "Result<T>", IResult, "IResult<TValue>", "IFailureFactory<TSelf>", IPersistOnFailure, "Maybe<T>", Maybe, MaybeInvariant, Error, ITransportFault, RetryAdvice, RetryClassification, ErrorRetryExtensions, Unit, "Page<T>", Page, Cursor, PageSize, CursorCodec, PageBuilder, "EquatableArray<T>", EquatableArray, ResourceRef, InputPointer, FieldViolation, RuleViolation, IAggregate, "Aggregate<TId>", IEntity, "Entity<TId>", IDomainEvent, IIntegrationEvent, ITrackedAggregateSource, ValueObject, "ScalarValueObject<TSelf,T>", "IScalarValue<TSelf,TPrimitive>", "IFormattableScalarValue<TSelf,TPrimitive>", "RequiredString<TSelf>", "RequiredInt<TSelf>", "RequiredLong<TSelf>", "RequiredDecimal<TSelf>", "RequiredBool<TSelf>", "RequiredGuid<TSelf>", "RequiredDateTime<TSelf>", "RequiredDateTimeOffset<TSelf>", "RequiredEnum<TSelf>", "RequiredEnumJsonConverter<T>", "ParsableJsonConverter<T>", ResultRequiresExplicitHttpMappingConverter, PrimitiveValueObjectTrace, "Specification<T>", TrellisJsonValidationException, RangeAttribute, StringLengthAttribute, NotDefaultAttribute, TrimAttribute, PositiveAttribute, NonNegativeAttribute, NegativeAttribute, NonPositiveAttribute, RailwayTrackAttribute, TrackBehavior, EnumValueAttribute, ResourceCollectionNameAttribute, ResultDebugSettings]
+types: [Result, "Result<T>", IResult, "IResult<TValue>", "IFailureFactory<TSelf>", IPersistOnFailure, "Maybe<T>", Maybe, MaybeInvariant, Error, ITransportFault, RetryAdvice, RetryClassification, ErrorRetryExtensions, Unit, "Page<T>", Page, Cursor, PageSize, CursorCodec, PageBuilder, "EquatableArray<T>", EquatableArray, ResourceRef, InputPointer, FieldViolation, RuleViolation, IAggregate, "Aggregate<TId>", IETagStampable, IReconstitutionStampable, IEntity, "Entity<TId>", IDomainEvent, IIntegrationEvent, ITrackedAggregateSource, ValueObject, "ScalarValueObject<TSelf,T>", "IScalarValue<TSelf,TPrimitive>", "IFormattableScalarValue<TSelf,TPrimitive>", "RequiredString<TSelf>", "RequiredInt<TSelf>", "RequiredLong<TSelf>", "RequiredDecimal<TSelf>", "RequiredBool<TSelf>", "RequiredGuid<TSelf>", "RequiredDateTime<TSelf>", "RequiredDateTimeOffset<TSelf>", "RequiredEnum<TSelf>", "RequiredEnumJsonConverter<T>", "ParsableJsonConverter<T>", ResultRequiresExplicitHttpMappingConverter, PrimitiveValueObjectTrace, "Specification<T>", TrellisJsonValidationException, RangeAttribute, StringLengthAttribute, NotDefaultAttribute, TrimAttribute, PositiveAttribute, NonNegativeAttribute, NegativeAttribute, NonPositiveAttribute, RailwayTrackAttribute, TrackBehavior, EnumValueAttribute, ResourceCollectionNameAttribute, ResultDebugSettings]
 version: v3
 last_verified: 2026-06-03
 audience: [llm]
@@ -282,7 +282,7 @@ Opt-in marker carried by result types whose **failure** outcome should still tri
 
 | Behavior | Persist-on-failure handling |
 | --- | --- |
-| `TransactionalCommandBehavior` (`Trellis.EntityFrameworkCore`) | Commits staged changes on success **or** persist-on-failure. Commit error on a persist-on-failure outcome replaces the handler error in the returned response. |
+| `TransactionalCommandBehavior` (`Trellis.Mediator`) | Commits staged changes on success **or** persist-on-failure. Commit error on a persist-on-failure outcome replaces the handler error in the returned response. |
 | `DomainEventDispatchBehavior` (`Trellis.Mediator`) | Treats persist-on-failure as failure: events are **not** dispatched. Events the handler raised on aggregates remain on those in-memory instances and are discarded with the request scope — they are not a durable retry buffer. Model post-failure side effects via an outbox row or a dedicated follow-up command. |
 
 #### Anti-pattern — composing `FailAfterCommit` with aggregating operators
@@ -349,6 +349,8 @@ Use the static `Result` type.
 ### `public static class Maybe`
 
 Non-generic helpers for creating `Maybe<T>` and optional result flows.
+
+> **Factory naming.** The factory is `Maybe.From(value)` / `Maybe<T>.From(value)` — there is **no** `Some` factory. Writing `Maybe.Some(...)` (a common habit from other option types) raises `CS0117`. Use `From` for presence and `Maybe<T>.None` for absence.
 
 #### Properties
 
@@ -525,7 +527,9 @@ Closed discriminated union of domain error values. Each case is a nested `sealed
 
 #### Construction and case-scoped factories
 
-Construct cases directly: `new Error.NotFound(payload) { Detail = "..." }`. The base `Error` type intentionally exposes no static `Error.Validation(...)` / `Error.NotFound(...)` helpers — every call site names the case it produces. <!-- v1-stale-ok: explanatory note about removed v1 factory helpers --> For the common single-payload shapes, the resource-oriented cases (`NotFound`, `Gone`, `Conflict`, `Forbidden`) and `InvalidInput` expose **case-scoped** convenience factories (e.g. `Error.NotFound.For<Order>(id, detail)`) that bundle the typed payload and an optional trailing `detail` argument while still naming the case — see each case row below.
+Construct cases directly: `new Error.NotFound(payload) { Detail = "..." }`. The base `Error` type intentionally exposes no static `Error.Validation(...)` / `Error.NotFound(...)` helpers — every call site names the case it produces. <!-- v1-stale-ok: explanatory note about removed v1 factory helpers --> For the common single-payload shapes, the resource-bearing cases (`NotFound`, `Gone`, `Conflict`, `Forbidden`, `InvariantViolation`) and `InvalidInput` expose **case-scoped** convenience factories (e.g. `Error.NotFound.For<Order>(id, detail)`) that bundle the typed payload and an optional trailing `detail` argument while still naming the case — see each case row below.
+
+> **Why only some cases have factories.** The case-scoped factories exist to remove the one piece of construction ceremony these cases share: wrapping an id into a `ResourceRef` (and, for `InvalidInput`, a field into an `InputPointer`). So **every case that carries a `ResourceRef` provides a `For<TResource>(...)` factory** — `NotFound`, `Gone`, `Conflict`, `Forbidden`, and `InvariantViolation`. The exact companions vary with each case's shape: the resource-subject cases (`NotFound`, `Gone`, `Conflict`, `InvariantViolation`) also expose a `For(type, …)` overload that names the resource type as a string; cases whose resource is *optional* add a resourceless companion (`Conflict.ForReason` / `InvariantViolation.ForReason` / `Forbidden.ForPolicy`); `Forbidden` leads with its `policyId` (`For<TResource>(policyId, id)` / `ForPolicy`) rather than a `For(type, …)` overload. The remaining single-error cases (`AuthenticationRequired`, `RateLimited`, `Unavailable`, `Unexpected`, `TransportFault`) carry no resource, so their primary constructors are already minimal (e.g. `new Error.Unexpected("db_timeout")`) and deliberately have no factory — the constructor *is* the idiomatic path. (`Aggregate` is the composition case — a collection of errors built from its own multi-error constructor, not a single-payload shape.) This is the rule that makes the surface consistent: factory ⇔ resource ceremony, not factory-on-everything.
 
 ---
 
@@ -536,7 +540,7 @@ Nested `sealed record` cases under `Error`. The base constructor is `private`, s
 | Case | Constructor | Domain semantics |
 | --- | --- | --- |
 | `Error.InvalidInput` | `(EquatableArray<FieldViolation> Fields, EquatableArray<RuleViolation> Rules = default)` | Request input failed semantic validation. Use `ForField(...)` / `ForRule(...)` for the common single-violation shapes. |
-| `Error.InvariantViolation` | `(string ReasonCode, ResourceRef? Resource = null)` | Domain rule failed outside field-bound request validation; use for cross-aggregate invariants or internal preconditions. |
+| `Error.InvariantViolation` | `(string ReasonCode, ResourceRef? Resource = null)` | Domain rule failed outside field-bound request validation; use for cross-aggregate invariants or internal preconditions. Use `For<TResource>(reasonCode, id, detail)` / `For(type, reasonCode, id, detail)` / `ForReason(reasonCode, detail)` (resourceless). `reasonCode` leads (it is the invariant's required identity; the resource id is optional). |
 | `Error.NotFound` | `(ResourceRef Resource)` | The addressed resource does not exist. Use `For<TResource>(id, detail)` / `For(type, id, detail)` for the common shape. |
 | `Error.Forbidden` | `(string PolicyId, ResourceRef? Resource = null)` | The caller is authenticated but not allowed by the named policy. Use `For<TResource>(policyId, id, detail)` or `ForPolicy(policyId, detail)` (resourceless). |
 | `Error.Conflict` | `(ResourceRef? Resource, string ReasonCode)` | The request collides with current state (for example duplicate keys or concurrent modification). Use `For<TResource>(id, reasonCode, detail)` / `For(type, id, reasonCode, detail)` / `ForReason(reasonCode, detail)` (resourceless). |
@@ -1621,7 +1625,7 @@ public interface IAggregate : IChangeTracking
 ### `Aggregate<TId>`
 
 ```csharp
-public abstract class Aggregate<TId> : Entity<TId>, IAggregate where TId : notnull
+public abstract class Aggregate<TId> : Entity<TId>, IAggregate, IETagStampable, IReconstitutionStampable where TId : notnull
 ```
 
 | Name | Type | Description |
@@ -1635,6 +1639,30 @@ public abstract class Aggregate<TId> : Entity<TId>, IAggregate where TId : notnu
 | `protected Aggregate(TId id)` | — | Initializes the aggregate identity. |
 | `public IReadOnlyList<IDomainEvent> UncommittedEvents()` | `IReadOnlyList<IDomainEvent>` | Returns a read-only snapshot of current domain events. |
 | `public void AcceptChanges()` | `void` | Clears `DomainEvents`. |
+
+### `IETagStampable`
+
+```csharp
+public interface IETagStampable
+```
+
+Persistence-infrastructure seam for stamping an aggregate's optimistic-concurrency token (`IAggregate.ETag`) without reflection. `Aggregate<TId>` implements it **explicitly**, so the method stays off the domain surface and is reachable only by casting to `IETagStampable`. The EF Core integration stamps the ETag through its change-tracker interceptor; non-EF persistence adapters (Dapper, raw ADO, Cosmos SDK) use this seam instead — on load to restore the stored token, on save to apply a fresh one.
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `void StampETag(string etag)` | `void` | Sets `IAggregate.ETag` to `etag`, which must be a valid unquoted RFC 9110 opaque tag (e.g. `Guid.NewGuid().ToString("N")`). Throws `ArgumentNullException` for null and `ArgumentException` for empty/whitespace or non-opaque-tag characters. |
+
+### `IReconstitutionStampable`
+
+```csharp
+public interface IReconstitutionStampable
+```
+
+Persistence-infrastructure seam for restoring a reconstituted aggregate's persistence-managed metadata (audit timestamps and the optimistic-concurrency token) and clearing its uncommitted domain events, through an explicit infra-only method. `Aggregate<TId>` implements it **explicitly**. The aggregate author rebuilds *domain* state via its own `Reconstitute(...)` factory (private constructor + assigning get-only properties and private child collections); a non-EF adapter then casts to `IReconstitutionStampable` to restore the *infrastructure* metadata it loaded from storage. Post-conditions: timestamps and ETag restored, no uncommitted domain events (so `IsChanged == false` under the default event-based change tracking). The EF Core integration does the equivalent via its materializer and interceptors.
+
+| Signature | Returns | Description |
+| --- | --- | --- |
+| `void StampReconstitutedState(DateTimeOffset createdAt, DateTimeOffset lastModified, string etag)` | `void` | Restores audit timestamps and the optimistic-concurrency token, and clears uncommitted domain events. `etag` must be a valid unquoted RFC 9110 opaque tag; throws `ArgumentNullException` for null and `ArgumentException` for empty/whitespace or non-opaque-tag characters. |
 
 ### `IDomainEvent`
 
